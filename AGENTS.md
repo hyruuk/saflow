@@ -21,6 +21,7 @@
 
 ## 1. Code Organization
 
+- **Well-contained, simple functions**: The code should be made mostly of functions that are doing one and only one thing, usually in no more than ~10 lines of code. If more than that is needed, that is probably because the function is trying to do several things at once and it should be split further. Of course, sometimes the functions will need to be bigger than that but that's to be avoided when possible
 - **Separate utilities from scripts**: Reusable functions in `utils.py`, orchestration scripts call them
 - **One script, one purpose**: Each script accomplishes a single, well-defined analysis step
 - **User-facing interface**: Provide task runner (invoke, Makefile, etc.) - users shouldn't run scripts directly

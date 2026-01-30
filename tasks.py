@@ -411,6 +411,127 @@ def rebuild(c, mode="dev"):
 
 
 # ==============================================================================
+# Helper Functions
+# ==============================================================================
+
+def get_python_executable():
+    """Get the Python executable, preferring venv if it exists."""
+    venv_python = PROJECT_ROOT / "env" / "bin" / "python"
+    if venv_python.exists():
+        return str(venv_python)
+    return "python"
+
+
+# ==============================================================================
+# Pipeline Tasks
+# ==============================================================================
+
+@task
+def validate_inputs(c, data_root=None, verbose=False):
+    """Validate that raw input data is present and complete.
+
+    Checks for:
+    - Raw MEG data directory exists
+    - Behavioral logfiles directory exists
+    - Required .ds files present
+    - Behavioral logfiles present for expected subjects
+
+    Args:
+        data_root: Override data root from config
+        verbose: Show detailed file listing
+
+    Examples:
+        invoke validate-inputs
+        invoke validate-inputs --verbose
+        invoke validate-inputs --data-root=/path/to/data
+    """
+    print("=" * 80)
+    print("Validating Input Data")
+    print("=" * 80)
+
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command - run as module with PYTHONPATH set
+    cmd = [python_exe, "-m", "code.utils.validation", "--check-inputs"]
+
+    if data_root:
+        cmd.extend(["--data-root", str(data_root)])
+
+    if verbose:
+        cmd.append("--verbose")
+
+    # Set PYTHONPATH to project root
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
+@task
+def bids(
+    c,
+    input_dir=None,
+    output_dir=None,
+    subjects=None,
+    log_level="INFO",
+    dry_run=False,
+):
+    """Run BIDS conversion (Stage 0).
+
+    Converts raw MEG data (.ds files) to BIDS format and enriches
+    gradCPT events with behavioral data (VTC, RT, performance, IN/OUT zones).
+
+    Args:
+        input_dir: Override raw data directory from config
+        output_dir: Override BIDS output directory from config
+        subjects: Process specific subjects only (space-separated)
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        dry_run: Validate inputs without processing
+
+    Examples:
+        invoke bids
+        invoke bids --subjects "04 05 06"
+        invoke bids --log-level=DEBUG
+        invoke bids --input-dir=/path/to/raw --output-dir=/path/to/bids
+        invoke bids --dry-run
+    """
+    print("=" * 80)
+    print("BIDS Conversion - Stage 0")
+    print("=" * 80)
+
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command - run as module with PYTHONPATH set
+    cmd = [python_exe, "-m", "code.bids.generate_bids"]
+
+    if input_dir:
+        cmd.extend(["--input", str(input_dir)])
+
+    if output_dir:
+        cmd.extend(["--output", str(output_dir)])
+
+    if subjects:
+        cmd.extend(["--subjects"] + subjects.split())
+
+    cmd.extend(["--log-level", log_level])
+
+    if dry_run:
+        cmd.append("--dry-run")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+
+    # Set PYTHONPATH to include project root
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
+# ==============================================================================
 # List Tasks
 # ==============================================================================
 
