@@ -2,24 +2,27 @@
 # ==============================================================================
 # Saflow Setup Script
 # ==============================================================================
-# This script sets up the saflow development environment.
+# This script sets up the saflow development environment with interactive
+# configuration prompts for data paths and HPC settings.
 #
 # Usage:
 #   ./setup.sh [OPTIONS]
 #
 # Options:
-#   --dev         Install development dependencies ([dev,test,docs])
-#   --hpc         Install HPC dependencies (for SLURM)
-#   --all         Install all optional dependencies
 #   --python      Specify Python executable (default: python3.9)
 #   --force       Force reinstall if venv already exists
 #   --help        Show this help message
 #
 # Examples:
-#   ./setup.sh                  # Basic installation
-#   ./setup.sh --dev            # Install with dev tools
-#   ./setup.sh --all            # Install everything
+#   ./setup.sh                      # Standard installation (interactive config)
 #   ./setup.sh --python python3.10  # Use specific Python version
+#   ./setup.sh --force              # Force reinstall
+#
+# Interactive Configuration:
+#   The script will prompt you to configure:
+#   - Data root directory (where your MEG data lives)
+#   - SLURM account (optional, leave empty if not using HPC)
+#   You can skip prompts and edit config.yaml manually later.
 # ==============================================================================
 
 set -e  # Exit on error
@@ -28,7 +31,6 @@ set -e  # Exit on error
 
 # Default values
 PYTHON_CMD="python3.9"
-INSTALL_MODE="basic"
 FORCE_REINSTALL=false
 VENV_DIR="env"
 
@@ -59,7 +61,7 @@ print_info() {
 }
 
 show_help() {
-    head -n 25 "$0" | tail -n 19
+    head -n 21 "$0" | tail -n 15
     exit 0
 }
 
@@ -69,18 +71,6 @@ show_help() {
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --dev)
-            INSTALL_MODE="dev"
-            shift
-            ;;
-        --hpc)
-            INSTALL_MODE="hpc"
-            shift
-            ;;
-        --all)
-            INSTALL_MODE="all"
-            shift
-            ;;
         --python)
             PYTHON_CMD="$2"
             shift 2
@@ -182,24 +172,8 @@ print_success "Build tools updated"
 
 print_header "Installing saflow package"
 
-case "$INSTALL_MODE" in
-    basic)
-        print_info "Installing basic dependencies"
-        pip install -e .
-        ;;
-    dev)
-        print_info "Installing with development dependencies"
-        pip install -e ".[dev,test,docs]"
-        ;;
-    hpc)
-        print_info "Installing with HPC dependencies"
-        pip install -e ".[hpc]"
-        ;;
-    all)
-        print_info "Installing all dependencies"
-        pip install -e ".[all]"
-        ;;
-esac
+print_info "Installing saflow with all dependencies"
+pip install -e ".[all]"
 
 print_success "Package installation complete"
 
@@ -214,11 +188,77 @@ if [[ ! -f "config.yaml" ]]; then
         print_info "Creating config.yaml from template"
         cp config.yaml.template config.yaml
         print_success "config.yaml created"
-        print_warning "IMPORTANT: Edit config.yaml and replace all <PLACEHOLDER> values with actual paths"
         echo ""
-        echo "  Required placeholders to update:"
-        echo "    - paths.data_root: Location of your data directory"
-        echo "    - computing.slurm.account: Your SLURM account (if using HPC)"
+
+        # Interactive configuration prompts
+        print_info "Let's configure your environment"
+        echo ""
+
+        # Prompt for data root path
+        echo "Data root directory:"
+        echo "  This is where your data lives (sourcedata/, derivatives/, etc.)"
+        read -p "  Enter full path (or press Enter to configure manually later): " DATA_ROOT
+        echo ""
+
+        if [[ -n "$DATA_ROOT" ]]; then
+            # Expand tilde and remove trailing slash
+            DATA_ROOT="${DATA_ROOT/#\~/$HOME}"
+            DATA_ROOT="${DATA_ROOT%/}"
+
+            # Validate path exists
+            if [[ -d "$DATA_ROOT" ]]; then
+                # Escape special characters for sed
+                DATA_ROOT_ESCAPED=$(echo "$DATA_ROOT" | sed 's/[\/&]/\\&/g')
+                sed -i "s|<DATA_ROOT>|$DATA_ROOT|g" config.yaml
+                print_success "Data root set to: $DATA_ROOT"
+            else
+                print_warning "Directory does not exist: $DATA_ROOT"
+                read -p "  Create it now? (y/N): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    mkdir -p "$DATA_ROOT"
+                    print_success "Created directory: $DATA_ROOT"
+                    DATA_ROOT_ESCAPED=$(echo "$DATA_ROOT" | sed 's/[\/&]/\\&/g')
+                    sed -i "s|<DATA_ROOT>|$DATA_ROOT|g" config.yaml
+                    print_success "Data root set to: $DATA_ROOT"
+                else
+                    print_info "Placeholder <DATA_ROOT> left in config.yaml for manual editing"
+                fi
+            fi
+        else
+            print_info "Skipped - you'll need to edit config.yaml manually"
+        fi
+
+        echo ""
+
+        # Prompt for SLURM account (optional)
+        echo "SLURM account (for HPC job submissions):"
+        echo "  Leave empty if you don't use HPC/SLURM"
+        read -p "  Enter your SLURM account (or press Enter to skip): " SLURM_ACCOUNT
+        echo ""
+
+        if [[ -n "$SLURM_ACCOUNT" ]]; then
+            # User provided SLURM account
+            sed -i "s|account:.*|account: \"$SLURM_ACCOUNT\"|g" config.yaml
+            print_success "SLURM account set to: $SLURM_ACCOUNT"
+        else
+            # User skipped - set to empty string (not placeholder)
+            sed -i "s|account:.*|account: \"\"|g" config.yaml
+            print_info "SLURM account left empty (HPC features disabled)"
+            print_info "  You can set it later in config.yaml if needed"
+        fi
+
+        echo ""
+
+        # Check if any placeholders remain
+        if grep -q "<.*>" config.yaml; then
+            print_warning "Some placeholders still remain in config.yaml"
+            echo ""
+            echo "  You can edit them manually later with:"
+            echo "    nano config.yaml"
+        else
+            print_success "All placeholders configured!"
+        fi
         echo ""
     else
         print_error "config.yaml.template not found"
@@ -243,20 +283,18 @@ mkdir -p reports/statistics
 print_success "Project directories created"
 
 # ==============================================================================
-# Development Tools Setup (if dev mode)
+# Development Tools Setup
 # ==============================================================================
 
-if [[ "$INSTALL_MODE" == "dev" || "$INSTALL_MODE" == "all" ]]; then
-    print_header "Setting up development tools"
+print_header "Setting up development tools"
 
-    # Install pre-commit hooks if .pre-commit-config.yaml exists
-    if [[ -f ".pre-commit-config.yaml" ]]; then
-        print_info "Installing pre-commit hooks"
-        pre-commit install
-        print_success "Pre-commit hooks installed"
-    else
-        print_info "No .pre-commit-config.yaml found (skipping pre-commit setup)"
-    fi
+# Install pre-commit hooks if .pre-commit-config.yaml exists
+if [[ -f ".pre-commit-config.yaml" ]]; then
+    print_info "Installing pre-commit hooks"
+    pre-commit install
+    print_success "Pre-commit hooks installed"
+else
+    print_info "No .pre-commit-config.yaml found (skipping pre-commit setup)"
 fi
 
 # ==============================================================================
@@ -264,14 +302,6 @@ fi
 # ==============================================================================
 
 print_header "Verifying installation"
-
-# Check if saflow package is importable
-if python -c "import saflow" 2>/dev/null; then
-    print_success "saflow package can be imported"
-else
-    print_error "saflow package cannot be imported"
-    exit 1
-fi
 
 # Check if code package is importable
 if python -c "import code.utils.config" 2>/dev/null; then
@@ -300,22 +330,19 @@ echo ""
 echo "  1. Activate the virtual environment:"
 echo "     source env/bin/activate"
 echo ""
-echo "  2. Edit config.yaml and replace all <PLACEHOLDER> values:"
+echo "  2. Edit config.yaml if needed (paths, SLURM account, etc.):"
 echo "     nano config.yaml"
 echo ""
 echo "  3. Verify configuration:"
 echo "     python -c 'from code.utils.config import load_config; load_config()'"
 echo ""
-
-if [[ "$INSTALL_MODE" == "dev" || "$INSTALL_MODE" == "all" ]]; then
-    echo "  4. Run tests to verify everything works:"
-    echo "     pytest tests/"
-    echo ""
-    echo "  5. Run linting:"
-    echo "     ruff check saflow/ code/"
-    echo ""
-fi
-
+echo "  4. Run tests to verify everything works:"
+echo "     pytest tests/"
+echo ""
+echo "  5. Run linting:"
+echo "     ruff check saflow/ code/"
+echo ""
+echo ""
 echo "For more information, see:"
 echo "  - README.md: Project overview and usage"
 echo "  - TASKS.md: Pipeline scripts and examples"

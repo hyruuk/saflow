@@ -170,9 +170,8 @@ def get_VTC_from_file(
     files_list: List[str],
     logs_dir: Union[str, Path],
     cpt_blocs: Optional[List[str]] = None,
-    inout_bounds: Optional[List[int]] = None,
-    filt_cutoff: float = 0.05,
     filt_type: str = "gaussian",
+    filt_config: Optional[Dict] = None,
 ) -> Tuple[
     np.ndarray,
     np.ndarray,
@@ -187,7 +186,11 @@ def get_VTC_from_file(
     """Compute VTC from behavioral logfiles for a specific run.
 
     Loads logfiles for a subject, computes VTC (Variability of Reaction Times),
-    applies smoothing filter, and classifies trials into IN/OUT zones.
+    and applies smoothing filter based on config parameters.
+
+    Note: In the new config-driven architecture, zone classifications (IN/OUT/MID)
+    are NOT computed here. They are computed on-demand during feature extraction
+    using classify_trials_from_vtc() with bounds from config['analysis']['inout_bounds'].
 
     Args:
         subject: Subject ID (e.g., "04").
@@ -195,35 +198,36 @@ def get_VTC_from_file(
         files_list: List of logfile names.
         logs_dir: Directory containing logfiles.
         cpt_blocs: List of CPT block numbers. Defaults to ['2','3','4','5','6','7'].
-        inout_bounds: [lower, upper] percentile bounds for IN/OUT split.
-            Defaults to [25, 75].
-        filt_cutoff: Cutoff frequency for Butterworth filter. Defaults to 0.05.
         filt_type: Filter type ('gaussian' or 'butterworth'). Defaults to 'gaussian'.
+        filt_config: Dictionary with filter parameters from config['behavioral']['vtc']['filter'].
+            For gaussian: {'gaussian_fwhm': 9}
+            For butterworth: {'butterworth_order': 3, 'butterworth_cutoff': 0.05}
 
     Returns:
         Tuple containing:
-        - IN_idx: Indices of IN zone trials
-        - OUT_idx: Indices of OUT zone trials
+        - IN_idx: Empty array (deprecated, for backward compatibility)
+        - OUT_idx: Empty array (deprecated, for backward compatibility)
         - VTC_raw: Raw VTC array
         - VTC_filtered: Smoothed VTC array
-        - IN_mask: Masked array for IN zone
-        - OUT_mask: Masked array for OUT zone
+        - IN_mask: Empty masked array (deprecated, for backward compatibility)
+        - OUT_mask: Empty masked array (deprecated, for backward compatibility)
         - performance_dict: Dictionary with trial type indices
         - df_response_out: Response DataFrame for the run
         - RT_to_VTC: RT array used for VTC computation
 
     Examples:
-        >>> IN_idx, OUT_idx, VTC_raw, VTC_filt, _, _, perf, df, RT = get_VTC_from_file(
-        ...     "04", "02", logfiles, logs_dir
+        >>> filter_config = {'type': 'gaussian', 'gaussian_fwhm': 9}
+        >>> _, _, VTC_raw, VTC_filt, _, _, perf, df, RT = get_VTC_from_file(
+        ...     "04", "02", logfiles, logs_dir, filt_config=filter_config
         ... )
-        >>> print(f"IN: {len(IN_idx)}, OUT: {len(OUT_idx)}")
     """
     logs_dir = Path(logs_dir)
 
     if cpt_blocs is None:
         cpt_blocs = ["2", "3", "4", "5", "6", "7"]
-    if inout_bounds is None:
-        inout_bounds = [25, 75]
+    if filt_config is None:
+        # Default filter config (Gaussian with FWHM=9)
+        filt_config = {"gaussian_fwhm": 9}
 
     # Find logfiles belonging to subject
     subject_logfiles = []
@@ -280,37 +284,39 @@ def get_VTC_from_file(
     VTC_raw[np.isnan(VTC_raw)] = 0
     VTC_interpolated = interpolate_RT(VTC_raw)
 
-    # Apply filter
+    # Apply filter using config parameters
     if filt_type == "gaussian":
+        fwhm = filt_config.get("gaussian_fwhm", 9)
+        logger.debug(f"Applying Gaussian filter with FWHM={fwhm}")
         # scipy >= 1.10: gaussian moved to signal.windows
         try:
-            filt = signal.windows.gaussian(len(VTC_interpolated), fwhm2sigma(9))
+            filt = signal.windows.gaussian(len(VTC_interpolated), fwhm2sigma(fwhm))
         except AttributeError:
             # scipy < 1.10: use signal.gaussian
-            filt = signal.gaussian(len(VTC_interpolated), fwhm2sigma(9))
+            filt = signal.gaussian(len(VTC_interpolated), fwhm2sigma(fwhm))
         VTC_filtered = np.convolve(VTC_interpolated, filt, "same") / sum(filt)
     elif filt_type == "butterworth":
-        b, a = signal.butter(3, filt_cutoff)
+        order = filt_config.get("butterworth_order", 3)
+        cutoff = filt_config.get("butterworth_cutoff", 0.05)
+        logger.debug(f"Applying Butterworth filter (order={order}, cutoff={cutoff})")
+        b, a = signal.butter(order, cutoff)
         VTC_filtered = signal.filtfilt(b, a, VTC_interpolated)
     else:
-        logger.warning(f"Unknown filter type: {filt_type}, using gaussian")
+        logger.warning(f"Unknown filter type: {filt_type}, using Gaussian with FWHM=9")
         filt = signal.gaussian(len(VTC_interpolated), fwhm2sigma(9))
         VTC_filtered = np.convolve(VTC_interpolated, filt, "same") / sum(filt)
 
-    # Create IN/OUT masks
-    IN_threshold = np.quantile(VTC_filtered, inout_bounds[0] / 100)
-    OUT_threshold = np.quantile(VTC_filtered, inout_bounds[1] / 100)
-
-    IN_mask = np.ma.masked_where(VTC_filtered >= IN_threshold, VTC_filtered)
-    OUT_mask = np.ma.masked_where(VTC_filtered < OUT_threshold, VTC_filtered)
-
-    IN_idx = np.where(IN_mask.mask == False)[0]
-    OUT_idx = np.where(OUT_mask.mask == False)[0]
-
     logger.info(
-        f"Subject {subject}, run {run}: {len(IN_idx)} IN trials, "
-        f"{len(OUT_idx)} OUT trials (bounds: {inout_bounds})"
+        f"Subject {subject}, run {run}: Computed VTC_raw and VTC_filtered "
+        f"(filter: {filt_type})"
     )
+
+    # Return empty arrays for deprecated IN/OUT outputs (for backward compatibility)
+    # Zone classification is now done on-demand during feature extraction
+    IN_idx = np.array([], dtype=int)
+    OUT_idx = np.array([], dtype=int)
+    IN_mask = np.ma.masked_array(np.array([]))
+    OUT_mask = np.ma.masked_array(np.array([]))
 
     return (
         IN_idx,

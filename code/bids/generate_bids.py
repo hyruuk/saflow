@@ -142,11 +142,16 @@ def enrich_gradcpt_events(
     run: str,
     behav_files: List[str],
     logs_dir: Path,
+    config: dict,
 ):
     """Enrich gradCPT events file with behavioral data.
 
-    Adds trial indices, VTC, RT, task performance, and IN/OUT zones to
-    the BIDS events file.
+    Adds trial indices, VTC (raw and filtered), RT, and task performance to
+    the BIDS events file. VTC is computed using filter parameters from config.
+
+    Zone classifications (IN/OUT/MID) are NOT pre-computed here - they will be
+    computed on-demand during feature extraction using the bounds specified in
+    config['analysis']['inout_bounds'].
 
     Args:
         events_path: Path to BIDS events.tsv file.
@@ -154,6 +159,7 @@ def enrich_gradcpt_events(
         run: Run number.
         behav_files: List of behavioral logfile names.
         logs_dir: Directory containing behavioral logfiles.
+        config: Configuration dictionary.
     """
     logger.info(f"Enriching events for sub-{subject} run-{run}")
 
@@ -163,14 +169,32 @@ def enrich_gradcpt_events(
     # Add trial indices
     events_df = add_trial_indices(events_df)
 
+    # Get filter parameters from config
+    filter_config = config["behavioral"]["vtc"]["filter"]
+    filt_type = filter_config["type"]
+
+    if filt_type == "gaussian":
+        fwhm = filter_config["gaussian_fwhm"]
+        logger.info(f"Using Gaussian filter with FWHM={fwhm}")
+    elif filt_type == "butterworth":
+        filt_order = filter_config["butterworth_order"]
+        filt_cutoff = filter_config["butterworth_cutoff"]
+        logger.info(f"Using Butterworth filter (order={filt_order}, cutoff={filt_cutoff})")
+    else:
+        logger.warning(f"Unknown filter type '{filt_type}', using Gaussian with FWHM=9")
+        filt_type = "gaussian"
+        fwhm = 9
+
     # Get behavioral data from logfiles
+    # Note: inout_bounds parameter is ignored in new architecture
+    # (zones computed on-demand during feature extraction)
     (
-        IN_idx,
-        OUT_idx,
+        _,  # IN_idx (not needed)
+        _,  # OUT_idx (not needed)
         VTC_raw,
         VTC_filtered,
-        IN_mask,
-        OUT_mask,
+        _,  # IN_mask (not needed)
+        _,  # OUT_mask (not needed)
         performance_dict,
         df_response,
         RT_to_VTC,
@@ -180,20 +204,22 @@ def enrich_gradcpt_events(
         files_list=behav_files,
         logs_dir=logs_dir,
         cpt_blocs=["2", "3", "4", "5", "6", "7"],
-        inout_bounds=[25, 75],
-        filt_cutoff=0.05,
-        filt_type="gaussian",
+        filt_type=filt_type,
+        filt_config=filter_config,
     )
 
-    # Add behavioral info to events
-    events_df = add_behavioral_info(events_df, VTC_raw, RT_to_VTC, performance_dict)
-
-    # Add IN/OUT zone classifications for multiple bounds
-    events_df = add_inout_zones(events_df, subject, run, behav_files, logs_dir)
+    # Add behavioral info to events (VTC_raw, VTC_filtered, RT, task)
+    events_df = add_behavioral_info(
+        events_df,
+        VTC_raw,
+        VTC_filtered,
+        RT_to_VTC,
+        performance_dict
+    )
 
     # Save enriched events
     events_df.to_csv(events_path, sep="\t", index=False)
-    logger.info(f"Saved enriched events to {events_path}")
+    logger.info(f"Saved enriched events with VTC_raw, VTC_filtered, RT, task to {events_path}")
 
 
 def process_subject_recording(
@@ -252,12 +278,17 @@ def process_subject_recording(
             events_path = bidspath.copy().update(suffix="events", extension=".tsv")
             behav_files = [f.name for f in behav_dir.iterdir() if f.is_file()]
 
+            # Load config for behavioral parameters
+            from code.utils.config import load_config
+            config = load_config()
+
             enrich_gradcpt_events(
                 events_path,
                 bidspath.subject,
                 bidspath.run,
                 behav_files,
                 behav_dir,
+                config,
             )
 
         else:

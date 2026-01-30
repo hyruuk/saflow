@@ -119,6 +119,20 @@ source_reconstruction:
   parc: aparc.a2009s  # Parcellation for ROI extraction
 
 # =============================================================================
+# Behavioral Analysis Configuration
+# =============================================================================
+behavioral:
+  vtc:
+    window_size: 20  # Number of trials for rolling VTC computation
+
+    # VTC filter parameters (applied during BIDS generation)
+    filter:
+      type: "gaussian"  # "gaussian" or "butterworth"
+      gaussian_fwhm: 9  # Full width at half maximum (for Gaussian)
+      butterworth_order: 3  # Filter order (for Butterworth)
+      butterworth_cutoff: 0.05  # Normalized cutoff frequency (for Butterworth)
+
+# =============================================================================
 # Analysis Configuration (CRITICAL: Sensor vs Source)
 # =============================================================================
 # This section controls whether the pipeline operates in sensor-level or
@@ -127,15 +141,40 @@ source_reconstruction:
 # Phase 1 (current refactoring): sensor-level replication
 # Phase 2 (post-refactoring): source-level extension
 analysis:
-  # Analysis space: "sensor" or "source"
+  # Analysis space: "sensor", "source", or "atlas"
+  # - sensor: Channel-level analysis (MEG sensors)
+  # - source: Vertex-level analysis (cortical surface)
+  # - atlas: ROI-level analysis (parcellated regions)
   space: sensor
+
+  # TWO-TRACK PROCESSING: Continuous vs Epochs
+  # Enables comparison between continuous (ICA-only) and epoched (ICA+AutoReject) processing
+  # Both tracks can be run in parallel and compared for robustness
+  processing_tracks:
+    - continuous  # ICA-cleaned continuous data
+    - epochs      # ICA+AutoReject epoched data
 
   # Source-specific settings (used when space="source")
   source:
-    use_atlas: true
-    atlas_name: aparc.a2009s
     morph_to_template: true  # Morph to fsaverage
-    roi_based: true          # Extract ROI time series vs. whole brain
+
+  # Atlas-specific settings (used when space="atlas")
+  atlas:
+    name: aparc.a2009s      # Parcellation: aparc.a2009s, aparc, HCPMMP1, Schaefer2018_*
+    morph_to_template: true  # Morph to fsaverage before applying atlas
+
+  # Zone bounds for IN/OUT trial classification (computed on-demand from VTC)
+  # Format: [lower_percentile, upper_percentile]
+  # Trials with VTC < lower_percentile → IN zone (stable performance)
+  # Trials with VTC ≥ upper_percentile → OUT zone (variable performance)
+  # Trials in between → MID zone (excluded from IN/OUT comparisons)
+  #
+  # Common options:
+  #   [25, 75] - Quartile split (default, good balance)
+  #   [50, 50] - Median split (maximum IN/OUT trials, no MID zone)
+  #   [10, 90] - Decile split (conservative, many MID trials)
+  #   [33, 67] - Tertile split
+  inout_bounds: [25, 75]  # Default: focus on quartile split
 
 # =============================================================================
 # Feature Extraction Configuration
@@ -176,7 +215,7 @@ computing:
 
   slurm:
     enabled: true
-    account: <SLURM_ACCOUNT>  # e.g., def-kjerbi
+    account: ""  # Leave empty if not using SLURM/HPC, or set to your SLURM account name
     partition: standard
 
     # Resource allocations per pipeline stage

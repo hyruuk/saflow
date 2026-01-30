@@ -102,8 +102,13 @@ def validate_config(config: Dict[str, Any]) -> None:
         if isinstance(value, str) and value.startswith("<") and value.endswith(">"):
             placeholders_found.append(f"paths.{key}")
 
-    if config["computing"]["slurm"]["enabled"]:
-        if config["computing"]["slurm"]["account"].startswith("<"):
+    # Check SLURM account only if SLURM is enabled and account is not empty
+    slurm_enabled = config["computing"]["slurm"].get("enabled", False)
+    slurm_account = config["computing"]["slurm"].get("account", "")
+
+    if slurm_enabled and slurm_account:
+        # SLURM is enabled and account is provided - check for placeholder
+        if slurm_account.startswith("<") and slurm_account.endswith(">"):
             placeholders_found.append("computing.slurm.account")
 
     if placeholders_found:

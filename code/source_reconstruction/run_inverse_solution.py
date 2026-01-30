@@ -72,6 +72,22 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--input-type",
+        type=str,
+        choices=["continuous", "epochs"],
+        default="continuous",
+        help="Input data type: 'continuous' (ICA-cleaned) or 'epochs' (ICA+AutoReject)",
+    )
+
+    parser.add_argument(
+        "--processing",
+        type=str,
+        choices=["clean", "ica", "icaar"],
+        default="clean",
+        help="Processing state: 'clean' (continuous ICA-cleaned), 'ica' (epochs ICA-only), or 'icaar' (epochs ICA+AR)",
+    )
+
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -112,6 +128,8 @@ def process_single_run(
     bids_root: Path,
     derivatives_root: Path,
     skip_existing: bool,
+    input_type: str = "continuous",
+    processing: str = "clean",
 ) -> bool:
     """Process a single subject/run.
 
@@ -122,6 +140,8 @@ def process_single_run(
         bids_root: BIDS root directory
         derivatives_root: Derivatives root directory
         skip_existing: Skip if output exists
+        input_type: "continuous" or "epochs"
+        processing: Processing state ("clean", "ica", or "icaar")
 
     Returns:
         True if processing succeeded, False otherwise
@@ -250,39 +270,88 @@ def process_single_run(
             logger.error(f"Failed to load noise covariance: {e}", exc_info=True)
             return False
 
-    # Step 6: Apply inverse to continuous data
-    logger.info("[6/7] Applying inverse solution...")
+    # Step 6: Apply inverse solution
+    logger.info(f"[6/7] Applying inverse solution (input_type={input_type}, processing={processing})...")
+
     try:
-        stc = utils.apply_inverse_continuous(
-            filepaths["preproc"],
-            fwd,
-            noise_cov,
-            method=method,
-            snr=snr,
-        )
+        if input_type == "continuous":
+            # Apply inverse to continuous data
+            stc = utils.apply_inverse_continuous(
+                filepaths["preproc"],
+                fwd,
+                noise_cov,
+                method=method,
+                snr=snr,
+            )
+            stcs = [stc]  # Wrap in list for consistency
+
+        elif input_type == "epochs":
+            # Load epochs file instead of continuous
+            from mne_bids import BIDSPath
+
+            epochs_root = derivatives_root / "epochs" / f"sub-{subject}" / "meg"
+            epochs_path = BIDSPath(
+                subject=subject,
+                session="recording",
+                task="gradCPT",
+                run=run,
+                processing=processing,
+                suffix="epo",
+                extension=".fif",
+                datatype="meg",
+                root=epochs_root,
+            )
+
+            logger.info(f"Loading epochs from: {epochs_path}")
+
+            # Apply inverse to epochs
+            stcs = utils.apply_inverse_epochs(
+                epochs_path,
+                fwd,
+                noise_cov,
+                method=method,
+                snr=snr,
+            )
+
+        else:
+            raise ValueError(f"Unknown input_type: {input_type}")
+
     except Exception as e:
         logger.error(f"Inverse solution failed: {e}", exc_info=True)
         return False
 
     # Step 7: Morph to fsaverage
-    logger.info("[7/7] Morphing to fsaverage...")
+    logger.info(f"[7/7] Morphing {len(stcs)} source estimate(s) to fsaverage...")
     try:
         morphed_stcs = utils.morph_to_fsaverage(
-            [stc],  # List with single continuous STC
+            stcs,
             fwd,
             subject,
             fs_subjects_dir,
             mri_available=mri_available,
         )
-        morphed_stc = morphed_stcs[0]
 
-        # Save morphed source estimate
-        saved_path = utils.save_source_estimate(
-            morphed_stc,
-            filepaths["morph"],
-            epoch_idx=None,
-        )
-        logger.info(f"Saved morphed source estimate: {saved_path}")
+        # Save morphed source estimates
+        if input_type == "continuous":
+            # Save single continuous STC
+            saved_path = utils.save_source_estimate(
+                morphed_stcs[0],
+                filepaths["morph"],
+                epoch_idx=None,
+            )
+            logger.info(f"Saved morphed source estimate: {saved_path}")
+
+        elif input_type == "epochs":
+            # Save each epoch separately
+            saved_paths = []
+            for idx, morphed_stc in enumerate(morphed_stcs):
+                saved_path = utils.save_source_estimate(
+                    morphed_stc,
+                    filepaths["morph"],
+                    epoch_idx=idx,
+                )
+                saved_paths.append(saved_path)
+            logger.info(f"Saved {len(saved_paths)} epoched source estimates")
 
     except Exception as e:
         logger.error(f"Morphing failed: {e}", exc_info=True)
@@ -294,10 +363,12 @@ def process_single_run(
         "run": run,
         "method": method,
         "snr": snr,
+        "input_type": input_type,
+        "processing": processing,
         "mri_available": mri_available,
-        "n_sources": stc.data.shape[0],
-        "n_timepoints": stc.data.shape[1],
-        "sfreq": 1.0 / stc.tstep,
+        "n_sources": stcs[0].data.shape[0],
+        "n_epochs" if input_type == "epochs" else "n_timepoints": len(stcs) if input_type == "epochs" else stcs[0].data.shape[1],
+        "sfreq": 1.0 / stcs[0].tstep,
         "processing_successful": True,
     }
 
@@ -335,6 +406,8 @@ def main() -> int:
     logger = logging.getLogger(__name__)
     logger.info("Starting source reconstruction (Stage 2)")
     logger.info(f"Subject: {args.subject}")
+    logger.info(f"Input type: {args.input_type}")
+    logger.info(f"Processing: {args.processing}")
 
     # Determine BIDS root
     if args.bids_root:
@@ -375,6 +448,8 @@ def main() -> int:
             bids_root=bids_root,
             derivatives_root=derivatives_root,
             skip_existing=args.skip_existing,
+            input_type=args.input_type,
+            processing=args.processing,
         )
 
         if success:

@@ -200,23 +200,39 @@ Requires:
 **Arguments:**
 - `--subject ID`: Subject ID to process (default: all subjects from config when using --slurm)
 - `--runs "R1 R2 ..."`: Run numbers to process (space-separated, default: all task runs from config)
+- `--input-type TYPE`: Input data type: `continuous` (ICA-cleaned) or `epochs` (ICA+AutoReject) (default: continuous)
+- `--processing STATE`: Processing state: `clean` (continuous), `ica` or `icaar` (epochs) (default: clean)
 - `--bids-root PATH`: Override BIDS root directory from config
 - `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
 - `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files (default: skip)
 - `--slurm`: Submit jobs to SLURM cluster (one job per run)
 - `--dry-run`: Generate SLURM scripts without submitting (requires --slurm)
 
+**TWO-TRACK PROCESSING:**
+Source reconstruction now supports both continuous and epoched data, enabling comparison between:
+- **Track 1 (continuous)**: ICA-cleaned continuous data → Single long source estimate
+- **Track 2 (epochs)**: ICA+AutoReject epoched data → Multiple epoched source estimates
+
+This allows comparing results from both preprocessing approaches for robustness validation.
+
 **Examples:**
 ```bash
-# Local execution (single subject)
+# Local execution - continuous (default)
 invoke source-recon --subject=04 --runs="02 03"
 invoke source-recon --subject=04 --log-level=DEBUG
+
+# Local execution - epochs
+invoke source-recon --subject=04 --runs="02" --input-type=epochs --processing=icaar
 
 # SLURM execution (distributed processing)
 invoke source-recon --subject=04 --slurm              # One job per run for subject 04
 invoke source-recon --slurm                           # Process ALL subjects (192 jobs)
 invoke source-recon --subject=04 --runs="02 03" --slurm  # Specific runs on SLURM
 invoke source-recon --slurm --dry-run                 # Generate scripts without submitting
+
+# Two-track processing (both continuous and epochs)
+invoke source-recon --subject=04 --runs="02" --input-type=continuous
+invoke source-recon --subject=04 --runs="02" --input-type=epochs --processing=icaar
 ```
 
 **Output locations:**

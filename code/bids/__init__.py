@@ -5,7 +5,6 @@ Stage 0: Raw MEG data → BIDS format conversion.
 
 from code.bids.utils import (
     add_behavioral_info,
-    add_inout_zones,
     add_trial_indices,
     detect_events,
     find_trial_type,
@@ -15,7 +14,6 @@ from code.bids.utils import (
 
 __all__ = [
     "add_behavioral_info",
-    "add_inout_zones",
     "add_trial_indices",
     "detect_events",
     "find_trial_type",

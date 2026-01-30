@@ -206,48 +206,54 @@ def find_trial_type(type_dict: Dict[str, List[int]], trial_idx: int) -> Optional
 def add_behavioral_info(
     events_df: pd.DataFrame,
     vtc_raw: np.ndarray,
+    vtc_filtered: np.ndarray,
     rt_values: np.ndarray,
     performance_dict: Dict[str, List[int]],
 ) -> pd.DataFrame:
     """Add behavioral data columns to events dataframe.
 
-    Enriches the events dataframe with VTC (variability of RT), RT, and
+    Enriches the events dataframe with VTC (raw and filtered), RT, and
     task performance information from behavioral logfiles.
 
     Args:
         events_df: BIDS events dataframe with trial_idx column.
         vtc_raw: Raw VTC values for each trial.
+        vtc_filtered: Filtered VTC values for each trial.
         rt_values: Reaction times for each trial.
         performance_dict: Dictionary with trial type indices.
 
     Returns:
-        Events dataframe with VTC, RT, and task columns added.
+        Events dataframe with VTC_raw, VTC_filtered, RT, and task columns added.
 
     Examples:
-        >>> events_df = add_behavioral_info(events_df, VTC, RT, perf_dict)
-        >>> print(events_df[['trial_type', 'VTC', 'RT', 'task']].head())
+        >>> events_df = add_behavioral_info(events_df, VTC_raw, VTC_filt, RT, perf_dict)
+        >>> print(events_df[['trial_type', 'VTC_raw', 'VTC_filtered', 'RT', 'task']].head())
     """
-    vtc_list = []
+    vtc_raw_list = []
+    vtc_filtered_list = []
     rt_list = []
     task_list = []
 
     for event in events_df.itertuples():
         if event.trial_type in ["Freq", "Rare"]:
             trial_idx = int(event.trial_idx)
-            vtc_list.append(vtc_raw[trial_idx])
+            vtc_raw_list.append(vtc_raw[trial_idx])
+            vtc_filtered_list.append(vtc_filtered[trial_idx])
             rt_list.append(rt_values[trial_idx])
             task_list.append(find_trial_type(performance_dict, trial_idx))
         else:
             # Non-stimulus events (responses, block markers)
-            vtc_list.append("n/a")
+            vtc_raw_list.append("n/a")
+            vtc_filtered_list.append("n/a")
             rt_list.append(0)
             task_list.append("n/a")
 
-    events_df["VTC"] = vtc_list
+    events_df["VTC_raw"] = vtc_raw_list
+    events_df["VTC_filtered"] = vtc_filtered_list
     events_df["RT"] = rt_list
     events_df["task"] = task_list
 
-    logger.debug("Added behavioral info: VTC, RT, task performance")
+    logger.debug("Added behavioral info: VTC_raw, VTC_filtered, RT, task performance")
     return events_df
 
 
@@ -259,6 +265,13 @@ def add_inout_zones(
     logs_dir: Path,
 ) -> pd.DataFrame:
     """Add IN/OUT zone classifications to events dataframe.
+
+    **DEPRECATED**: This function is no longer used in the config-driven architecture.
+    Zone classifications are now computed on-demand during feature extraction using
+    `classify_trials_from_vtc()` from `code/features/utils.py` with bounds from
+    `config['analysis']['inout_bounds']`.
+
+    This function is kept for backward compatibility only.
 
     Computes IN/OUT classifications for three different percentile bounds
     (50/50, 25/75, 10/90) based on VTC.
@@ -277,6 +290,10 @@ def add_inout_zones(
         >>> events_df = add_inout_zones(events_df, '04', '02', logfiles, logs_dir)
         >>> print(events_df[['trial_idx', 'INOUT_25_75']].head())
     """
+    logger.warning(
+        "add_inout_zones() is deprecated. Use classify_trials_from_vtc() instead "
+        "for on-demand zone classification during feature extraction."
+    )
     from code.utils.behavioral import get_VTC_from_file
 
     # Compute IN/OUT for different percentile bounds
