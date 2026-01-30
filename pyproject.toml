@@ -1,0 +1,333 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saflow"
+version = "0.2.0"
+description = "Sensor and source-level MEG analysis pipeline for gradCPT task"
+readme = "README.md"
+requires-python = ">=3.9,<3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "Yann Harel", email = "yharel109@gmail.com"},
+]
+maintainers = [
+    {name = "Yann Harel", email = "yharel109@gmail.com"},
+]
+keywords = [
+    "MEG",
+    "EEG",
+    "neuroscience",
+    "analysis",
+    "BIDS",
+    "MNE",
+    "source-reconstruction",
+    "machine-learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+# Core dependencies
+dependencies = [
+    # MEG/EEG analysis
+    "mne>=1.5.0,<2.0.0",
+    "mne-bids>=0.13.0,<1.0.0",
+    "autoreject>=0.4.0,<1.0.0",
+
+    # Scientific computing
+    "numpy>=1.24.0,<2.0.0",
+    "scipy>=1.10.0,<2.0.0",
+    "pandas>=2.0.0,<3.0.0",
+
+    # Machine learning
+    "scikit-learn>=1.3.0,<2.0.0",
+    "xgboost>=1.7.0,<3.0.0",
+    "mlneurotools>=0.1.0",
+
+    # Signal processing & features
+    "fooof>=1.0.0,<2.0.0",
+    "neurokit2>=0.2.0,<1.0.0",
+
+    # Statistics
+    "statsmodels>=0.14.0,<1.0.0",
+    "statannotations>=0.5.0,<1.0.0",
+
+    # Visualization
+    "matplotlib>=3.7.0,<4.0.0",
+    "seaborn>=0.12.0,<1.0.0",
+
+    # Utilities
+    "joblib>=1.3.0,<2.0.0",
+    "tqdm>=4.65.0,<5.0.0",
+    "rich>=13.0.0,<14.0.0",
+    "h5io>=0.1.0,<1.0.0",
+    "str2bool>=1.1",
+
+    # Configuration & environment
+    "pyyaml>=6.0,<7.0",
+    "python-dotenv>=0.5.1,<2.0.0",
+    "click>=8.0.0,<9.0.0",
+]
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
+    "ipython>=8.12.0",
+    "jupyter>=1.0.0",
+    "invoke>=2.2.0",
+]
+
+# Testing dependencies
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0",
+    "coverage[toml]>=7.3.0",
+]
+
+# Documentation dependencies
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "sphinx-autodoc-typehints>=1.24.0",
+    "myst-parser>=2.0.0",
+]
+
+# HPC/SLURM utilities
+hpc = [
+    "jinja2>=3.1.0",
+]
+
+# All optional dependencies
+all = [
+    "saflow[dev,test,docs,hpc]",
+]
+
+[project.urls]
+Homepage = "https://github.com/hyruuk/saflow"
+Repository = "https://github.com/hyruuk/saflow"
+Documentation = "https://github.com/hyruuk/saflow/blob/main/README.md"
+"Bug Tracker" = "https://github.com/hyruuk/saflow/issues"
+
+[tool.setuptools]
+packages = ["saflow", "code"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+saflow = ["py.typed"]
+
+# ============================================================================
+# Ruff Configuration
+# ============================================================================
+[tool.ruff]
+# Line length
+line-length = 100
+indent-width = 4
+
+# Target Python 3.9+
+target-version = "py39"
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "env",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+    "logs",
+    "reports",
+    "data",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+]
+
+[tool.ruff.lint]
+# Enable specific rule sets
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez
+    "T10",    # flake8-debugger
+    "ISC",    # flake8-implicit-str-concat
+    "ICN",    # flake8-import-conventions
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "Q",      # flake8-quotes
+    "RSE",    # flake8-raise
+    "RET",    # flake8-return
+    "SIM",    # flake8-simplify
+    "PTH",    # flake8-use-pathlib
+    "PD",     # pandas-vet
+    "NPY",    # numpy-specific rules
+    "RUF",    # Ruff-specific rules
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+    "B008",   # Function calls in argument defaults
+    "B904",   # Use 'raise from' for exception chaining (can be overly strict)
+    "RET504", # Unnecessary variable assignment before return
+    "SIM108", # Use ternary operator (can reduce readability)
+    "PTH123", # open() should be replaced by Path.open() (too strict)
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Test files can use assertions and relative imports
+"tests/**/*.py" = ["S101", "TID252"]
+# __init__.py files can have unused imports
+"__init__.py" = ["F401", "F403"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["saflow", "code"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+
+# Indent with spaces
+indent-style = "space"
+
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+
+# Use Unix line endings
+line-ending = "auto"
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Output options
+addopts = [
+    "-v",                          # Verbose output
+    "--strict-markers",            # Strict marker checking
+    "--tb=short",                  # Short traceback format
+    "--cov=saflow",                # Coverage for saflow package
+    "--cov=code",                  # Coverage for code package
+    "--cov-report=term-missing",   # Show missing lines
+    "--cov-report=html",           # Generate HTML coverage report
+    "--cov-report=xml",            # Generate XML coverage report
+]
+
+# Test discovery
+norecursedirs = [
+    ".*",
+    "build",
+    "dist",
+    "*.egg",
+    "venv",
+    "env",
+    "data",
+    "logs",
+    "reports",
+]
+
+# Markers for organizing tests
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "preprocessing: marks tests for preprocessing module",
+    "features: marks tests for feature extraction module",
+    "statistics: marks tests for statistics module",
+    "classification: marks tests for classification module",
+    "visualization: marks tests for visualization module",
+    "requires_data: marks tests that require real data",
+    "requires_slurm: marks tests that require SLURM",
+]
+
+# ============================================================================
+# Mypy Configuration
+# ============================================================================
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Set to true once codebase is fully typed
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+ignore_missing_imports = true
+
+# Per-module options
+[[tool.mypy.overrides]]
+module = [
+    "mne.*",
+    "mne_bids.*",
+    "autoreject.*",
+    "fooof.*",
+    "neurokit2.*",
+    "mlneurotools.*",
+]
+ignore_missing_imports = true
+
+# ============================================================================
+# Coverage Configuration
+# ============================================================================
+[tool.coverage.run]
+source = ["saflow", "code"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__init__.py",
+    "*/setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

@@ -1,0 +1,223 @@
+# Saflow Configuration Template
+# Copy this file to config.yaml and replace all <PLACEHOLDERS> with actual values
+
+# =============================================================================
+# Paths Configuration
+# =============================================================================
+paths:
+  # Root data directory (where sourcedata/, derivatives/, processed/ live)
+  data_root: <DATA_ROOT>  # e.g., /media/hyruuk/YH_storage/DATA/saflow
+
+  # Data paths (relative to data_root)
+  raw: sourcedata/
+  derivatives: derivatives/
+  processed: processed/
+
+  # Project-specific paths (in saflow/ project directory)
+  reports: ./reports
+  logs: ./logs
+  venv: ./env
+
+  # HPC-specific paths
+  slurm_output: ./logs/slurm
+  tmp: /tmp  # or /scratch on HPC
+
+  # FreeSurfer subjects directory (in data_root)
+  freesurfer_subjects_dir: fs_subjects/  # Will be resolved relative to data_root
+
+# =============================================================================
+# BIDS Configuration
+# =============================================================================
+bids:
+  task_name: gradCPT
+
+  # Subject list (deliberately excludes 16, 25, 27 as per cc_saflow)
+  subjects:
+    - "04"
+    - "05"
+    - "06"
+    - "07"
+    - "08"
+    - "09"
+    - "10"
+    - "11"
+    - "12"
+    - "13"
+    - "14"
+    - "15"
+    - "17"
+    - "18"
+    - "19"
+    - "20"
+    - "21"
+    - "22"
+    - "23"
+    - "24"
+    - "26"
+    - "28"
+    - "29"
+    - "30"
+    - "31"
+    - "32"
+    - "33"
+    - "34"
+    - "35"
+    - "36"
+    - "37"
+    - "38"
+
+  sessions:
+    - recording
+
+  # Task runs (gradCPT)
+  task_runs:
+    - "02"
+    - "03"
+    - "04"
+    - "05"
+    - "06"
+    - "07"
+
+  # Resting state run (for future QC)
+  rest_runs:
+    - "01"
+    - "08"
+
+# =============================================================================
+# Preprocessing Configuration
+# =============================================================================
+preprocessing:
+  filter:
+    lowcut: 0.5
+    highcut: 200.0
+    notch:
+      - 60.0
+
+  ica:
+    method: fastica
+    n_components: 20  # null = automatic
+    random_state: 0
+
+  autoreject:
+    n_interpolate:
+      - 1
+      - 4
+      - 32
+    consensus:
+      - 0.1
+      - 0.2
+      - 0.3
+      - 0.5
+
+# =============================================================================
+# Source Reconstruction Configuration
+# =============================================================================
+source_reconstruction:
+  method: dSPM
+  snr: 3.0
+  atlas: aparc.a2009s
+  parc: aparc.a2009s  # Parcellation for ROI extraction
+
+# =============================================================================
+# Analysis Configuration (CRITICAL: Sensor vs Source)
+# =============================================================================
+# This section controls whether the pipeline operates in sensor-level or
+# source-level analysis space.
+#
+# Phase 1 (current refactoring): sensor-level replication
+# Phase 2 (post-refactoring): source-level extension
+analysis:
+  # Analysis space: "sensor" or "source"
+  space: sensor
+
+  # Source-specific settings (used when space="source")
+  source:
+    use_atlas: true
+    atlas_name: aparc.a2009s
+    morph_to_template: true  # Morph to fsaverage
+    roi_based: true          # Extract ROI time series vs. whole brain
+
+# =============================================================================
+# Feature Extraction Configuration
+# =============================================================================
+features:
+  # Frequency bands for spectral analysis
+  frequency_bands:
+    delta:
+      - 2
+      - 4
+    theta:
+      - 4
+      - 8
+    alpha:
+      - 8
+      - 12
+    lobeta:
+      - 12
+      - 20
+    hibeta:
+      - 20
+      - 30
+    gamma1:
+      - 30
+      - 60
+    gamma2:
+      - 60
+      - 90
+    gamma3:
+      - 90
+      - 120
+
+# =============================================================================
+# Computing Configuration
+# =============================================================================
+computing:
+  n_jobs: -1  # -1 = use all available cores
+
+  slurm:
+    enabled: true
+    account: <SLURM_ACCOUNT>  # e.g., def-kjerbi
+    partition: standard
+
+    # Resource allocations per pipeline stage
+    preprocessing:
+      cpus: 12
+      mem: 32G
+      time: "12:00:00"
+
+    source_reconstruction:
+      cpus: 1
+      mem: 256G
+      time: "2:00:00"
+
+    features:
+      cpus: 12
+      mem: 32G
+      time: "6:00:00"
+
+    statistics:
+      cpus: 12
+      mem: 32G
+      time: "24:00:00"
+
+    classification:
+      cpus: 24
+      mem: 32G
+      time: "168:00:00"
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  to_file: true
+  to_console: true
+
+# =============================================================================
+# Reproducibility Configuration
+# =============================================================================
+reproducibility:
+  random_seed: 42
+  track_git_hash: true
+  save_provenance: true
