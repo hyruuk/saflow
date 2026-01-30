@@ -1,9 +1,9 @@
 # Saflow Refactoring Progress Tracker
 
 **Last Updated**: 2026-01-30
-**Current Phase**: Phase 3.1 COMPLETE - BIDS Generation ✅
+**Current Phase**: Phase 3.2 COMPLETE - Preprocessing Pipeline ✅
 **Analysis Focus**: Sensor-level analysis (Phase 1), Source-level planned for Phase 2
-**Status**: ✅ Stage 0 Implemented - Ready for User Testing
+**Status**: ✅ Stage 0-1 Implemented - Testing preprocessing on sub-04 to sub-08
 
 ---
 
@@ -477,11 +477,133 @@ python code/bids/generate_bids.py --subjects 04 05 06
 
 ---
 
+### ✅ Phase 3.2: Preprocessing Pipeline (Stage 1)
+**Status**: COMPLETE
+**What was done**:
+- ✅ Created `code/preprocessing/` module with four files:
+  - `__init__.py` - Package initialization
+  - `utils.py` - Preprocessing utilities (paths, filtering, epoching, noise covariance)
+  - `ica_pipeline.py` - ICA artifact removal pipeline
+  - `autoreject_pipeline.py` - AutoReject epoch rejection
+  - `run_preprocessing.py` - Main orchestration script
+- ✅ Migrated from cc_saflow/saflow/data/preprocessing.py with major improvements:
+  - **Two-pass AutoReject approach** (IMPROVEMENT over original):
+    1. First pass (fit only) on aggressively filtered data → identify bad epochs for ICA
+    2. Second pass (fit_transform) on ICA-cleaned data → interpolate bad channels
+  - **Saves BOTH versions**:
+    - ICA-only epochs (processing="ica") for comparison
+    - ICA+AR epochs (processing="icaar") as final cleaned data
+  - **Comprehensive comparison report** showing data quality and rejection statistics for both versions
+  - Uses config.yaml for all parameters
+  - Comprehensive logging throughout
+  - Progress tracking with rich library
+  - Provenance metadata saved with all outputs
+
+**Two-pass AutoReject details**:
+- **First pass**: Fit on aggressively filtered epochs (1 Hz highpass), get bad epochs mask for ICA fitting
+- **Second pass**: Fit_transform on ICA-cleaned epochs, interpolates bad channels and rejects remaining bad epochs
+- Report compares both versions with summary table showing:
+  - Bad epochs from each pass
+  - Channels interpolated in second pass
+  - Final data retention percentage
+  - Evoked responses for both versions
+
+**Helper functions in utils.py**:
+- `create_preprocessing_paths()` - Create BIDSPath objects for inputs/outputs
+- `compute_or_load_noise_cov()` - Compute or cache noise covariance from empty-room
+- `apply_filtering()` - Apply bandpass + notch filters, create two versions (0.1 Hz and 1 Hz highpass)
+- `create_epochs()` - Create epochs from continuous data
+
+**ICA pipeline** (ica_pipeline.py):
+- `fit_ica()` - Fit ICA on good epochs
+- `find_ecg_components()` - Detect cardiac artifacts
+- `find_eog_components()` - Detect ocular artifacts
+- `apply_ica()` - Remove artifact components
+- `run_ica_pipeline()` - Complete ICA workflow
+
+**AutoReject pipeline** (autoreject_pipeline.py):
+- `run_autoreject()` - First pass (fit only, for bad epoch identification)
+- `run_autoreject_transform()` - Second pass (fit_transform, with interpolation)
+- `get_good_epochs_mask()` - Extract good epochs mask
+
+**Main script features** (run_preprocessing.py):
+- Argparse CLI with --subject, --runs, --bids-root, --log-level, --skip-existing
+- Config-driven preprocessing parameters
+- Two filtered versions: 0.1-200 Hz (final) and 1-200 Hz (for AR/ICA)
+- Gradient compensation (grade 3) for source reconstruction
+- Two-pass AutoReject with comparison
+- ICA artifact removal (ECG + EOG)
+- HTML report with diagnostic plots comparing both versions
+- Saves preprocessed continuous data, both epoch versions, both AR logs, report, and metadata
+- Memory cleanup after processing
+
+**Output structure** (three data versions saved):
+1. **Continuous (ICA-cleaned)**: `derivatives/preprocessed/sub-{subject}/meg/*_proc-clean_meg.fif`
+2. **Epochs (ICA only)**: `derivatives/epochs/sub-{subject}/meg/*_proc-ica_meg.fif`
+3. **Epochs (ICA+AR)**: `derivatives/epochs/sub-{subject}/meg/*_proc-icaar_meg.fif`
+
+**Metadata and reports**:
+- AR logs (both passes): `derivatives/preprocessed/sub-{subject}/meg/*_desc-ARlog{1,2}_meg.pkl`
+- HTML report: `derivatives/preprocessed/sub-{subject}/meg/*_desc-report_meg.html`
+- **Text summary**: `derivatives/preprocessed/sub-{subject}/meg/*_desc-report_meg_summary.txt` (NEW!)
+- Processing metadata: `derivatives/preprocessed/sub-{subject}/meg/*_params.json`
+- Execution logs: `logs/preprocessing/preprocessing_sub-{subject}_YYYYMMDD_HHMMSS.log`
+
+**Key improvements over original**:
+1. **Two-pass AutoReject** (original had second pass commented out) - better data quality
+2. **Saves THREE versions** for comparison: continuous (ICA), epochs (ICA), epochs (ICA+AR)
+3. **Comprehensive comparison report** with structured HTML tables and text summary
+4. **Text-based summary file** (*_summary.txt) for easy parsing and review
+5. No hardcoded paths - all from config or CLI
+6. Proper logging throughout with clear progress indicators (✓ checkmarks)
+7. Modular design (separate files for ICA, AR, utilities)
+8. Provenance metadata saved with detailed metrics
+9. Progress reporting with rich library
+10. Type hints and docstrings throughout
+11. Comprehensive error handling
+
+**Files created**:
+- `code/preprocessing/__init__.py`
+- `code/preprocessing/utils.py`
+- `code/preprocessing/ica_pipeline.py`
+- `code/preprocessing/autoreject_pipeline.py`
+- `code/preprocessing/run_preprocessing.py`
+
+**Invoke task added**:
+- `invoke preprocess --subject=04` - Run preprocessing (Stage 1)
+
+**Usage via invoke** (recommended):
+```bash
+# Process all task runs for subject 04
+invoke preprocess --subject=04
+
+# Process specific runs only
+invoke preprocess --subject=04 --runs="02 03"
+
+# Reprocess existing files
+invoke preprocess --subject=04 --no-skip-existing
+
+# Debug mode
+invoke preprocess --subject=04 --log-level=DEBUG
+```
+
+**Direct usage** (alternative):
+```bash
+# Process all task runs
+python -m code.preprocessing.run_preprocessing -s 04
+
+# Process specific runs
+python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
+```
+
+---
+
 ## Next Steps
 
 ### ✅ PHASE 1 COMPLETE ✅
 ### ✅ PHASE 2 COMPLETE ✅
 ### ✅ PHASE 3.1 COMPLETE ✅
+### ✅ PHASE 3.2 COMPLETE ✅
 
 **All Phase 1 sub-phases complete:**
 1. ~~Phase 1.1: Create project structure~~ ✅
@@ -497,12 +619,13 @@ python code/bids/generate_bids.py --subjects 04 05 06
 
 **Phase 3 Progress:**
 1. ~~Phase 3.1: Stage 0 - BIDS Generation~~ ✅
-2. Phase 3.2: Stage 1 - Preprocessing ← **NEXT (pending user testing of BIDS)**
-3. Phase 3.3: Stage 2 - Source Reconstruction
+2. ~~Phase 3.2: Stage 1 - Preprocessing~~ ✅
+3. Phase 3.3: Stage 2 - Source Reconstruction ← **NEXT**
 
 **Current Status:**
-✅ BIDS generation script implemented and ready for user testing with real data
-⏳ Awaiting user validation before proceeding to preprocessing
+✅ BIDS generation (Stage 0) complete and tested
+✅ Preprocessing pipeline (Stage 1) complete with two-pass AutoReject
+⏳ Ready to test preprocessing on subject 04 (BIDS data available)
 
 ---
 

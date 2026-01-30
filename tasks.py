@@ -531,6 +531,67 @@ def bids(
     c.run(" ".join(cmd), pty=True, env=env)
 
 
+@task
+def preprocess(
+    c,
+    subject,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+):
+    """Run MEG preprocessing (Stage 1).
+
+    Preprocesses BIDS MEG data with filtering, AutoReject, and ICA artifact removal.
+    Saves preprocessed continuous data, epochs, logs, and HTML reports.
+
+    Args:
+        subject: Subject ID to process (required)
+        runs: Run numbers to process (space-separated, default: all task runs from config)
+        bids_root: Override BIDS root directory from config
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        skip_existing: Skip runs already preprocessed (default: True)
+
+    Examples:
+        invoke preprocess --subject=04
+        invoke preprocess --subject=04 --runs="02 03"
+        invoke preprocess --subject=04 --log-level=DEBUG
+        invoke preprocess --subject=04 --bids-root=/path/to/bids
+        invoke preprocess --subject=04 --no-skip-existing
+    """
+    print("=" * 80)
+    print("MEG Preprocessing - Stage 1")
+    print("=" * 80)
+
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command - run as module with PYTHONPATH set
+    cmd = [python_exe, "-m", "code.preprocessing.run_preprocessing"]
+
+    cmd.extend(["--subject", subject])
+
+    if runs:
+        cmd.extend(["--runs"] + runs.split())
+
+    if bids_root:
+        cmd.extend(["--bids-root", str(bids_root)])
+
+    cmd.extend(["--log-level", log_level])
+
+    if skip_existing:
+        cmd.append("--skip-existing")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+
+    # Set PYTHONPATH to include project root
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
 # ==============================================================================
 # List Tasks
 # ==============================================================================

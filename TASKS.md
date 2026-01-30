@@ -1,22 +1,8 @@
-# Saflow Task Reference
+# Saflow Pipeline Task Reference
 
-This document describes all available invoke tasks for the saflow pipeline.
-All tasks can be run using `invoke <task-name> [options]`.
+This document describes the invoke tasks for running the saflow MEG analysis pipeline.
 
 **Quick reference**: Run `invoke --list` to see all available tasks.
-
----
-
-## Table of Contents
-
-1. [Pipeline Tasks](#pipeline-tasks) - Main analysis pipeline
-2. [Testing Tasks](#testing-tasks) - Run tests
-3. [Code Quality Tasks](#code-quality-tasks) - Linting, formatting, type checking
-4. [Cleaning Tasks](#cleaning-tasks) - Clean generated files
-5. [Environment Tasks](#environment-tasks) - Setup and manage environment
-6. [Documentation Tasks](#documentation-tasks) - Build documentation
-7. [Utility Tasks](#utility-tasks) - Helper tasks
-8. [Workflow Tasks](#workflow-tasks) - Combined workflows
 
 ---
 
@@ -55,10 +41,6 @@ invoke validate-inputs --data-root=/media/storage/DATA/saflow
 - Table showing runs per subject
 - List of missing subjects (if any)
 - Summary of behavioral files
-
-**Exit codes:**
-- `0`: Validation passed
-- `1`: Validation failed (missing data or errors)
 
 ---
 
@@ -111,26 +93,103 @@ invoke bids --log-level=DEBUG
 - Provenance: `{bids_root}/code/provenance_bids.json`
 
 **Expected runtime:**
-- ~5-10 minutes for 30 subjects (7 runs each)
-- Depends on disk I/O speed
-
-**Requirements:**
-- Raw MEG data in CTF format (`.ds` files)
-- Behavioral logfiles (`.mat` files)
-- Valid `config.yaml` with correct paths
+- ~8-10 minutes for 32 subjects (6 task runs + 1 rest run each)
 
 ---
 
-## Testing Tasks
+### `invoke preprocess`
+
+Run MEG preprocessing (Stage 1 of pipeline).
+
+**What it does:**
+1. Loads raw BIDS data
+2. Applies gradient compensation (grade 3, required for source reconstruction)
+3. Applies bandpass filtering (0.1-200 Hz) and notch filtering (60 Hz harmonics)
+4. Creates epochs for all events
+5. Runs AutoReject (first pass) to identify bad epochs for ICA
+6. Computes or loads noise covariance from empty-room recording
+7. Fits ICA on good epochs
+8. Detects and removes ECG and EOG artifact components
+9. Runs AutoReject (second pass) with interpolation on ICA-cleaned data
+10. Saves:
+    - Preprocessed continuous data (ICA-cleaned, FIF format)
+    - Clean epochs (ICA only version)
+    - Clean epochs (ICA+AR version with interpolation)
+    - Both AutoReject logs (pickle)
+    - HTML report with diagnostic plots
+    - Text summary with all metrics
+    - Processing metadata (JSON)
+
+**Arguments:**
+- `--subject ID`: Subject ID to process (required)
+- `--runs "R1 R2 ..."`: Run numbers to process (space-separated, default: all task runs from config)
+- `--bids-root PATH`: Override BIDS root directory from config
+- `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
+- `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files (default: skip)
+
+**Examples:**
+```bash
+# Process all task runs for subject 04
+invoke preprocess --subject=04
+
+# Process specific runs only
+invoke preprocess --subject=04 --runs="02 03"
+
+# Reprocess existing files
+invoke preprocess --subject=04 --no-skip-existing
+
+# Override BIDS location
+invoke preprocess --subject=04 --bids-root=/path/to/bids
+
+# Debug mode with verbose logging
+invoke preprocess --subject=04 --log-level=DEBUG
+```
+
+**Output locations:**
+- Continuous (ICA-cleaned): `{data_root}/derivatives/preprocessed/sub-{subject}/meg/*_proc-clean_meg.fif`
+- Epochs (ICA only): `{data_root}/derivatives/epochs/sub-{subject}/meg/*_proc-ica_meg.fif`
+- Epochs (ICA+AR): `{data_root}/derivatives/epochs/sub-{subject}/meg/*_proc-icaar_meg.fif`
+- HTML reports: `{derivatives}/preprocessed/sub-{subject}/meg/*_desc-report_meg.html`
+- Text summaries: `{derivatives}/preprocessed/sub-{subject}/meg/*_desc-report_meg_summary.txt`
+- AutoReject logs: `{derivatives}/preprocessed/sub-{subject}/meg/*_desc-ARlog{1,2}_meg.pkl`
+- Metadata: `{derivatives}/preprocessed/sub-{subject}/meg/*_params.json`
+- Logs: `logs/preprocessing/preprocessing_sub-{subject}_YYYYMMDD_HHMMSS.log`
+
+**Expected runtime:**
+- ~30-60 minutes per run (depends on n_jobs)
+- Longer for first run (computes noise covariance)
+- Can run multiple subjects in parallel
+
+**Configuration parameters used:**
+```yaml
+preprocessing:
+  filter:
+    lowcut: 0.1          # Hz
+    highcut: 200         # Hz
+    notch: [60]          # Hz
+  ica:
+    method: "fastica"
+    n_components: 20
+    random_state: 42
+  autoreject:
+    n_interpolate: [1, 4, 32]
+    consensus: [0.1, 0.2, 0.3, 0.5]
+
+computing:
+  n_jobs: -1  # Use all CPUs
+```
+
+---
+
+## Utility Tasks
 
 ### `invoke test`
 
-Run full test suite with pytest.
+Run test suite with pytest.
 
 **Arguments:**
-- `--verbose`: Enable verbose output (`pytest -v`)
+- `--verbose`: Enable verbose output
 - `--coverage` / `--no-coverage`: Generate coverage report (default: True)
-- `--markers EXPR`: Run only tests matching marker expression
 
 **Examples:**
 ```bash
@@ -140,434 +199,33 @@ invoke test
 # Verbose output
 invoke test --verbose
 
-# Run specific markers
-invoke test --markers="not slow"
-
 # Without coverage report
 invoke test --no-coverage
 ```
 
-**Output:**
-- Coverage report in terminal
-- HTML coverage report: `htmlcov/index.html`
-- XML coverage report: `coverage.xml`
-
 ---
-
-### `invoke test-fast`
-
-Run only fast tests (excludes tests marked with `@pytest.mark.slow`).
-
-**Examples:**
-```bash
-invoke test-fast
-```
-
----
-
-### `invoke test-unit`
-
-Run only unit tests (tests marked with `@pytest.mark.unit`).
-
-**Examples:**
-```bash
-invoke test-unit
-```
-
----
-
-### `invoke test-integration`
-
-Run only integration tests (tests marked with `@pytest.mark.integration`).
-
-**Examples:**
-```bash
-invoke test-integration
-```
-
----
-
-## Code Quality Tasks
-
-### `invoke lint`
-
-Run ruff linting to check code quality.
-
-**Arguments:**
-- `--fix`: Automatically fix issues where possible
-
-**Examples:**
-```bash
-# Check for issues
-invoke lint
-
-# Auto-fix issues
-invoke lint --fix
-```
-
-**What it checks:**
-- Code style (PEP 8)
-- Common bugs (unused imports, undefined names)
-- Code complexity
-- Import sorting
-- Documentation quality
-
----
-
-### `invoke format`
-
-Format code with ruff formatter.
-
-**Arguments:**
-- `--check`: Only check formatting without modifying files
-
-**Examples:**
-```bash
-# Format all code
-invoke format
-
-# Check formatting without changes
-invoke format --check
-```
-
-**What it does:**
-- Applies consistent code style
-- Sorts imports
-- Adjusts line lengths
-- Standardizes quotes
-
----
-
-### `invoke typecheck`
-
-Run mypy type checking.
-
-**Examples:**
-```bash
-invoke typecheck
-```
-
-**What it checks:**
-- Type hint correctness
-- Type consistency
-- Missing type annotations (when enabled)
-
----
-
-### `invoke check`
-
-Run all code quality checks (lint + format + typecheck).
-
-Useful for pre-commit or CI checks.
-
-**Examples:**
-```bash
-invoke check
-```
-
-**Output:**
-- Summary of all checks
-- Overall pass/fail status
-
----
-
-## Cleaning Tasks
-
-### `invoke clean`
-
-Clean generated files and caches.
-
-**Arguments:**
-- `--bytecode` / `--no-bytecode`: Remove Python bytecode (default: True)
-- `--cache` / `--no-cache`: Remove tool caches (default: True)
-- `--coverage` / `--no-coverage`: Remove coverage reports (default: True)
-- `--build` / `--no-build`: Remove build artifacts (default: True)
-- `--logs`: Remove log files (default: False)
-- `--reports`: Remove report files (default: False)
-
-**Examples:**
-```bash
-# Clean standard generated files
-invoke clean
-
-# Clean including logs and reports
-invoke clean --logs --reports
-
-# Clean only bytecode
-invoke clean --no-cache --no-coverage --no-build
-```
-
-**What it removes:**
-- `__pycache__/`, `*.pyc`, `*.pyo` (bytecode)
-- `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/` (caches)
-- `htmlcov/`, `.coverage`, `coverage.xml` (coverage)
-- `*.egg-info/`, `build/`, `dist/` (build artifacts)
-- `logs/` (if `--logs` specified)
-- `reports/` (if `--reports` specified)
-
----
-
-### `invoke clean-all`
-
-Clean everything including logs and reports.
-
-Equivalent to `invoke clean --logs --reports`.
-
-**Examples:**
-```bash
-invoke clean-all
-```
-
----
-
-## Environment Tasks
-
-### `invoke setup`
-
-Run the setup script to create development environment.
-
-**Arguments:**
-- `--mode MODE`: Installation mode (basic, dev, hpc, all)
-- `--python PYTHON`: Python executable to use (default: python3.9)
-- `--force`: Force reinstall if venv exists
-
-**Examples:**
-```bash
-# Basic installation
-invoke setup
-
-# Development installation with all tools
-invoke setup --mode=dev
-
-# All optional dependencies
-invoke setup --mode=all
-
-# Use different Python version
-invoke setup --mode=dev --python=python3.10
-
-# Force reinstall
-invoke setup --force
-```
-
-**Installation modes:**
-- `basic`: Core dependencies only
-- `dev`: Core + development tools (ruff, mypy, pytest, etc.)
-- `hpc`: Core + HPC/SLURM utilities
-- `all`: Everything (dev + hpc + docs)
-
----
-
-### `invoke rebuild`
-
-Clean environment and rebuild from scratch.
-
-**Arguments:**
-- `--mode MODE`: Installation mode (default: dev)
-
-**Examples:**
-```bash
-# Rebuild development environment
-invoke rebuild
-
-# Rebuild with all dependencies
-invoke rebuild --mode=all
-```
-
----
-
-## Documentation Tasks
-
-### `invoke docs`
-
-Build documentation with Sphinx.
-
-**Arguments:**
-- `--serve`: Serve documentation locally after building
-- `--port PORT`: Port for local server (default: 8000)
-
-**Examples:**
-```bash
-# Build documentation
-invoke docs
-
-# Build and serve locally
-invoke docs --serve
-
-# Serve on different port
-invoke docs --serve --port=8080
-```
-
-**Output:**
-- HTML documentation: `docs/_build/html/`
-- Access at: `http://localhost:8000`
-
----
-
-## Utility Tasks
 
 ### `invoke info`
 
-Display project information.
+Display project information and configuration status.
+
+Shows:
+- Project root and directory paths
+- Configuration file status
+- Virtual environment status
+- Python version
 
 **Examples:**
 ```bash
 invoke info
 ```
 
-**Shows:**
-- Project root path
-- Package directories
-- Configuration status
-- Virtual environment status
-- Python version
-
 ---
 
-### `invoke validate-config`
+## Notes
 
-Validate configuration file syntax and content.
-
-**Examples:**
-```bash
-invoke validate-config
-```
-
-**Checks:**
-- YAML syntax is valid
-- Required fields are present
-- Paths are correctly formatted
-- No placeholder values remain
-
----
-
-## Workflow Tasks
-
-### `invoke precommit`
-
-Run pre-commit checks (format + lint + test).
-
-Runs in sequence:
-1. Format code
-2. Lint code
-3. Run tests
-
-**Examples:**
-```bash
-invoke precommit
-```
-
-**Use before:**
-- Committing changes
-- Creating pull requests
-- Pushing to shared branches
-
----
-
-### `invoke help`
-
-Show available tasks (default task).
-
-**Examples:**
-```bash
-# These are equivalent
-invoke
-invoke help
-invoke --list
-```
-
----
-
-## Typical Workflows
-
-### Starting a new analysis
-
-```bash
-# 1. Validate configuration
-invoke validate-config
-
-# 2. Check input data is complete
-invoke validate-inputs --verbose
-
-# 3. Run BIDS conversion (dry run first)
-invoke bids --dry-run
-invoke bids
-
-# 4. Check logs for any issues
-less logs/bids/bids_conversion_*.log
-```
-
-### Before committing code
-
-```bash
-# Run all quality checks and tests
-invoke precommit
-```
-
-### Setting up development environment
-
-```bash
-# First time setup
-invoke setup --mode=dev
-
-# After pulling changes
-invoke rebuild --mode=dev
-```
-
-### Running specific subjects
-
-```bash
-# BIDS conversion for subjects 04, 05, 06 only
-invoke bids --subjects "04 05 06"
-```
-
----
-
-## Task Dependencies
-
-Some tasks run other tasks automatically:
-
-- `invoke precommit` → format, lint, test
-- `invoke rebuild` → clean, setup
-- `invoke check` → lint, format (check), typecheck
-
----
-
-## Exit Codes
-
-All tasks follow standard exit code conventions:
-- `0`: Success
-- `1`: Failure (validation failed, tests failed, errors occurred)
-- Non-zero: Error or failure
-
-Use exit codes for scripting:
-```bash
-# Example: Only proceed if validation passes
-if invoke validate-inputs; then
-    invoke bids
-else
-    echo "Validation failed, fix errors first"
-    exit 1
-fi
-```
-
----
-
-## Getting Help
-
-For any task, use `--help`:
-```bash
-invoke bids --help
-invoke test --help
-```
-
-For overall help:
-```bash
-invoke --list
-invoke --help
-```
-
-For pipeline questions, see:
-- `README.md` - Project overview
-- `PROGRESS.md` - Current implementation status
-- `docs/workflow.md` - Detailed pipeline documentation
-- `AGENTS.md` - Development guidelines
+- All pipeline tasks support `--help` to see detailed options
+- Logs are saved to `logs/{stage}/` for each pipeline stage
+- Most tasks are idempotent (can be re-run safely)
+- Use `--skip-existing` (default) to avoid reprocessing
+- Configuration is loaded from `config.yaml` (see `config.yaml.template`)
