@@ -534,11 +534,13 @@ def bids(
 @task
 def preprocess(
     c,
-    subject,
+    subject=None,
     runs=None,
     bids_root=None,
     log_level="INFO",
     skip_existing=True,
+    slurm=False,
+    dry_run=False,
 ):
     """Run MEG preprocessing (Stage 1).
 
@@ -546,23 +548,66 @@ def preprocess(
     Saves preprocessed continuous data, epochs, logs, and HTML reports.
 
     Args:
-        subject: Subject ID to process (required)
+        subject: Subject ID to process (default: all subjects from config)
         runs: Run numbers to process (space-separated, default: all task runs from config)
         bids_root: Override BIDS root directory from config
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
         skip_existing: Skip runs already preprocessed (default: True)
+        slurm: Submit jobs to SLURM instead of running locally (default: False)
+        dry_run: Generate SLURM scripts without submitting (requires --slurm)
 
     Examples:
+        # Local execution (single subject)
         invoke preprocess --subject=04
         invoke preprocess --subject=04 --runs="02 03"
         invoke preprocess --subject=04 --log-level=DEBUG
-        invoke preprocess --subject=04 --bids-root=/path/to/bids
-        invoke preprocess --subject=04 --no-skip-existing
+
+        # SLURM execution (distributed, one job per run)
+        invoke preprocess --subject=04 --slurm
+        invoke preprocess --slurm  # Process all subjects
+        invoke preprocess --slurm --dry-run  # Generate scripts without submitting
     """
     print("=" * 80)
     print("MEG Preprocessing - Stage 1")
     print("=" * 80)
 
+    if slurm:
+        # SLURM execution: submit jobs
+        _preprocess_slurm(
+            c,
+            subject=subject,
+            runs=runs,
+            bids_root=bids_root,
+            log_level=log_level,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
+        )
+    else:
+        # Local execution: run directly
+        if not subject:
+            print("ERROR: --subject is required for local execution")
+            print("Use --slurm to process all subjects in parallel on HPC")
+            return
+
+        _preprocess_local(
+            c,
+            subject=subject,
+            runs=runs,
+            bids_root=bids_root,
+            log_level=log_level,
+            skip_existing=skip_existing,
+        )
+
+
+def _preprocess_local(
+    c,
+    subject: str,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+):
+    """Run preprocessing locally (helper function)."""
     # Get Python executable (prefer venv)
     python_exe = get_python_executable()
 
@@ -590,6 +635,145 @@ def preprocess(
     env["PYTHONPATH"] = str(PROJECT_ROOT)
 
     c.run(" ".join(cmd), pty=True, env=env)
+
+
+def _preprocess_slurm(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    dry_run=False,
+):
+    """Submit preprocessing jobs to SLURM (helper function)."""
+    from datetime import datetime
+
+    # Import after checking --slurm to avoid import errors on local machines
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, submit_slurm_job, save_job_manifest
+
+    print("\n[SLURM Mode] Submitting preprocessing jobs to cluster\n")
+
+    # Load config
+    config = load_config()
+
+    # Determine subjects to process
+    if subject:
+        subjects = [subject]
+        print(f"Processing subject: {subject}")
+    else:
+        subjects = config["bids"]["subjects"]
+        print(f"Processing all subjects: {len(subjects)} subjects")
+
+    # Determine runs to process
+    if runs:
+        run_list = runs.split()
+        print(f"Processing runs: {', '.join(run_list)}")
+    else:
+        run_list = config["bids"]["task_runs"]
+        print(f"Processing all task runs: {', '.join(run_list)}")
+
+    # Determine BIDS root
+    if not bids_root:
+        data_root = Path(config["paths"]["data_root"])
+        bids_root = data_root / config["paths"]["derivatives"] / "bids"
+    else:
+        bids_root = Path(bids_root)
+
+    print(f"BIDS root: {bids_root}")
+    print(f"Total jobs to submit: {len(subjects)} subjects × {len(run_list)} runs = {len(subjects) * len(run_list)} jobs")
+    print()
+
+    # Get SLURM configuration
+    slurm_config = config["computing"]["slurm"]
+    preproc_resources = slurm_config["preprocessing"]
+
+    # Create output directories
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "preprocessing"
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "preprocessing"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    script_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get venv path
+    venv_path = PROJECT_ROOT / config["paths"]["venv"]
+
+    # Generate and submit jobs
+    job_ids = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    for subj in subjects:
+        for run in run_list:
+            # Job name
+            job_name = f"preproc_sub-{subj}_run-{run}"
+
+            # Template context
+            context = {
+                "job_name": job_name,
+                "account": slurm_config["account"],
+                "partition": slurm_config.get("partition", "standard"),
+                "time": preproc_resources["time"],
+                "cpus": preproc_resources["cpus"],
+                "mem": preproc_resources["mem"],
+                "email": slurm_config.get("email"),
+                "modules": slurm_config.get("modules", []),
+                "venv_path": str(venv_path),
+                "project_root": str(PROJECT_ROOT),
+                "log_dir": str(log_dir),
+                "timestamp": timestamp,
+                # Preprocessing-specific
+                "subject": subj,
+                "run": run,
+                "bids_root": str(bids_root),
+                "log_level": log_level,
+                "skip_existing": skip_existing,
+            }
+
+            # Render SLURM script
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script(
+                "preprocessing.sh.j2",
+                context,
+                output_path=script_path,
+            )
+
+            # Submit job
+            job_id = submit_slurm_job(
+                script_path,
+                dry_run=dry_run,
+            )
+
+            if job_id:
+                job_ids.append(job_id)
+
+    # Save job manifest
+    if job_ids:
+        manifest_path = log_dir / f"preprocessing_manifest_{timestamp}.json"
+        save_job_manifest(
+            job_ids,
+            manifest_path,
+            metadata={
+                "stage": "preprocessing",
+                "timestamp": timestamp,
+                "subjects": subjects,
+                "runs": run_list,
+                "num_subjects": len(subjects),
+                "num_runs": len(run_list),
+                "num_jobs": len(job_ids),
+            },
+        )
+
+        print(f"\n{'=' * 80}")
+        print(f"✓ Submitted {len(job_ids)} preprocessing jobs")
+        print(f"  Manifest: {manifest_path}")
+        print(f"  Scripts:  {script_dir}")
+        print(f"  Logs:     {log_dir}")
+        print(f"{'=' * 80}")
+    else:
+        print("\n✗ No jobs were submitted")
+
+    if dry_run:
+        print("\n[DRY RUN] Scripts generated but not submitted")
 
 
 # ==============================================================================

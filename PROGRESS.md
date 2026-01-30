@@ -598,12 +598,84 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 
 ---
 
+---
+
+### ✅ Phase 6.2-6.3: SLURM Integration (HPC)
+**Status**: COMPLETE (implemented early due to user request)
+**What was done**:
+- ✅ Created SLURM utilities module (`code/utils/slurm.py`)
+  - Job submission with `sbatch` integration
+  - Job status checking with `sacct`
+  - Job cancellation with `scancel`
+  - SLURM script rendering with Jinja2 templates
+  - Job manifest tracking (JSON files with job IDs and metadata)
+- ✅ Created Jinja2 template system (`slurm/templates/`)
+  - `base.sh.j2`: Base SLURM template with common directives
+  - `preprocessing.sh.j2`: Preprocessing-specific template
+  - Support for config-driven resource allocation
+  - Environment setup (venv activation, PYTHONPATH, OMP threads)
+  - Comprehensive job logging (stdout/stderr)
+- ✅ Enhanced `invoke preprocess` task with `--slurm` support
+  - Local execution: `invoke preprocess --subject=04` (runs directly)
+  - SLURM execution: `invoke preprocess --slurm` (submits jobs)
+  - Distributed processing: one SLURM job per (subject, run) combination
+  - Supports all subjects: `invoke preprocess --slurm` submits 192 jobs (32 subjects × 6 runs)
+  - Supports single subject: `invoke preprocess --subject=04 --slurm` submits 6 jobs
+  - Dry run support: `invoke preprocess --slurm --dry-run` generates scripts without submitting
+- ✅ Job tracking and management
+  - Job manifests saved to `logs/slurm/preprocessing/preprocessing_manifest_YYYYMMDD_HHMMSS.json`
+  - Contains: job IDs, subjects, runs, timestamps, metadata
+  - SLURM scripts saved to `slurm/scripts/preprocessing/`
+  - Job logs saved to `logs/slurm/preprocessing/*_{jobid}.out/.err`
+- ✅ Configuration integration
+  - SLURM settings in `config.yaml`: account, partition, resources per stage
+  - Per-stage resource allocation (CPUs, memory, time)
+  - Email notifications (optional)
+  - Module loading support (for HPC environments)
+- ✅ Documentation
+  - Updated TASKS.md with SLURM usage examples
+  - Added SLURM Integration section with job management commands
+  - Documented job manifests and log locations
+  - Clear examples for local vs. SLURM execution
+
+**Key design decisions**:
+- **Per-run distribution**: One SLURM job per run (not per subject) to maximize parallelization
+  - Allows processing 192 runs in parallel across cluster
+  - Better resource utilization than batching by subject
+- **Template-based**: Jinja2 templates for maintainability and extensibility
+  - Base template inherited by stage-specific templates
+  - Easy to add new pipeline stages (features, classification, etc.)
+- **Config-driven**: All SLURM parameters from config.yaml
+  - No hardcoded accounts, partitions, or resource allocations
+  - Easy to adapt for different HPC environments
+- **Job tracking**: Manifest files for batch job management
+  - Track all jobs from a single submission
+  - Useful for implementing dependencies in future stages
+
+**Files created**:
+- `code/utils/slurm.py` (310 lines)
+- `slurm/templates/base.sh.j2`
+- `slurm/templates/preprocessing.sh.j2`
+
+**Files modified**:
+- `tasks.py`: Enhanced preprocess task with --slurm support
+- `TASKS.md`: Added SLURM Integration section
+
+**Impact on plan**:
+- Phase 6.2-6.3 implemented early (originally scheduled for Days 19-21)
+- Required for preprocessing at scale on HPC
+- Architecture ready for future stages (features, statistics, classification)
+- All future pipeline tasks will use same template system
+
+---
+
 ## Next Steps
 
 ### ✅ PHASE 1 COMPLETE ✅
 ### ✅ PHASE 2 COMPLETE ✅
 ### ✅ PHASE 3.1 COMPLETE ✅
 ### ✅ PHASE 3.2 COMPLETE ✅
+### ✅ PHASE 6.2-6.3 COMPLETE ✅
 
 **All Phase 1 sub-phases complete:**
 1. ~~Phase 1.1: Create project structure~~ ✅
@@ -622,10 +694,14 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 2. ~~Phase 3.2: Stage 1 - Preprocessing~~ ✅
 3. Phase 3.3: Stage 2 - Source Reconstruction ← **NEXT**
 
+**Phase 6 Progress (early implementation):**
+1. ~~Phase 6.2-6.3: SLURM Integration~~ ✅
+
 **Current Status:**
 ✅ BIDS generation (Stage 0) complete and tested
 ✅ Preprocessing pipeline (Stage 1) complete with two-pass AutoReject
-⏳ Ready to test preprocessing on subject 04 (BIDS data available)
+✅ SLURM integration complete - ready for HPC execution
+⏳ Ready to test preprocessing locally and on HPC
 
 ---
 
@@ -641,10 +717,11 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 - [x] #7: Phase 1.7 - Create task runner
 - [x] #8: Phase 2.1 - Migrate saflow package utilities (REVISED: moved to code/utils/)
 - [x] #9: **Phase 3.1** - Migrate BIDS generation (Stage 0) ✅
+- [x] #10: **Phase 3.2** - Migrate preprocessing (Stage 1) ✅
+- [x] #17: **Phase 6.2-6.3** - SLURM integration ✅ (implemented early)
 
 ### 🔄 Current/Next Tasks
-- [ ] #10: **Phase 3.2** - Migrate preprocessing (Stage 1) ← **NEXT**
-- [ ] #11: Phase 3.3 - Migrate source reconstruction (Stage 2)
+- [ ] #11: Phase 3.3 - Migrate source reconstruction (Stage 2) ← **NEXT**
 
 ### 📋 Upcoming Tasks (Phase 4+)
 - [ ] #12: Phase 4.1 - Migrate sensor-level feature extraction

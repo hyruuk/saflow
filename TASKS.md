@@ -121,28 +121,26 @@ Run MEG preprocessing (Stage 1 of pipeline).
     - Processing metadata (JSON)
 
 **Arguments:**
-- `--subject ID`: Subject ID to process (required)
+- `--subject ID`: Subject ID to process (default: all subjects from config when using --slurm)
 - `--runs "R1 R2 ..."`: Run numbers to process (space-separated, default: all task runs from config)
 - `--bids-root PATH`: Override BIDS root directory from config
 - `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
 - `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files (default: skip)
+- `--slurm`: Submit jobs to SLURM cluster (one job per run)
+- `--dry-run`: Generate SLURM scripts without submitting (requires --slurm)
 
 **Examples:**
 ```bash
-# Process all task runs for subject 04
+# Local execution (single subject)
 invoke preprocess --subject=04
-
-# Process specific runs only
 invoke preprocess --subject=04 --runs="02 03"
-
-# Reprocess existing files
-invoke preprocess --subject=04 --no-skip-existing
-
-# Override BIDS location
-invoke preprocess --subject=04 --bids-root=/path/to/bids
-
-# Debug mode with verbose logging
 invoke preprocess --subject=04 --log-level=DEBUG
+
+# SLURM execution (distributed processing)
+invoke preprocess --subject=04 --slurm              # One job per run for subject 04
+invoke preprocess --slurm                           # Process ALL subjects (192 jobs)
+invoke preprocess --subject=04 --runs="02 03" --slurm  # Specific runs on SLURM
+invoke preprocess --slurm --dry-run                 # Generate scripts without submitting
 ```
 
 **Output locations:**
@@ -218,6 +216,79 @@ Shows:
 **Examples:**
 ```bash
 invoke info
+```
+
+---
+
+## SLURM Integration (HPC)
+
+Pipeline tasks support distributed execution on HPC clusters via SLURM.
+
+### Using SLURM
+
+Add `--slurm` to any pipeline task to submit jobs to the cluster:
+
+```bash
+# Process all subjects in parallel (one job per run)
+invoke preprocess --slurm
+
+# Process specific subject on cluster
+invoke preprocess --subject=04 --slurm
+
+# Dry run: generate scripts without submitting
+invoke preprocess --slurm --dry-run
+```
+
+### Configuration
+
+SLURM settings are configured in `config.yaml`:
+
+```yaml
+computing:
+  slurm:
+    enabled: true
+    account: def-kjerbi           # Your SLURM account
+    partition: standard           # Partition to use
+    email: user@example.com       # Optional email notifications
+
+    preprocessing:
+      cpus: 12
+      mem: 32G
+      time: "12:00:00"
+```
+
+### Job Management
+
+**Check job status:**
+```bash
+squeue -u $USER                   # View your jobs
+sacct -j JOBID                    # Check specific job status
+```
+
+**Cancel jobs:**
+```bash
+scancel JOBID                     # Cancel specific job
+scancel -u $USER                  # Cancel all your jobs
+```
+
+**Job manifests:**
+
+Each batch submission creates a manifest file:
+```bash
+logs/slurm/preprocessing/preprocessing_manifest_YYYYMMDD_HHMMSS.json
+```
+
+Contains:
+- List of all job IDs
+- Subjects and runs processed
+- Timestamps and metadata
+
+**Logs:**
+
+SLURM output logs are saved to:
+```bash
+logs/slurm/preprocessing/preproc_sub-{subject}_run-{run}_{jobid}.out
+logs/slurm/preprocessing/preproc_sub-{subject}_run-{run}_{jobid}.err
 ```
 
 ---

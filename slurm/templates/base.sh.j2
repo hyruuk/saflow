@@ -1,0 +1,84 @@
+#!/bin/bash
+# =============================================================================
+# SLURM Job Script - {{ job_name }}
+# =============================================================================
+# Generated automatically by saflow pipeline
+# Timestamp: {{ timestamp }}
+# =============================================================================
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --account={{ account }}
+#SBATCH --time={{ time }}
+#SBATCH --cpus-per-task={{ cpus }}
+#SBATCH --mem={{ mem }}
+{% if partition %}
+#SBATCH --partition={{ partition }}
+{% endif %}
+{% if email %}
+#SBATCH --mail-user={{ email }}
+#SBATCH --mail-type=END,FAIL
+{% endif %}
+#SBATCH --output={{ log_dir }}/{{ job_name }}_%j.out
+#SBATCH --error={{ log_dir }}/{{ job_name }}_%j.err
+
+# =============================================================================
+# Environment Setup
+# =============================================================================
+
+# Print job info
+echo "=================================================================="
+echo "SLURM Job: {{ job_name }}"
+echo "=================================================================="
+echo "Job ID:           $SLURM_JOB_ID"
+echo "Job name:         $SLURM_JOB_NAME"
+echo "Node:             $SLURM_NODELIST"
+echo "CPUs:             $SLURM_CPUS_PER_TASK"
+echo "Memory:           {{ mem }}"
+echo "Working dir:      $SLURM_SUBMIT_DIR"
+echo "Started:          $(date)"
+echo "=================================================================="
+echo ""
+
+# Load modules (if on HPC)
+{% if modules %}
+{% for module in modules %}
+module load {{ module }}
+{% endfor %}
+{% endif %}
+
+# Activate virtual environment
+{% if venv_path %}
+echo "Activating virtual environment: {{ venv_path }}"
+source {{ venv_path }}/bin/activate
+{% endif %}
+
+# Set environment variables
+export PYTHONPATH={{ project_root }}:$PYTHONPATH
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export NUMEXPR_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# Change to project directory
+cd {{ project_root }}
+
+# =============================================================================
+# Job Execution
+# =============================================================================
+
+{% block job_commands %}
+# Override this block in child templates
+{% endblock %}
+
+# =============================================================================
+# Job Completion
+# =============================================================================
+
+EXIT_CODE=$?
+
+echo ""
+echo "=================================================================="
+echo "Job completed:    $(date)"
+echo "Exit code:        $EXIT_CODE"
+echo "=================================================================="
+
+exit $EXIT_CODE
