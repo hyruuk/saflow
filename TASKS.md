@@ -179,6 +179,110 @@ computing:
 
 ---
 
+### `invoke source-recon`
+
+Run source reconstruction (Stage 2 of pipeline).
+
+**What it does:**
+1. Computes coregistration between MEG and MRI coordinate systems
+2. Sets up source space (cortical surface model)
+3. Creates BEM (Boundary Element Model) for forward modeling
+4. Computes forward solution (leadfield matrix)
+5. Estimates noise covariance from empty-room recording
+6. Applies inverse operator to compute source estimates
+7. Morphs source estimates to fsaverage template for group analysis
+
+Requires:
+- Preprocessed data from `invoke preprocess` (Stage 1)
+- FreeSurfer subjects directory with fsaverage (individual MRIs optional)
+- Empty-room noise recordings in BIDS dataset
+
+**Arguments:**
+- `--subject ID`: Subject ID to process (default: all subjects from config when using --slurm)
+- `--runs "R1 R2 ..."`: Run numbers to process (space-separated, default: all task runs from config)
+- `--bids-root PATH`: Override BIDS root directory from config
+- `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
+- `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files (default: skip)
+- `--slurm`: Submit jobs to SLURM cluster (one job per run)
+- `--dry-run`: Generate SLURM scripts without submitting (requires --slurm)
+
+**Examples:**
+```bash
+# Local execution (single subject)
+invoke source-recon --subject=04 --runs="02 03"
+invoke source-recon --subject=04 --log-level=DEBUG
+
+# SLURM execution (distributed processing)
+invoke source-recon --subject=04 --slurm              # One job per run for subject 04
+invoke source-recon --slurm                           # Process ALL subjects (192 jobs)
+invoke source-recon --subject=04 --runs="02 03" --slurm  # Specific runs on SLURM
+invoke source-recon --slurm --dry-run                 # Generate scripts without submitting
+```
+
+**Output locations:**
+- Coregistration transforms: `{derivatives}/trans/sub-{subject}/meg/*_proc-trans_meg.fif`
+- Forward solutions: `{derivatives}/fwd/sub-{subject}/meg/*_proc-forward_meg.fif`
+- Noise covariance: `{derivatives}/noise_cov/sub-emptyroom/meg/sub-emptyroom_*.fif`
+- Source estimates: `{derivatives}/minimum-norm-estimate/sub-{subject}/meg/*_desc-sources_meg-stc.h5`
+- Morphed sources: `{derivatives}/morphed_sources/sub-{subject}/meg/*_desc-morphed_meg-stc.h5`
+- Metadata: `{derivatives}/morphed_sources/sub-{subject}/meg/*_params.json`
+- Logs: `logs/source_reconstruction/source_recon_sub-{subject}_YYYYMMDD_HHMMSS.log`
+
+**Expected runtime:**
+- ~30-120 minutes per run (depends on MRI availability and hardware)
+- Coregistration: ~2-5 minutes
+- Forward solution: ~5-10 minutes
+- Inverse solution: ~10-30 minutes
+- Morphing: ~10-30 minutes
+- First run takes longer (computes noise covariance)
+- Individual MRI processing is slower than fsaverage
+
+**Configuration parameters used:**
+```yaml
+source_reconstruction:
+  method: dSPM          # Inverse method (dSPM, MNE, sLORETA)
+  snr: 3.0              # Signal-to-noise ratio
+  atlas: aparc.a2009s   # Atlas for parcellation
+
+paths:
+  freesurfer_subjects_dir: fs_subjects/  # FreeSurfer directory
+
+computing:
+  n_jobs: -1  # Parallel jobs for forward solution
+  slurm:
+    source_reconstruction:
+      cpus: 1
+      mem: 256G           # Large memory for morphing
+      time: "2:00:00"
+```
+
+---
+
+### `invoke apply-atlas` (Optional)
+
+Apply cortical parcellation to source estimates (Stage 2b).
+
+This is an optional post-processing step that averages source time series within
+ROIs defined by a cortical atlas (e.g., aparc.a2009s). Useful for ROI-based
+analyses in source space.
+
+**Arguments:**
+- `--subject ID`: Subject ID to process (required)
+- `--run ID` or `--runs "R1 R2 ..."`: Run(s) to process
+- `--atlas NAME`: Atlas name (default: from config, e.g., aparc.a2009s)
+- `--processing STATE`: Processing state (clean, ica, icaar; default: clean)
+
+**Examples:**
+```bash
+invoke apply-atlas --subject=04 --runs="02 03"
+invoke apply-atlas --subject=04 --run=02 --atlas=aparc
+```
+
+**Output:**
+- ROI-averaged time series (pickle format): `{derivatives}/atlased_sources_{atlas}/*-avg.pkl`
+
+---
+
 ## Utility Tasks
 
 ### `invoke test`

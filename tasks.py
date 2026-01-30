@@ -774,6 +774,269 @@ def _preprocess_slurm(
 
     if dry_run:
         print("\n[DRY RUN] Scripts generated but not submitted")
+# ==============================================================================
+# Source Reconstruction
+# ==============================================================================
+
+@task
+def source_recon(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    slurm=False,
+    dry_run=False,
+):
+    """Run source reconstruction (Stage 2).
+
+    Computes inverse solution and morphs source estimates to fsaverage template.
+    Requires preprocessed data from Stage 1.
+
+    Args:
+        subject: Subject ID to process (default: all subjects from config)
+        runs: Run numbers to process (space-separated, default: all task runs from config)
+        bids_root: Override BIDS root directory from config
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        skip_existing: Skip runs already processed (default: True)
+        slurm: Submit jobs to SLURM instead of running locally (default: False)
+        dry_run: Generate SLURM scripts without submitting (requires --slurm)
+
+    Examples:
+        # Local execution (single subject)
+        invoke source-recon --subject=04 --runs="02 03"
+        invoke source-recon --subject=04 --log-level=DEBUG
+
+        # SLURM execution (distributed, one job per run)
+        invoke source-recon --subject=04 --slurm
+        invoke source-recon --slurm  # Process all subjects
+        invoke source-recon --slurm --dry-run  # Generate scripts without submitting
+    """
+    print("=" * 80)
+    print("Source Reconstruction - Stage 2")
+    print("=" * 80)
+
+    if slurm:
+        # SLURM execution: submit jobs
+        _source_recon_slurm(
+            c,
+            subject=subject,
+            runs=runs,
+            bids_root=bids_root,
+            log_level=log_level,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
+        )
+    else:
+        # Local execution: run directly
+        if not subject:
+            print("ERROR: --subject is required for local execution")
+            print("Use --slurm to process all subjects in parallel on HPC")
+            return
+
+        _source_recon_local(
+            c,
+            subject=subject,
+            runs=runs,
+            bids_root=bids_root,
+            log_level=log_level,
+            skip_existing=skip_existing,
+        )
+
+
+def _source_recon_local(
+    c,
+    subject: str,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+):
+    """Run source reconstruction locally (helper function)."""
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command - run as module with PYTHONPATH set
+    cmd = [python_exe, "-m", "code.source_reconstruction.run_inverse_solution"]
+
+    cmd.extend(["--subject", subject])
+
+    if runs:
+        cmd.extend(["--runs", runs])
+
+    if bids_root:
+        cmd.extend(["--bids-root", str(bids_root)])
+
+    cmd.extend(["--log-level", log_level])
+
+    if skip_existing:
+        cmd.append("--skip-existing")
+    else:
+        cmd.append("--no-skip-existing")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+
+    # Set PYTHONPATH to include project root
+    import os
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    # Run command
+    c.run(" ".join(cmd), env=env, pty=True)
+
+
+def _source_recon_slurm(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    dry_run=False,
+):
+    """Submit source reconstruction jobs to SLURM (helper function)."""
+    from datetime import datetime
+
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+
+    # Load configuration
+    config = load_config()
+
+    # Determine subjects and runs
+    if subject:
+        subjects = [subject]
+    else:
+        subjects = config["bids"]["subjects"]
+
+    if runs:
+        run_list = runs.split()
+    else:
+        run_list = config["bids"]["task_runs"]
+
+    # Get SLURM settings
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        print("Set computing.slurm.enabled: true")
+        return
+
+    src_recon_resources = slurm_config.get("source_reconstruction", {})
+    if not src_recon_resources:
+        print("ERROR: No source_reconstruction resources in config.yaml")
+        print("Add computing.slurm.source_reconstruction section")
+        return
+
+    # Get paths
+    data_root = Path(config["paths"]["data_root"])
+    if bids_root:
+        bids_root = Path(bids_root)
+    else:
+        bids_root = data_root / config["paths"]["bids"]
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    # Prepare output directories
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "source_reconstruction"
+    script_dir.mkdir(parents=True, exist_ok=True)
+
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "source_reconstruction"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'=' * 80}")
+    print(f"SLURM Job Submission - Source Reconstruction")
+    print(f"{'=' * 80}")
+    print(f"  Subjects:   {len(subjects)} ({', '.join(subjects[:3])}{', ...' if len(subjects) > 3 else ''})")
+    print(f"  Runs:       {len(run_list)} ({', '.join(run_list)})")
+    print(f"  Total jobs: {len(subjects) * len(run_list)}")
+    print(f"  Resources:  {src_recon_resources['cpus']} CPUs, {src_recon_resources['mem']} RAM, {src_recon_resources['time']} time")
+    print(f"  Dry run:    {dry_run}")
+    print(f"{'=' * 80}\n")
+
+    if dry_run:
+        print("[DRY RUN MODE] Generating scripts without submitting...\n")
+
+    # Submit jobs (one per subject-run combination)
+    job_ids = []
+    for subj in subjects:
+        for run in run_list:
+            job_name = f"srcrecon_sub-{subj}_run-{run}"
+
+            # Prepare template context
+            context = {
+                "job_name": job_name,
+                "account": slurm_config["account"],
+                "partition": slurm_config.get("partition", "standard"),
+                "email": slurm_config.get("email", ""),
+                "cpus": src_recon_resources["cpus"],
+                "mem": src_recon_resources["mem"],
+                "time": src_recon_resources["time"],
+                "log_dir": str(log_dir),
+                "venv_path": str(venv_path),
+                "project_root": str(PROJECT_ROOT),
+                "subject": subj,
+                "run": run,
+                "bids_root": str(bids_root),
+                "log_level": log_level,
+                "skip_existing": skip_existing,
+            }
+
+            # Generate script
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script(
+                "source_reconstruction.sh.j2",
+                context,
+                output_path=script_path,
+            )
+
+            print(f"Generated script: {script_path.name}")
+
+            # Submit job (unless dry run)
+            if not dry_run:
+                try:
+                    job_id = submit_slurm_job(
+                        script_path,
+                        job_name=job_name,
+                        dry_run=False,
+                    )
+                    job_ids.append(job_id)
+                    print(f"  → Submitted job {job_id}")
+                except Exception as e:
+                    print(f"  ✗ Failed to submit: {e}")
+
+    # Save manifest
+    if job_ids:
+        manifest_path = log_dir / f"source_reconstruction_manifest_{timestamp}.json"
+        save_job_manifest(
+            job_ids,
+            manifest_path,
+            metadata={
+                "stage": "source_reconstruction",
+                "timestamp": timestamp,
+                "subjects": subjects,
+                "runs": run_list,
+                "num_subjects": len(subjects),
+                "num_runs": len(run_list),
+                "num_jobs": len(job_ids),
+            },
+        )
+
+        print(f"\n{'=' * 80}")
+        print(f"✓ Submitted {len(job_ids)} source reconstruction jobs")
+        print(f"  Manifest: {manifest_path}")
+        print(f"  Scripts:  {script_dir}")
+        print(f"  Logs:     {log_dir}")
+        print(f"{'=' * 80}")
+    else:
+        print("\n✗ No jobs were submitted")
+
+    if dry_run:
+        print("\n[DRY RUN] Scripts generated but not submitted")
 
 
 # ==============================================================================

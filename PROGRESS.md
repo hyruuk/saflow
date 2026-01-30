@@ -1,9 +1,9 @@
 # Saflow Refactoring Progress Tracker
 
 **Last Updated**: 2026-01-30
-**Current Phase**: Phase 3.2 COMPLETE - Preprocessing Pipeline ✅
+**Current Phase**: Phase 3 COMPLETE - Data Processing Pipeline (Stages 0-2) ✅
 **Analysis Focus**: Sensor-level analysis (Phase 1), Source-level planned for Phase 2
-**Status**: ✅ Stage 0-1 Implemented - Testing preprocessing on sub-04 to sub-08
+**Status**: ✅ Stage 0-2 Implemented - Ready to test full pipeline (BIDS→Preprocessing→Source Reconstruction)
 
 ---
 
@@ -598,6 +598,153 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 
 ---
 
+### ✅ Phase 3.3: Source Reconstruction (Stage 2)
+**Status**: COMPLETE
+**What was done**:
+- ✅ Created `code/source_reconstruction/` module with three files:
+  - `__init__.py` - Package initialization
+  - `utils.py` - Source reconstruction utilities (700+ lines)
+  - `run_inverse_solution.py` - Main orchestration script (320+ lines)
+  - `apply_atlas.py` - Atlas/parcellation application (optional Stage 2b)
+- ✅ Migrated from cc_saflow/saflow/source_reconstruction/inverse_solution.py with major improvements:
+  - **Modular design**: Split monolithic script into reusable utility functions
+  - **7-step pipeline** with clear progress indicators:
+    1. Coregistration (MEG ↔ MRI coordinate systems)
+    2. Source space setup (cortical surface model)
+    3. BEM model creation (boundary element model)
+    4. Forward solution computation (leadfield matrix)
+    5. Noise covariance estimation (from empty-room recording)
+    6. Inverse solution application (dSPM/MNE/sLORETA)
+    7. Morphing to fsaverage template
+  - **Automatic MRI detection**: Uses individual MRI if available, falls back to fsaverage
+  - **Caching strategy**: Saves coregistration, forward solution, and noise covariance for reuse
+  - Uses config.yaml for all parameters (method, SNR, atlas)
+  - Comprehensive logging with timing and memory information
+  - Provenance metadata saved with all outputs
+
+**Utility functions** (code/source_reconstruction/utils.py):
+- `create_output_paths()` - Create BIDSPath objects for all inputs/outputs
+- `compute_coregistration()` - Automatic coregistration with ICP fitting
+- `setup_source_space()` - Create source space (oct6 spacing)
+- `create_bem_model()` - Create BEM solution (single-layer for MEG)
+- `compute_forward_solution()` - Compute forward solution
+- `compute_noise_covariance()` - Compute noise covariance from empty-room
+- `apply_inverse_continuous()` - Apply inverse operator to continuous data
+- `apply_inverse_to_epochs()` - Apply inverse operator to epochs
+- `morph_to_fsaverage()` - Morph source estimates to template
+- `save_source_estimate()` - Save source estimate to HDF5
+- `check_mri_availability()` - Check if individual MRI exists
+
+**Main script features** (run_inverse_solution.py):
+- Argparse CLI with --subject, --runs, --bids-root, --log-level, --skip-existing
+- Supports both local and SLURM execution (via tasks.py)
+- Config-driven source reconstruction parameters
+- Automatic caching of intermediate results (trans, fwd, noise_cov)
+- Progress tracking with 7-step workflow
+- Comprehensive error handling with informative messages
+- Saves morphed source estimates and metadata
+- Memory cleanup after processing
+
+**Atlas application** (apply_atlas.py - optional):
+- Applies cortical parcellation to morphed source estimates
+- Averages time series within each ROI/label
+- Supports any FreeSurfer atlas (e.g., aparc.a2009s, aparc, HCPMMP1)
+- Outputs ROI-averaged time series as pickle files
+- Useful for ROI-based analyses in source space
+
+**Output structure**:
+1. **Coregistration transform**: `derivatives/trans/sub-{subject}/meg/*_proc-trans_meg.fif`
+2. **Forward solution**: `derivatives/fwd/sub-{subject}/meg/*_proc-forward_meg.fif`
+3. **Noise covariance**: `derivatives/noise_cov/sub-emptyroom/meg/*.fif`
+4. **Source estimates**: `derivatives/minimum-norm-estimate/sub-{subject}/meg/*_desc-sources_meg-stc.h5`
+5. **Morphed sources**: `derivatives/morphed_sources/sub-{subject}/meg/*_desc-morphed_meg-stc.h5`
+6. **Atlased sources** (optional): `derivatives/atlased_sources_{atlas}/sub-{subject}/meg/*-avg.pkl`
+
+**Metadata and logs**:
+- Processing metadata: `derivatives/morphed_sources/sub-{subject}/meg/*_params.json`
+- Execution logs: `logs/source_reconstruction/source_recon_sub-{subject}_YYYYMMDD_HHMMSS.log`
+
+**Key improvements over original**:
+1. **Modular utility functions** (original was monolithic 325-line script)
+2. **Comprehensive logging** with clear progress indicators (1/7, 2/7, etc.)
+3. **Robust caching** - reuses trans, fwd, noise_cov across runs
+4. **Better error handling** with try/except and informative messages
+5. No hardcoded paths - all from config or CLI
+6. Type hints and Google-style docstrings throughout
+7. Separate atlas application script for optional ROI-based analysis
+8. Supports multi-run processing with --runs argument
+9. Provenance metadata with MRI availability, n_sources, sfreq
+10. Ready for SLURM execution (invoke task created)
+
+**SLURM integration**:
+- Created SLURM template: `slurm/templates/source_reconstruction.sh.j2`
+- Added invoke task: `invoke source-recon` with --slurm support
+- Per-run distribution (one job per subject-run combination)
+- Configuration in config.yaml under `computing.slurm.source_reconstruction`
+- Resource requirements: 1 CPU, 256G memory, 2-hour time limit
+- Job manifests saved to `logs/slurm/source_reconstruction/`
+
+**Files created**:
+- `code/source_reconstruction/__init__.py`
+- `code/source_reconstruction/utils.py` (700+ lines)
+- `code/source_reconstruction/run_inverse_solution.py` (320+ lines)
+- `code/source_reconstruction/apply_atlas.py` (optional, 280+ lines)
+- `slurm/templates/source_reconstruction.sh.j2`
+
+**Files modified**:
+- `tasks.py`: Added `invoke source-recon` task with local and SLURM execution
+- `TASKS.md`: Added comprehensive source reconstruction documentation
+
+**Invoke task added**:
+- `invoke source-recon --subject=04 --runs="02 03"` - Run source reconstruction (Stage 2)
+- `invoke source-recon --slurm` - Submit to SLURM cluster
+
+**Usage via invoke** (recommended):
+```bash
+# Local execution - single subject
+invoke source-recon --subject=04 --runs="02 03"
+
+# Local execution - debug mode
+invoke source-recon --subject=04 --log-level=DEBUG
+
+# SLURM execution - single subject (6 jobs)
+invoke source-recon --subject=04 --slurm
+
+# SLURM execution - all subjects (192 jobs)
+invoke source-recon --slurm
+
+# Dry run - generate scripts without submitting
+invoke source-recon --slurm --dry-run
+```
+
+**Direct usage** (alternative):
+```bash
+# Process specific runs
+python -m code.source_reconstruction.run_inverse_solution --subject 04 --runs "02 03"
+
+# Apply atlas (optional)
+python -m code.source_reconstruction.apply_atlas --subject 04 --runs "02 03"
+```
+
+**Configuration used**:
+```yaml
+source_reconstruction:
+  method: dSPM              # Inverse method
+  snr: 3.0                  # Signal-to-noise ratio
+  atlas: aparc.a2009s       # Atlas for parcellation
+
+paths:
+  freesurfer_subjects_dir: fs_subjects/  # FreeSurfer directory
+
+computing:
+  n_jobs: -1                # Parallel jobs for forward solution
+  slurm:
+    source_reconstruction:
+      cpus: 1
+      mem: 256G             # Large memory for morphing
+      time: "2:00:00"
+```
+
 ---
 
 ### ✅ Phase 6.2-6.3: SLURM Integration (HPC)
@@ -673,8 +820,7 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 
 ### ✅ PHASE 1 COMPLETE ✅
 ### ✅ PHASE 2 COMPLETE ✅
-### ✅ PHASE 3.1 COMPLETE ✅
-### ✅ PHASE 3.2 COMPLETE ✅
+### ✅ PHASE 3 COMPLETE ✅
 ### ✅ PHASE 6.2-6.3 COMPLETE ✅
 
 **All Phase 1 sub-phases complete:**
@@ -692,7 +838,7 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 **Phase 3 Progress:**
 1. ~~Phase 3.1: Stage 0 - BIDS Generation~~ ✅
 2. ~~Phase 3.2: Stage 1 - Preprocessing~~ ✅
-3. Phase 3.3: Stage 2 - Source Reconstruction ← **NEXT**
+3. ~~Phase 3.3: Stage 2 - Source Reconstruction~~ ✅
 
 **Phase 6 Progress (early implementation):**
 1. ~~Phase 6.2-6.3: SLURM Integration~~ ✅
@@ -700,8 +846,10 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 **Current Status:**
 ✅ BIDS generation (Stage 0) complete and tested
 ✅ Preprocessing pipeline (Stage 1) complete with two-pass AutoReject
-✅ SLURM integration complete - ready for HPC execution
-⏳ Ready to test preprocessing locally and on HPC
+✅ Source reconstruction (Stage 2) complete with morphing to fsaverage
+✅ SLURM integration complete for preprocessing AND source reconstruction
+⏳ Ready to test full pipeline (Stages 0-2) locally and on HPC
+📋 Next: Phase 4 - Feature extraction (sensor-level)
 
 ---
 
@@ -718,10 +866,11 @@ python -m code.preprocessing.run_preprocessing -s 04 -r 02 03
 - [x] #8: Phase 2.1 - Migrate saflow package utilities (REVISED: moved to code/utils/)
 - [x] #9: **Phase 3.1** - Migrate BIDS generation (Stage 0) ✅
 - [x] #10: **Phase 3.2** - Migrate preprocessing (Stage 1) ✅
+- [x] #11: **Phase 3.3** - Migrate source reconstruction (Stage 2) ✅
 - [x] #17: **Phase 6.2-6.3** - SLURM integration ✅ (implemented early)
 
 ### 🔄 Current/Next Tasks
-- [ ] #11: Phase 3.3 - Migrate source reconstruction (Stage 2) ← **NEXT**
+- [ ] #12: Phase 4.1 - Migrate sensor-level feature extraction ← **NEXT**
 
 ### 📋 Upcoming Tasks (Phase 4+)
 - [ ] #12: Phase 4.1 - Migrate sensor-level feature extraction

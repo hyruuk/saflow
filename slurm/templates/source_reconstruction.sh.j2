@@ -1,0 +1,33 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Source Reconstruction Pipeline
+# =============================================================================
+
+echo "Source Reconstruction Configuration:"
+echo "  Subject:        {{ subject }}"
+echo "  Run:            {{ run }}"
+echo "  BIDS root:      {{ bids_root }}"
+echo "  Log level:      {{ log_level }}"
+echo "  Skip existing:  {{ skip_existing }}"
+echo ""
+
+# Run source reconstruction
+python -m code.source_reconstruction.run_inverse_solution \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --bids-root {{ bids_root }} \
+    --log-level {{ log_level }} \
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+
+SRC_RECON_EXIT=$?
+
+if [ $SRC_RECON_EXIT -eq 0 ]; then
+    echo "✓ Source reconstruction completed successfully"
+else
+    echo "✗ Source reconstruction failed with exit code $SRC_RECON_EXIT"
+    exit $SRC_RECON_EXIT
+fi
+
+{% endblock %}
