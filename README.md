@@ -50,6 +50,10 @@ Saflow implements a complete MEG analysis pipeline for the gradCPT (gradual Cont
 
 The **gradual Continuous Performance Task (gradCPT)** is a sustained attention task where participants monitor a continuous stream of city and mountain scenes, responding only to cities (target stimuli) while withholding responses to mountains (non-target stimuli).
 
+![Figure 1. Gradual onset Continuous Performance Task (gradCPT)](docs/images/gradCPT.png)
+
+**Figure 1. Gradual onset Continuous Performance Task (gradCPT).** **A** Sequence of four consecutive trials illustrating the four possible types of events: baseline trials, correct omissions, omission errors and lapses. The hand icon represents the occurrence of a response, and the nearby arrows show its association with the closest trial. The green and red horizontal bars represent the intensity of each stimulus at every time point, going from 0% (white) to 100% (green or red) and then to 0% again. **B** Experiment structure. The session was split into 8 runs, starting with an eyes-open resting state followed by 6 blocks of the task, and ending with a second resting state.
+
 **Key characteristics**:
 - **Gradual transitions**: Scenes morph gradually between cities and mountains over ~800ms
 - **Sustained attention**: ~8 minutes per run, 6 runs per session
