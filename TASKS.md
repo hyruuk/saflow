@@ -6,15 +6,31 @@ This document describes the invoke tasks for running the saflow MEG analysis pip
 
 ---
 
+## Task Namespaces
+
+Tasks are organized into namespaces:
+
+| Namespace | Description |
+|-----------|-------------|
+| `pipeline.*` | Main pipeline stages (BIDS, preprocess, source-recon) |
+| `features.*` | Feature extraction (FOOOF, PSD, complexity) |
+| `analysis.*` | Statistical analysis and classification |
+| `dev.*` | Development tools (tests, linting, cleaning) |
+| `dev.check.*` | Data quality and validation checks |
+| `env.*` | Environment setup and management |
+| `viz.*` | Visualization and figures |
+
+---
+
 ## Pipeline Tasks
 
-### `invoke validate-inputs`
+### `invoke pipeline.validate-inputs`
 
 Validate that raw input data is present and complete before running pipeline.
 
 **What it checks:**
-- Raw MEG data directory exists (`data_root/raw/meg/`)
-- Behavioral logfiles directory exists (`data_root/raw/behav/`)
+- Raw MEG data directory exists (`data_root/sourcedata/meg/`)
+- Behavioral logfiles directory exists (`data_root/sourcedata/behav/`)
 - Required `.ds` files are present
 - Behavioral `.mat` files are present
 - All expected subjects have data
@@ -27,24 +43,15 @@ Validate that raw input data is present and complete before running pipeline.
 **Examples:**
 ```bash
 # Basic validation
-invoke validate-inputs
+invoke pipeline.validate-inputs
 
 # Verbose output with file listings
-invoke validate-inputs --verbose
-
-# Override data location
-invoke validate-inputs --data-root=/media/storage/DATA/saflow
+invoke pipeline.validate-inputs --verbose
 ```
-
-**Output:**
-- Colored console report with ✓/✗ indicators
-- Table showing runs per subject
-- List of missing subjects (if any)
-- Summary of behavioral files
 
 ---
 
-### `invoke bids`
+### `invoke pipeline.bids`
 
 Run BIDS conversion (Stage 0 of pipeline).
 
@@ -52,15 +59,17 @@ Run BIDS conversion (Stage 0 of pipeline).
 1. Finds all CTF MEG datasets (`.ds` files) in raw directory
 2. Converts to BIDS format using mne-bids
 3. For gradCPT task runs:
-   - Loads behavioral logfiles
+   - Loads behavioral logfiles (runs 1-6, ignoring run 0 and typos)
    - Computes VTC (variability of reaction times)
-   - Enriches events.tsv with:
-     - Trial indices
-     - VTC and RT values
-     - Task performance (commission_error, correct_omission, etc.)
-     - IN/OUT zone classifications (50/50, 25/75, 10/90 percentile bounds)
+   - Enriches events.tsv with trial indices, VTC, RT, and performance
 4. Writes empty-room noise recordings
-5. Saves provenance metadata (git hash, timestamp, subjects processed)
+5. Saves provenance metadata
+
+**Run Matching:**
+- MEG run 02 → behavioral run 1
+- MEG run 03 → behavioral run 2
+- ... up to MEG run 07 → behavioral run 6
+- Run 0 (practice) and files with unexpected run numbers are ignored
 
 **Arguments:**
 - `--input-dir PATH`: Override raw data directory from config
@@ -72,271 +81,296 @@ Run BIDS conversion (Stage 0 of pipeline).
 **Examples:**
 ```bash
 # Basic usage (uses paths from config.yaml)
-invoke bids
+invoke pipeline.bids
 
 # Process specific subjects only
-invoke bids --subjects "04 05 06"
-
-# Override input/output paths
-invoke bids --input-dir=/path/to/raw --output-dir=/path/to/bids
+invoke pipeline.bids --subjects "04 05 06"
 
 # Dry run to validate before processing
-invoke bids --dry-run
-
-# Debug mode with verbose logging
-invoke bids --log-level=DEBUG
+invoke pipeline.bids --dry-run
 ```
-
-**Output locations:**
-- BIDS dataset: `{config.paths.data_root}/bids/`
-- Logs: `logs/bids/bids_conversion_YYYYMMDD_HHMMSS.log`
-- Provenance: `{bids_root}/code/provenance_bids.json`
-
-**Expected runtime:**
-- ~8-10 minutes for 32 subjects (6 task runs + 1 rest run each)
 
 ---
 
-### `invoke preprocess`
+### `invoke pipeline.preprocess`
 
 Run MEG preprocessing (Stage 1 of pipeline).
 
 **What it does:**
 1. Loads raw BIDS data
-2. Applies gradient compensation (grade 3, required for source reconstruction)
-3. Applies bandpass filtering (0.1-200 Hz) and notch filtering (60 Hz harmonics)
+2. Applies gradient compensation (grade 3)
+3. Applies bandpass filtering (0.1-200 Hz) and notch filtering (60 Hz)
 4. Creates epochs for all events
-5. Runs AutoReject (first pass) to identify bad epochs for ICA
-6. Computes or loads noise covariance from empty-room recording
-7. Fits ICA on good epochs
-8. Detects and removes ECG and EOG artifact components
-9. Runs AutoReject (second pass) with interpolation on ICA-cleaned data
-10. Saves:
-    - Preprocessed continuous data (ICA-cleaned, FIF format)
-    - Clean epochs (ICA only version)
-    - Clean epochs (ICA+AR version with interpolation)
-    - Both AutoReject logs (pickle)
-    - HTML report with diagnostic plots
-    - Text summary with all metrics
-    - Processing metadata (JSON)
+5. Runs AutoReject to identify bad epochs for ICA
+6. Fits ICA and removes ECG/EOG artifacts
+7. Runs AutoReject with interpolation on ICA-cleaned data
+8. Saves preprocessed data, epochs, reports, and metadata
 
 **Arguments:**
-- `--subject ID`: Subject ID to process (default: all subjects from config when using --slurm)
-- `--runs "R1 R2 ..."`: Run numbers to process (space-separated, default: all task runs from config)
-- `--bids-root PATH`: Override BIDS root directory from config
-- `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
-- `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files (default: skip)
-- `--slurm`: Submit jobs to SLURM cluster (one job per run)
-- `--dry-run`: Generate SLURM scripts without submitting (requires --slurm)
+- `--subject ID`: Subject ID to process
+- `--runs "R1 R2 ..."`: Run numbers to process (default: all task runs)
+- `--log-level LEVEL`: Set logging level
+- `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files
+- `--slurm`: Submit jobs to SLURM cluster
+- `--dry-run`: Generate SLURM scripts without submitting
 
 **Examples:**
 ```bash
-# Local execution (single subject)
-invoke preprocess --subject=04
-invoke preprocess --subject=04 --runs="02 03"
-invoke preprocess --subject=04 --log-level=DEBUG
+# Local execution
+invoke pipeline.preprocess --subject=04
+invoke pipeline.preprocess --subject=04 --runs="02 03"
 
-# SLURM execution (distributed processing)
-invoke preprocess --subject=04 --slurm              # One job per run for subject 04
-invoke preprocess --slurm                           # Process ALL subjects (192 jobs)
-invoke preprocess --subject=04 --runs="02 03" --slurm  # Specific runs on SLURM
-invoke preprocess --slurm --dry-run                 # Generate scripts without submitting
-```
-
-**Output locations:**
-- Continuous (ICA-cleaned): `{data_root}/derivatives/preprocessed/sub-{subject}/meg/*_proc-clean_meg.fif`
-- Epochs (ICA only): `{data_root}/derivatives/epochs/sub-{subject}/meg/*_proc-ica_meg.fif`
-- Epochs (ICA+AR): `{data_root}/derivatives/epochs/sub-{subject}/meg/*_proc-icaar_meg.fif`
-- HTML reports: `{derivatives}/preprocessed/sub-{subject}/meg/*_desc-report_meg.html`
-- Text summaries: `{derivatives}/preprocessed/sub-{subject}/meg/*_desc-report_meg_summary.txt`
-- AutoReject logs: `{derivatives}/preprocessed/sub-{subject}/meg/*_desc-ARlog{1,2}_meg.pkl`
-- Metadata: `{derivatives}/preprocessed/sub-{subject}/meg/*_params.json`
-- Logs: `logs/preprocessing/preprocessing_sub-{subject}_YYYYMMDD_HHMMSS.log`
-
-**Expected runtime:**
-- ~30-60 minutes per run (depends on n_jobs)
-- Longer for first run (computes noise covariance)
-- Can run multiple subjects in parallel
-
-**Configuration parameters used:**
-```yaml
-preprocessing:
-  filter:
-    lowcut: 0.1          # Hz
-    highcut: 200         # Hz
-    notch: [60]          # Hz
-  ica:
-    method: "fastica"
-    n_components: 20
-    random_state: 42
-  autoreject:
-    n_interpolate: [1, 4, 32]
-    consensus: [0.1, 0.2, 0.3, 0.5]
-
-computing:
-  n_jobs: -1  # Use all CPUs
+# SLURM execution
+invoke pipeline.preprocess --subject=04 --slurm
+invoke pipeline.preprocess --slurm  # All subjects
 ```
 
 ---
 
-### `invoke source-recon`
+### `invoke pipeline.source-recon`
 
 Run source reconstruction (Stage 2 of pipeline).
 
 **What it does:**
-1. Computes coregistration between MEG and MRI coordinate systems
-2. Sets up source space (cortical surface model)
-3. Creates BEM (Boundary Element Model) for forward modeling
-4. Computes forward solution (leadfield matrix)
-5. Estimates noise covariance from empty-room recording
-6. Applies inverse operator to compute source estimates
-7. Morphs source estimates to fsaverage template for group analysis
-
-Requires:
-- Preprocessed data from `invoke preprocess` (Stage 1)
-- FreeSurfer subjects directory with fsaverage (individual MRIs optional)
-- Empty-room noise recordings in BIDS dataset
+1. Computes coregistration (MEG ↔ MRI)
+2. Sets up source space and BEM model
+3. Computes forward solution
+4. Applies inverse operator
+5. Morphs to fsaverage template
 
 **Arguments:**
-- `--subject ID`: Subject ID to process (default: all subjects from config when using --slurm)
-- `--runs "R1 R2 ..."`: Run numbers to process (space-separated, default: all task runs from config)
-- `--input-type TYPE`: Input data type: `continuous` (ICA-cleaned) or `epochs` (ICA+AutoReject) (default: continuous)
-- `--processing STATE`: Processing state: `clean` (continuous), `ica` or `icaar` (epochs) (default: clean)
-- `--bids-root PATH`: Override BIDS root directory from config
-- `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
-- `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files (default: skip)
-- `--slurm`: Submit jobs to SLURM cluster (one job per run)
-- `--dry-run`: Generate SLURM scripts without submitting (requires --slurm)
-
-**TWO-TRACK PROCESSING:**
-Source reconstruction now supports both continuous and epoched data, enabling comparison between:
-- **Track 1 (continuous)**: ICA-cleaned continuous data → Single long source estimate
-- **Track 2 (epochs)**: ICA+AutoReject epoched data → Multiple epoched source estimates
-
-This allows comparing results from both preprocessing approaches for robustness validation.
+- `--subject ID`: Subject ID to process
+- `--runs "R1 R2 ..."`: Run numbers to process
+- `--input-type TYPE`: `continuous` or `epochs`
+- `--processing STATE`: `clean`, `ica`, or `icaar`
+- `--slurm`: Submit to SLURM
+- `--dry-run`: Generate scripts without submitting
 
 **Examples:**
 ```bash
-# Local execution - continuous (default)
-invoke source-recon --subject=04 --runs="02 03"
-invoke source-recon --subject=04 --log-level=DEBUG
-
-# Local execution - epochs
-invoke source-recon --subject=04 --runs="02" --input-type=epochs --processing=icaar
-
-# SLURM execution (distributed processing)
-invoke source-recon --subject=04 --slurm              # One job per run for subject 04
-invoke source-recon --slurm                           # Process ALL subjects (192 jobs)
-invoke source-recon --subject=04 --runs="02 03" --slurm  # Specific runs on SLURM
-invoke source-recon --slurm --dry-run                 # Generate scripts without submitting
-
-# Two-track processing (both continuous and epochs)
-invoke source-recon --subject=04 --runs="02" --input-type=continuous
-invoke source-recon --subject=04 --runs="02" --input-type=epochs --processing=icaar
-```
-
-**Output locations:**
-- Coregistration transforms: `{derivatives}/trans/sub-{subject}/meg/*_proc-trans_meg.fif`
-- Forward solutions: `{derivatives}/fwd/sub-{subject}/meg/*_proc-forward_meg.fif`
-- Noise covariance: `{derivatives}/noise_cov/sub-emptyroom/meg/sub-emptyroom_*.fif`
-- Source estimates: `{derivatives}/minimum-norm-estimate/sub-{subject}/meg/*_desc-sources_meg-stc.h5`
-- Morphed sources: `{derivatives}/morphed_sources/sub-{subject}/meg/*_desc-morphed_meg-stc.h5`
-- Metadata: `{derivatives}/morphed_sources/sub-{subject}/meg/*_params.json`
-- Logs: `logs/source_reconstruction/source_recon_sub-{subject}_YYYYMMDD_HHMMSS.log`
-
-**Expected runtime:**
-- ~30-120 minutes per run (depends on MRI availability and hardware)
-- Coregistration: ~2-5 minutes
-- Forward solution: ~5-10 minutes
-- Inverse solution: ~10-30 minutes
-- Morphing: ~10-30 minutes
-- First run takes longer (computes noise covariance)
-- Individual MRI processing is slower than fsaverage
-
-**Configuration parameters used:**
-```yaml
-source_reconstruction:
-  method: dSPM          # Inverse method (dSPM, MNE, sLORETA)
-  snr: 3.0              # Signal-to-noise ratio
-  atlas: aparc.a2009s   # Atlas for parcellation
-
-paths:
-  freesurfer_subjects_dir: fs_subjects/  # FreeSurfer directory
-
-computing:
-  n_jobs: -1  # Parallel jobs for forward solution
-  slurm:
-    source_reconstruction:
-      cpus: 1
-      mem: 256G           # Large memory for morphing
-      time: "2:00:00"
+invoke pipeline.source-recon --subject=04 --runs="02 03"
+invoke pipeline.source-recon --subject=04 --slurm
 ```
 
 ---
 
-### `invoke apply-atlas` (Optional)
+## Feature Extraction Tasks
 
-Apply cortical parcellation to source estimates (Stage 2b).
+### `invoke features.fooof`
 
-This is an optional post-processing step that averages source time series within
-ROIs defined by a cortical atlas (e.g., aparc.a2009s). Useful for ROI-based
-analyses in source space.
+Extract FOOOF aperiodic parameters and corrected PSDs.
 
 **Arguments:**
-- `--subject ID`: Subject ID to process (required)
-- `--run ID` or `--runs "R1 R2 ..."`: Run(s) to process
-- `--atlas NAME`: Atlas name (default: from config, e.g., aparc.a2009s)
-- `--processing STATE`: Processing state (clean, ica, icaar; default: clean)
+- `--subject ID`: Subject to process (default: all)
+- `--space SPACE`: `sensor`, `source`, or `atlas`
+- `--slurm`: Submit to SLURM
 
 **Examples:**
 ```bash
-invoke apply-atlas --subject=04 --runs="02 03"
-invoke apply-atlas --subject=04 --run=02 --atlas=aparc
+invoke features.fooof --subject=04
+invoke features.fooof --space=source --slurm
 ```
-
-**Output:**
-- ROI-averaged time series (pickle format): `{derivatives}/atlased_sources_{atlas}/*-avg.pkl`
 
 ---
 
-## Utility Tasks
+### `invoke features.psd`
 
-### `invoke test`
+Extract power spectral density features.
 
-Run test suite with pytest.
+**Arguments:**
+- `--subject ID`: Subject to process (default: all)
+- `--space SPACE`: `sensor`, `source`, or `atlas`
+- `--slurm`: Submit to SLURM
+
+---
+
+### `invoke features.complexity`
+
+Extract complexity and entropy measures.
+
+**Arguments:**
+- `--subject ID`: Subject to process (default: all)
+- `--space SPACE`: `sensor`, `source`, or `atlas`
+- `--slurm`: Submit to SLURM
+
+---
+
+### `invoke features.all`
+
+Extract all feature types (FOOOF, PSD, complexity).
+
+**Arguments:**
+- `--subject ID`: Subject to process (default: all)
+- `--space SPACE`: `sensor`, `source`, or `atlas`
+- `--slurm`: Submit to SLURM
+
+---
+
+## Analysis Tasks
+
+### `invoke analysis.statistics`
+
+Run group-level statistical analysis (IN vs OUT attentional states).
+
+**Arguments:**
+- `--feature-type TYPE`: Feature to analyze (e.g., `fooof_exponent`, `psd_alpha`)
+- `--space SPACE`: Analysis space (`sensor`, `source`, `atlas`)
+- `--test TEST`: Statistical test (`paired_ttest`, `permutation`)
+- `--corrections CORR`: Correction methods (`fdr`, `bonferroni`, `tmax`)
+- `--slurm`: Submit to SLURM
+
+**Examples:**
+```bash
+invoke analysis.statistics --feature-type=fooof_exponent --space=sensor
+invoke analysis.statistics --feature-type=psd_alpha --corrections="fdr bonferroni"
+```
+
+---
+
+### `invoke analysis.classify`
+
+Run classification analysis (decode IN vs OUT from neural features).
+
+**Arguments:**
+- `--features FEAT`: Feature type(s) to use
+- `--clf CLF`: Classifier (`lda`, `svm`, `rf`, `xgboost`)
+- `--cv CV`: Cross-validation strategy (`logo`, `stratified`)
+- `--space SPACE`: Analysis space
+- `--slurm`: Submit to SLURM
+
+**Examples:**
+```bash
+invoke analysis.classify --features=fooof_exponent --clf=lda
+invoke analysis.classify --features="psd_alpha psd_theta" --clf=svm
+```
+
+---
+
+## Development Tasks
+
+### `invoke dev.check.dataset`
+
+Check dataset completeness - which files exist for each subject across all pipeline stages.
+
+**What it shows:**
+- Raw MEG runs (8 expected: runs 01-08)
+- Behavioral files (6 expected: runs 1-6, with extras flagged)
+- MRI availability
+- BIDS conversion status
+- Preprocessing status
+- Feature extraction status
+
+**Arguments:**
+- `--verbose`: Show detailed missing data information
+
+**Examples:**
+```bash
+invoke dev.check.dataset
+invoke dev.check.dataset --verbose
+```
+
+**Output format:**
+```
+Subj   | MEG Runs | Behav    | MRI  | BIDS | Preproc | FOOOF | PSD | Cmplx
+04     | 8/8      | 6/6      | Y    | 6/6  | 6/6     | Y     | Y   | Y
+14     | 8/8      | 5/6 (+2) | Y    | -    | -       | -     | -   | -
+```
+
+The `(+N)` notation indicates extra files (run 0 practice files, duplicates, or typos).
+
+---
+
+### `invoke dev.check.qc`
+
+Run data quality checks on BIDS MEG data.
+
+**What it checks:**
+- Inter-stimulus intervals (ISI)
+- Response detection and rates
+- Channel quality
+- Event validation
+- Data integrity
+
+**Arguments:**
+- `--subject ID`: Check specific subject (default: all subjects)
+- `--runs RUNS`: Specific runs to check
+- `--output-dir DIR`: Output directory for reports
+- `--verbose`: Detailed output
+
+**Examples:**
+```bash
+invoke dev.check.qc                    # Check all subjects
+invoke dev.check.qc --subject=04       # Check specific subject
+invoke dev.check.qc --verbose          # Detailed output
+```
+
+---
+
+### `invoke dev.check.code`
+
+Run code quality checks (linting, formatting, type checking).
+
+---
+
+### `invoke dev.test`
+
+Run tests with pytest.
 
 **Arguments:**
 - `--verbose`: Enable verbose output
-- `--coverage` / `--no-coverage`: Generate coverage report (default: True)
-
-**Examples:**
-```bash
-# Run all tests with coverage
-invoke test
-
-# Verbose output
-invoke test --verbose
-
-# Without coverage report
-invoke test --no-coverage
-```
+- `--coverage` / `--no-coverage`: Generate coverage report
 
 ---
 
-### `invoke info`
+### `invoke dev.test-fast`
+
+Run only fast tests (excludes tests marked as slow).
+
+---
+
+### `invoke dev.clean`
+
+Clean generated files (caches, build artifacts).
+
+---
+
+### `invoke dev.precommit`
+
+Run pre-commit checks (code quality + tests).
+
+---
+
+## Environment Tasks
+
+### `invoke env.info`
 
 Display project information and configuration status.
 
-Shows:
-- Project root and directory paths
-- Configuration file status
-- Virtual environment status
-- Python version
+---
 
-**Examples:**
-```bash
-invoke info
-```
+### `invoke env.setup`
+
+Run setup script to create development environment.
+
+---
+
+### `invoke env.rebuild`
+
+Clean and rebuild the development environment.
+
+---
+
+### `invoke env.validate-config`
+
+Validate configuration file syntax and required fields.
+
+---
+
+## Visualization Tasks
+
+### `invoke viz.behavior`
+
+Generate behavioral analysis figure (VTC, RT distributions, etc.).
 
 ---
 
@@ -349,27 +383,27 @@ Pipeline tasks support distributed execution on HPC clusters via SLURM.
 Add `--slurm` to any pipeline task to submit jobs to the cluster:
 
 ```bash
-# Process all subjects in parallel (one job per run)
-invoke preprocess --slurm
+# Process all subjects in parallel
+invoke pipeline.preprocess --slurm
 
-# Process specific subject on cluster
-invoke preprocess --subject=04 --slurm
+# Process specific subject
+invoke pipeline.preprocess --subject=04 --slurm
 
 # Dry run: generate scripts without submitting
-invoke preprocess --slurm --dry-run
+invoke pipeline.preprocess --slurm --dry-run
 ```
 
 ### Configuration
 
-SLURM settings are configured in `config.yaml`:
+SLURM settings are in `config.yaml`:
 
 ```yaml
 computing:
   slurm:
     enabled: true
-    account: def-kjerbi           # Your SLURM account
-    partition: standard           # Partition to use
-    email: user@example.com       # Optional email notifications
+    account: def-kjerbi
+    partition: standard
+    email: user@example.com
 
     preprocessing:
       cpus: 12
@@ -379,44 +413,18 @@ computing:
 
 ### Job Management
 
-**Check job status:**
 ```bash
-squeue -u $USER                   # View your jobs
-sacct -j JOBID                    # Check specific job status
-```
-
-**Cancel jobs:**
-```bash
-scancel JOBID                     # Cancel specific job
-scancel -u $USER                  # Cancel all your jobs
-```
-
-**Job manifests:**
-
-Each batch submission creates a manifest file:
-```bash
-logs/slurm/preprocessing/preprocessing_manifest_YYYYMMDD_HHMMSS.json
-```
-
-Contains:
-- List of all job IDs
-- Subjects and runs processed
-- Timestamps and metadata
-
-**Logs:**
-
-SLURM output logs are saved to:
-```bash
-logs/slurm/preprocessing/preproc_sub-{subject}_run-{run}_{jobid}.out
-logs/slurm/preprocessing/preproc_sub-{subject}_run-{run}_{jobid}.err
+squeue -u $USER              # View your jobs
+sacct -j JOBID               # Check job status
+scancel JOBID                # Cancel job
+scancel -u $USER             # Cancel all jobs
 ```
 
 ---
 
 ## Notes
 
-- All pipeline tasks support `--help` to see detailed options
-- Logs are saved to `logs/{stage}/` for each pipeline stage
-- Most tasks are idempotent (can be re-run safely)
+- All tasks support `--help` for detailed options
+- Logs are saved to `logs/{stage}/`
 - Use `--skip-existing` (default) to avoid reprocessing
-- Configuration is loaded from `config.yaml` (see `config.yaml.template`)
+- Configuration is loaded from `config.yaml`

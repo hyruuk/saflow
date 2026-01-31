@@ -49,6 +49,7 @@ from code.preprocessing.utils import (
     compute_or_load_noise_cov,
     create_epochs,
     create_preprocessing_paths,
+    detect_bad_epochs_threshold,
 )
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
@@ -66,6 +67,8 @@ def generate_preprocessing_report(
     epochs_ica_ar: mne.Epochs,
     reject_log_first: object,
     reject_log_second: object,
+    threshold_bad_mask: np.ndarray,
+    threshold_stats: dict,
     ica,
     ecg_inds: list,
     eog_inds: list,
@@ -83,6 +86,8 @@ def generate_preprocessing_report(
         epochs_ica_ar: Epochs after ICA + second AR pass.
         reject_log_first: AutoReject log from first pass (for ICA).
         reject_log_second: AutoReject log from second pass (with interpolation).
+        threshold_bad_mask: Boolean mask from threshold-based detection.
+        threshold_stats: Statistics from threshold-based detection.
         ica: Fitted ICA object.
         ecg_inds: ECG component indices.
         eog_inds: EOG component indices.
@@ -155,6 +160,19 @@ def generate_preprocessing_report(
     n_interpolated = np.sum(reject_log_second.labels == 2)
     n_good_first = n_total - n_bad_first
 
+    # Threshold detection stats
+    n_bad_threshold = threshold_stats["n_bad"]
+    reject_thresh = threshold_stats["reject_threshold"].get("mag", "N/A")
+    flat_thresh = threshold_stats["flat_threshold"].get("mag", "N/A")
+
+    # Compare threshold vs AutoReject (both on post-ICA epochs)
+    ar_bad = reject_log_second.bad_epochs
+    threshold_bad = threshold_bad_mask
+    both_bad = ar_bad & threshold_bad  # Bad in both methods
+    only_ar_bad = ar_bad & ~threshold_bad  # Only AR detected
+    only_thresh_bad = threshold_bad & ~ar_bad  # Only threshold detected
+    agreement = np.mean(ar_bad == threshold_bad) * 100
+
     summary_text = f"""
     <h2>Preprocessing Summary</h2>
 
@@ -217,6 +235,56 @@ def generate_preprocessing_report(
         <td>Output epochs</td>
         <td>{n_good_first} (for ICA fitting)</td>
         <td>{len(epochs_ica_ar)} (final)</td>
+    </tr>
+    </table>
+
+    <h3>Threshold vs AutoReject Comparison (Post-ICA)</h3>
+    <p><i>Comparison of simple threshold-based rejection vs AutoReject on ICA-cleaned epochs.</i></p>
+    <table border="1" style="border-collapse: collapse; width: 100%;">
+    <tr style="background-color: #f0f0f0;">
+        <th>Metric</th><th>Threshold</th><th>AutoReject</th>
+    </tr>
+    <tr>
+        <td>Method</td>
+        <td>Peak-to-peak amplitude</td>
+        <td>Cross-validation + interpolation</td>
+    </tr>
+    <tr>
+        <td>Parameters</td>
+        <td>reject={reject_thresh:.2e}, flat={flat_thresh:.2e}</td>
+        <td>Grid search (consensus, n_interpolate)</td>
+    </tr>
+    <tr>
+        <td>Bad epochs detected</td>
+        <td>{n_bad_threshold} ({threshold_stats['pct_bad']:.1f}%)</td>
+        <td>{n_bad_second} ({100*n_bad_second/len(epochs_ica_only):.1f}%)</td>
+    </tr>
+    </table>
+
+    <h4>Agreement Analysis</h4>
+    <table border="1" style="border-collapse: collapse; width: 100%;">
+    <tr style="background-color: #f0f0f0;">
+        <th>Category</th><th>Count</th><th>Description</th>
+    </tr>
+    <tr style="background-color: #d4edda;">
+        <td>Agreement</td>
+        <td>{agreement:.1f}%</td>
+        <td>Epochs classified the same by both methods</td>
+    </tr>
+    <tr>
+        <td>Both methods reject</td>
+        <td>{np.sum(both_bad)}</td>
+        <td>Clearly bad epochs</td>
+    </tr>
+    <tr style="background-color: #fff3cd;">
+        <td>Only AutoReject rejects</td>
+        <td>{np.sum(only_ar_bad)}</td>
+        <td>Subtle artifacts (channel-specific)</td>
+    </tr>
+    <tr style="background-color: #f8d7da;">
+        <td>Only Threshold rejects</td>
+        <td>{np.sum(only_thresh_bad)}</td>
+        <td>High amplitude but possibly salvageable</td>
     </tr>
     </table>
 
@@ -366,6 +434,8 @@ def save_preprocessing_summary(
     n_total_epochs: int,
     reject_log_first,
     reject_log_second,
+    threshold_bad_mask: np.ndarray,
+    threshold_stats: dict,
     ecg_inds: list,
     eog_inds: list,
     n_epochs_ica_only: int,
@@ -380,6 +450,8 @@ def save_preprocessing_summary(
         n_total_epochs: Total number of epochs before cleaning.
         reject_log_first: First AR reject log.
         reject_log_second: Second AR reject log.
+        threshold_bad_mask: Boolean mask from threshold detection.
+        threshold_stats: Statistics from threshold detection.
         ecg_inds: ECG component indices removed.
         eog_inds: EOG component indices removed.
         n_epochs_ica_only: Number of epochs after ICA only.
@@ -388,6 +460,13 @@ def save_preprocessing_summary(
     n_bad_first = int(np.sum(reject_log_first.bad_epochs))
     n_bad_second = int(np.sum(reject_log_second.bad_epochs))
     n_interpolated = int(np.sum(reject_log_second.labels == 2))
+
+    # Threshold vs AutoReject comparison
+    ar_bad = reject_log_second.bad_epochs
+    both_bad = int(np.sum(ar_bad & threshold_bad_mask))
+    only_ar = int(np.sum(ar_bad & ~threshold_bad_mask))
+    only_thresh = int(np.sum(threshold_bad_mask & ~ar_bad))
+    agreement = float(np.mean(ar_bad == threshold_bad_mask) * 100)
 
     summary = f"""Preprocessing Summary
 ====================
@@ -408,10 +487,22 @@ ICA Artifact Removal:
   - EOG components removed: {len(eog_inds)} (ICs: {eog_inds})
   - Total ICA components removed: {len(ecg_inds) + len(eog_inds)}
 
+Threshold-Based Detection (post-ICA):
+  - Bad epochs detected: {threshold_stats['n_bad']} ({threshold_stats['pct_bad']:.1f}%)
+  - Reject threshold: {threshold_stats['reject_threshold']}
+  - Flat threshold: {threshold_stats['flat_threshold']}
+
 Second AutoReject Pass (after ICA):
   - Bad epochs detected: {n_bad_second} ({100*n_bad_second/n_epochs_ica_only:.1f}%)
   - Channels interpolated: {n_interpolated}
   - Final epochs retained: {n_epochs_ica_ar} ({100*n_epochs_ica_ar/n_total_epochs:.1f}% of original)
+
+Threshold vs AutoReject Comparison
+----------------------------------
+  - Agreement: {agreement:.1f}%
+  - Both methods reject: {both_bad} epochs
+  - Only AutoReject rejects: {only_ar} epochs
+  - Only Threshold rejects: {only_thresh} epochs
 
 Output Files
 -----------
@@ -586,6 +677,27 @@ def preprocess_run(
     epochs_ica_only = ica.apply(epochs.copy())
     console.print(f"[green]✓ Created {len(epochs_ica_only)} ICA-cleaned epochs[/green]")
 
+    # Threshold-based bad epoch detection (for comparison with AutoReject)
+    console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
+    console.print(f"[bold cyan]THRESHOLD-BASED EPOCH DETECTION[/bold cyan]")
+    console.print(f"[bold cyan]{'='*60}[/bold cyan]")
+    logger.info("Running threshold-based bad epoch detection")
+
+    # Get threshold parameters from config or use defaults
+    threshold_cfg = config["preprocessing"].get("threshold_rejection", {})
+    reject_threshold = threshold_cfg.get("reject", {"mag": 4000e-15})
+    flat_threshold = threshold_cfg.get("flat", {"mag": 1e-15})
+
+    threshold_bad_mask, threshold_stats = detect_bad_epochs_threshold(
+        epochs_ica_only,
+        reject_threshold=reject_threshold,
+        flat_threshold=flat_threshold,
+    )
+    console.print(
+        f"[green]✓ Threshold detection: {threshold_stats['n_bad']}/{threshold_stats['n_total']} "
+        f"bad epochs ({threshold_stats['pct_bad']:.1f}%)[/green]"
+    )
+
     # Second AutoReject pass (fit_transform with interpolation)
     console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
     console.print(f"[bold cyan]SECOND AUTOREJECT PASS (WITH INTERPOLATION)[/bold cyan]")
@@ -609,6 +721,8 @@ def preprocess_run(
         epochs_ica_ar,
         reject_log_first,
         reject_log_second,
+        threshold_bad_mask,
+        threshold_stats,
         ica,
         ecg_inds,
         eog_inds,
@@ -696,6 +810,8 @@ def preprocess_run(
         len(epochs_filt),
         reject_log_first,
         reject_log_second,
+        threshold_bad_mask,
+        threshold_stats,
         ecg_inds,
         eog_inds,
         len(epochs_ica_only),
@@ -705,6 +821,7 @@ def preprocess_run(
 
     # Save metadata
     metadata_path = Path(str(paths["preproc"].fpath).replace("_meg.fif", "_params.json"))
+    ar_bad = reject_log_second.bad_epochs
     save_preprocessing_metadata(
         metadata_path,
         config,
@@ -725,6 +842,14 @@ def preprocess_run(
                 "n_total_epochs": len(epochs_filt),
                 "pct_bad": float(100 * np.sum(reject_log_first.bad_epochs) / len(epochs_filt)),
             },
+            "threshold_detection": {
+                "description": "Threshold-based detection after ICA",
+                "n_bad_epochs": threshold_stats["n_bad"],
+                "n_total_epochs": threshold_stats["n_total"],
+                "pct_bad": threshold_stats["pct_bad"],
+                "reject_threshold": {k: float(v) for k, v in threshold_stats["reject_threshold"].items()},
+                "flat_threshold": {k: float(v) for k, v in threshold_stats["flat_threshold"].items()},
+            },
             "autoreject_second_pass": {
                 "description": "Second pass (fit_transform) after ICA",
                 "n_bad_epochs": int(np.sum(reject_log_second.bad_epochs)),
@@ -732,6 +857,12 @@ def preprocess_run(
                 "pct_bad": float(100 * np.sum(reject_log_second.bad_epochs) / len(epochs_ica_only)),
                 "n_channels_interpolated": int(np.sum(reject_log_second.labels == 2)),
                 "n_epochs_final": len(epochs_ica_ar),
+            },
+            "threshold_vs_autoreject": {
+                "agreement_pct": float(np.mean(ar_bad == threshold_bad_mask) * 100),
+                "both_reject": int(np.sum(ar_bad & threshold_bad_mask)),
+                "only_ar_rejects": int(np.sum(ar_bad & ~threshold_bad_mask)),
+                "only_threshold_rejects": int(np.sum(threshold_bad_mask & ~ar_bad)),
             },
         },
     )

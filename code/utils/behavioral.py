@@ -192,12 +192,23 @@ def get_VTC_from_file(
     are NOT computed here. They are computed on-demand during feature extraction
     using classify_trials_from_vtc() with bounds from config['analysis']['inout_bounds'].
 
+    Run Matching:
+        Behavioral files are matched to MEG runs by parsing the run number from
+        the filename. MEG run N corresponds to behavioral run N-1:
+        - MEG run 02 -> behavioral run 1
+        - MEG run 03 -> behavioral run 2
+        - etc.
+
+        Only valid behavioral runs (1-6) are used. Run 0 (practice) and files with
+        unexpected run numbers (typos like "47") are ignored with a warning.
+
     Args:
         subject: Subject ID (e.g., "04").
         run: Run number (e.g., "02").
         files_list: List of logfile names.
         logs_dir: Directory containing logfiles.
-        cpt_blocs: List of CPT block numbers. Defaults to ['2','3','4','5','6','7'].
+        cpt_blocs: DEPRECATED - no longer used. Run matching is now done by parsing
+            the run number from the behavioral filename.
         filt_type: Filter type ('gaussian' or 'butterworth'). Defaults to 'gaussian'.
         filt_config: Dictionary with filter parameters from config['behavioral']['vtc']['filter'].
             For gaussian: {'gaussian_fwhm': 9}
@@ -223,30 +234,53 @@ def get_VTC_from_file(
     """
     logs_dir = Path(logs_dir)
 
-    if cpt_blocs is None:
-        cpt_blocs = ["2", "3", "4", "5", "6", "7"]
+    # cpt_blocs is deprecated - run matching is now done by filename parsing
+    if cpt_blocs is not None:
+        logger.debug("cpt_blocs parameter is deprecated and ignored")
+
     if filt_config is None:
         # Default filter config (Gaussian with FWHM=9)
         filt_config = {"gaussian_fwhm": 9}
 
-    # Find logfiles belonging to subject
-    subject_logfiles = []
+    # Find logfiles belonging to subject and map by behavioral run number
+    # Behavioral runs 1-6 correspond to MEG runs 02-07 (cpt_blocs 2-7)
+    valid_behav_runs = {"1", "2", "3", "4", "5", "6"}
+    subject_logfiles = {}  # behav_run -> filepath
+
     for logfile in sorted(files_list):
         parts = logfile.split("_")
-        if len(parts) >= 4 and parts[2] == subject and parts[3] != "0":
-            subject_logfiles.append(logs_dir / logfile)
+        if len(parts) >= 4 and parts[2] == subject:
+            behav_run = parts[3]
+            # Only include valid behavioral runs (1-6), skip run 0 and typos
+            if behav_run in valid_behav_runs:
+                if behav_run not in subject_logfiles:
+                    subject_logfiles[behav_run] = logs_dir / logfile
+                else:
+                    logger.warning(
+                        f"Duplicate behavioral file for sub-{subject} run {behav_run}, "
+                        f"using first: {subject_logfiles[behav_run].name}"
+                    )
+            elif behav_run != "0":
+                logger.warning(
+                    f"Ignoring behavioral file with unexpected run number: {logfile}"
+                )
 
     if not subject_logfiles:
-        logger.error(f"No logfiles found for subject {subject}")
-        raise FileNotFoundError(f"No logfiles found for subject {subject}")
+        logger.error(f"No valid logfiles found for subject {subject}")
+        raise FileNotFoundError(f"No valid logfiles found for subject {subject}")
 
-    # Load and clean RT arrays
+    # Load and clean RT arrays from all valid runs
     RT_arrays = []
     RT_to_VTC = None
     performance_dict = None
     df_response_out = None
 
-    for idx_file, logfile in enumerate(subject_logfiles):
+    # MEG run (from cpt_blocs) to behavioral run mapping: MEG run N -> behav run N-1
+    # e.g., MEG run 02 (cpt_bloc "2") -> behavioral run "1"
+    target_behav_run = str(int(run) - 1) if run.isdigit() else None
+
+    for behav_run in sorted(subject_logfiles.keys()):
+        logfile = subject_logfiles[behav_run]
         try:
             data = loadmat(logfile)
             df_response = pd.DataFrame(data["response"])
@@ -257,18 +291,27 @@ def get_VTC_from_file(
             RT_raw = np.array([x if x != 0 else np.nan for x in RT_raw])
             RT_arrays.append(RT_raw)
 
-            if int(cpt_blocs[idx_file]) == int(run):
+            # Match by actual run number, not index
+            if behav_run == target_behav_run:
                 RT_to_VTC = RT_raw
                 performance_dict = perf_dict.copy()
                 df_response_out = df_response
+                logger.debug(f"Matched behavioral run {behav_run} to MEG run {run}")
 
         except Exception as e:
             logger.error(f"Failed to load logfile {logfile}: {e}")
             continue
 
     if RT_to_VTC is None:
-        logger.error(f"Run {run} not found in logfiles for subject {subject}")
-        raise ValueError(f"Run {run} not found")
+        available_runs = sorted(subject_logfiles.keys())
+        logger.error(
+            f"Behavioral run {target_behav_run} (for MEG run {run}) not found for "
+            f"subject {subject}. Available behavioral runs: {available_runs}"
+        )
+        raise ValueError(
+            f"Behavioral run {target_behav_run} not found for subject {subject}. "
+            f"MEG run {run} requires behavioral run {target_behav_run}."
+        )
 
     # Compute mean and std across runs
     allruns_RT_array = np.concatenate(RT_arrays)

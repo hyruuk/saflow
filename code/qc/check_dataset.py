@@ -39,6 +39,7 @@ class SubjectFiles:
     # Sourcedata
     meg_runs: List[str] = field(default_factory=list)
     behav_runs: List[str] = field(default_factory=list)
+    behav_extra: List[str] = field(default_factory=list)  # run 0, duplicates, typos
     has_mri: bool = False
     # BIDS
     bids_runs: List[str] = field(default_factory=list)
@@ -100,20 +101,46 @@ def scan_sourcedata_meg(sourcedata_meg: Path, subject: str, date_folder: str) ->
     return sorted(runs)
 
 
-def scan_sourcedata_behav(sourcedata_behav: Path, subject: str) -> List[str]:
-    """Find behavioral runs for a subject."""
-    runs = []
-    if not sourcedata_behav.exists():
-        return runs
+def scan_sourcedata_behav(sourcedata_behav: Path, subject: str) -> Dict[str, List[str]]:
+    """Find behavioral runs for a subject.
 
-    for mat_file in sourcedata_behav.glob(f"Data_0_{subject}_*.mat"):
+    Returns dict with:
+        - 'valid': runs 1-6 (expected task runs)
+        - 'extra': run 0, duplicates, or unexpected run numbers
+    """
+    result = {"valid": [], "extra": []}
+    if not sourcedata_behav.exists():
+        return result
+
+    seen_runs = {}  # run -> list of files (to detect duplicates)
+
+    for mat_file in sorted(sourcedata_behav.glob(f"Data_0_{subject}_*.mat")):
         try:
             # Parse run from: Data_0_04_1_11-Apr-2019_...
             run = mat_file.name.split("_")[3]
-            runs.append(run)
+
+            if run not in seen_runs:
+                seen_runs[run] = []
+            seen_runs[run].append(mat_file.name)
         except (IndexError, ValueError):
             pass
-    return sorted(runs)
+
+    # Categorize runs
+    expected_runs = {"1", "2", "3", "4", "5", "6"}
+
+    for run, files in sorted(seen_runs.items()):
+        if run in expected_runs:
+            if len(files) == 1:
+                result["valid"].append(run)
+            else:
+                # Multiple files for same run - use first, mark extras
+                result["valid"].append(run)
+                result["extra"].extend([f"dup:{run}" for _ in files[1:]])
+        else:
+            # Run 0, typos, etc.
+            result["extra"].extend([run] * len(files))
+
+    return result
 
 
 def scan_sourcedata_mri(sourcedata_mri: Path, subject: str) -> bool:
@@ -210,7 +237,9 @@ def scan_dataset(config: Dict) -> DatasetSummary:
             sf.meg_runs = scan_sourcedata_meg(
                 sourcedata / "meg", subject, subj_date_map[subject]
             )
-        sf.behav_runs = scan_sourcedata_behav(sourcedata / "behav", subject)
+        behav_result = scan_sourcedata_behav(sourcedata / "behav", subject)
+        sf.behav_runs = behav_result["valid"]
+        sf.behav_extra = behav_result["extra"]
         sf.has_mri = scan_sourcedata_mri(sourcedata / "mri", subject)
 
         # BIDS
@@ -314,7 +343,13 @@ def generate_report(summary: DatasetSummary, verbose: bool = False) -> str:
         sf = summary.subjects[subject]
 
         meg_str = format_runs(sf.meg_runs, [], all_runs=True)
-        behav_str = f"{len(sf.behav_runs)}/6" if sf.behav_runs else "-"
+        # Show valid/6, add warning marker if there are extra files
+        if sf.behav_runs:
+            behav_str = f"{len(sf.behav_runs)}/6"
+            if sf.behav_extra:
+                behav_str += f" (+{len(sf.behav_extra)})"
+        else:
+            behav_str = "-"
         mri_str = bool_to_symbol(sf.has_mri)
         bids_str = format_runs(sf.bids_runs, summary.expected_runs)
         preproc_str = format_runs(sf.preproc_runs, summary.expected_runs)
@@ -355,23 +390,31 @@ def generate_report(summary: DatasetSummary, verbose: bool = False) -> str:
             expected_meg = {"01", "02", "03", "04", "05", "06", "07", "08"}
             missing_meg = expected_meg - set(sf.meg_runs)
             if missing_meg:
-                issues.append(f"MEG runs: {sorted(missing_meg)}")
+                issues.append(f"Missing MEG runs: {sorted(missing_meg)}")
+
+            # Check behavioral
+            expected_behav = {"1", "2", "3", "4", "5", "6"}
+            missing_behav = expected_behav - set(sf.behav_runs)
+            if missing_behav:
+                issues.append(f"Missing behav runs: {sorted(missing_behav)}")
+            if sf.behav_extra:
+                issues.append(f"Extra behav files: {sf.behav_extra}")
 
             # Check BIDS
             expected_bids = set(summary.expected_runs)
             missing_bids = expected_bids - set(sf.bids_runs)
             if missing_bids:
-                issues.append(f"BIDS runs: {sorted(missing_bids)}")
+                issues.append(f"Missing BIDS runs: {sorted(missing_bids)}")
 
             # Check preproc
             missing_preproc = expected_bids - set(sf.preproc_runs)
             if sf.bids_runs and missing_preproc:
-                issues.append(f"Preproc runs: {sorted(missing_preproc)}")
+                issues.append(f"Missing preproc runs: {sorted(missing_preproc)}")
 
             if issues:
                 lines.append(f"sub-{subject}:")
                 for issue in issues:
-                    lines.append(f"  - Missing {issue}")
+                    lines.append(f"  - {issue}")
 
     return "\n".join(lines)
 

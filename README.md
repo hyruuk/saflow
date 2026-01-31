@@ -20,6 +20,7 @@ A production-ready, config-driven MEG analysis pipeline for processing gradual c
 - [Usage Examples](#usage-examples)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
+- [Known Issues](#known-issues)
 
 ---
 
@@ -55,11 +56,11 @@ The **gradual Continuous Performance Task (gradCPT)** is a sustained attention t
 **Figure 1. Gradual onset Continuous Performance Task (gradCPT).** **A** Sequence of four consecutive trials illustrating the four possible types of events: baseline trials, correct omissions, omission errors and lapses. The hand icon represents the occurrence of a response, and the nearby arrows show its association with the closest trial. The green and red horizontal bars represent the intensity of each stimulus at every time point, going from 0% (white) to 100% (green or red) and then to 0% again. **B** Experiment structure. The session was split into 8 runs, starting with an eyes-open resting state followed by 6 blocks of the task, and ending with a second resting state.
 
 **Key characteristics**:
-- **Gradual transitions**: Scenes morph gradually between cities and mountains over ~800ms
-- **Sustained attention**: ~8 minutes per run, 6 runs per session
+- **Gradual transitions**: Scenes morph gradually between cities and mountains over ~850ms
+- **Sustained attention**: 8 minutes per run, 6 runs per session
 - **Two trial types**:
-  - **Frequent (non-target)**: Mountains (~90% of trials)
-  - **Rare (target)**: Cities (~10% of trials)
+  - **Frequent (non-target)**: Mountains (90% of trials)
+  - **Rare (target)**: Cities (10% of trials)
 - **Performance metrics**: Commission errors (lapses), omission errors, reaction times
 
 ### Epoch Timing
@@ -682,3 +683,58 @@ MIT License - See LICENSE file for details
 - **Issues**: https://github.com/your-org/saflow/issues
 - **Documentation**: See TASKS.md for detailed command reference
 - **Development**: See AGENTS.md and PROGRESS.md
+
+---
+
+## Known Issues
+
+This section documents known data quality issues identified through QC analysis. Run `invoke dev.check.qc` for the latest report.
+
+### Missing Subjects
+
+Subjects **16**, **25**, and **27** are excluded from analysis (no data available).
+
+### ISI Timing Variability
+
+Most subjects have very consistent inter-stimulus intervals (std < 2ms). However, some subjects show higher timing variability during recording:
+
+| Subject | ISI std (ms) | Notes |
+|---------|--------------|-------|
+| sub-18  | 39.90 | High variability |
+| sub-20  | 26.52 | Moderate variability |
+| sub-21  | 20.86 | Moderate variability |
+| sub-22  | 46.73 | High variability |
+| sub-23  | 36.41 | High variability |
+| sub-24  | 19.47 | Moderate variability |
+| sub-26  | 33.19 | Moderate variability |
+
+These timing inconsistencies may reflect hardware/software issues during data collection. Consider this when interpreting trial-locked analyses for these subjects.
+
+### High Bad Epoch Rates
+
+Bad epochs are identified using a 4000 fT peak-to-peak amplitude threshold. Most subjects have < 5% bad epochs, but several have elevated rates:
+
+| Subject | Bad Epochs % | Notes |
+|---------|--------------|-------|
+| sub-07  | 23.3% | Review recommended |
+| sub-19  | 17.2% | |
+| sub-21  | 15.3% | Also has ISI variability |
+| sub-38  | 12.1% | |
+| sub-37  | 7.7% | |
+| sub-26  | 7.4% | Also has ISI variability |
+| sub-35  | 7.2% | |
+| sub-05  | 6.7% | |
+
+These subjects may have had more movement artifacts or environmental noise. The preprocessing pipeline (ICA + AutoReject) will handle most of these, but results should be interpreted with caution.
+
+### Channel Quality
+
+Channel quality is excellent across all subjects:
+- **Bad channels**: 0-1% across all subjects
+- **5 channels missing** from the CTF 275 system (270 detected vs 275 expected) - consistent across all recordings
+
+### Behavioral Notes
+
+- **Response rates**: Range from 78% (sub-15) to 95% (sub-04), all within expected range
+- **Reaction times**: Range from 592ms (sub-10) to 901ms (sub-15)
+- Sub-15 and sub-21 show lower response rates (~78-80%) which may indicate reduced engagement

@@ -154,7 +154,7 @@ def compute_or_load_noise_cov(
     Examples:
         >>> noise_cov = compute_or_load_noise_cov('20190615', bids_root, deriv_root)
     """
-    noise_cov_dir = derivatives_root / "noise_cov"
+    noise_cov_dir = derivatives_root / "noise_covariance"
     noise_cov_dir.mkdir(parents=True, exist_ok=True)
 
     noise_cov_bidspath = BIDSPath(
@@ -177,8 +177,20 @@ def compute_or_load_noise_cov(
             / f"sub-emptyroom/ses-{er_date}/meg"
             / f"sub-emptyroom_ses-{er_date}_task-noise_meg.ds"
         )
+
+        if not er_ds_path.exists():
+            raise FileNotFoundError(
+                f"Empty-room recording not found at: {er_ds_path}\n"
+                f"Please ensure the empty-room recording for date {er_date} "
+                f"is available in the BIDS folder at:\n"
+                f"  {bids_root}/sub-emptyroom/ses-{er_date}/meg/\n"
+                f"Expected file: sub-emptyroom_ses-{er_date}_task-noise_meg.ds"
+            )
+
+        logger.info(f"Loading empty-room recording from: {er_ds_path}")
         er_raw = mne.io.read_raw_ctf(str(er_ds_path), preload=True)
 
+        logger.info("Computing noise covariance (shrunk + empirical methods)...")
         noise_cov = mne.compute_raw_covariance(
             er_raw, method=["shrunk", "empirical"], rank=None, verbose=False
         )
@@ -186,7 +198,7 @@ def compute_or_load_noise_cov(
         noise_cov.save(str(noise_cov_file), overwrite=True)
         logger.info(f"Saved noise covariance to {noise_cov_file}")
     else:
-        logger.debug(f"Loading cached noise covariance from {noise_cov_file}")
+        logger.info(f"Loading cached noise covariance from {noise_cov_file}")
         noise_cov = mne.read_cov(str(noise_cov_file))
 
     return noise_cov
@@ -283,3 +295,85 @@ def create_epochs(
 
     logger.debug(f"Created {len(epochs)} epochs")
     return epochs
+
+
+def detect_bad_epochs_threshold(
+    epochs: mne.Epochs,
+    reject_threshold: dict = None,
+    flat_threshold: dict = None,
+) -> Tuple[np.ndarray, dict]:
+    """Detect bad epochs using amplitude thresholds.
+
+    Simple threshold-based rejection for comparison with AutoReject.
+    Uses peak-to-peak amplitude to identify epochs with extreme values.
+
+    Args:
+        epochs: Epochs object to check.
+        reject_threshold: Max peak-to-peak amplitude (e.g., {'mag': 4000e-15}).
+                          If None, uses default {'mag': 4000e-15}.
+        flat_threshold: Min peak-to-peak amplitude (e.g., {'mag': 1e-15}).
+                        If None, uses default {'mag': 1e-15}.
+
+    Returns:
+        Tuple of:
+        - Boolean array marking bad epochs (True = bad)
+        - Dictionary with detection statistics
+
+    Examples:
+        >>> bad_mask, stats = detect_bad_epochs_threshold(epochs)
+        >>> print(f"Found {stats['n_bad']} bad epochs ({stats['pct_bad']:.1f}%)")
+    """
+    if reject_threshold is None:
+        reject_threshold = {"mag": 4000e-15}  # 4000 fT
+    if flat_threshold is None:
+        flat_threshold = {"mag": 1e-15}  # 1 fT
+
+    logger.info(
+        f"Running threshold-based epoch detection: "
+        f"reject={reject_threshold}, flat={flat_threshold}"
+    )
+
+    n_epochs = len(epochs)
+    bad_mask = np.zeros(n_epochs, dtype=bool)
+
+    # Get data for magnetometers
+    picks_mag = mne.pick_types(epochs.info, meg="mag")
+    data = epochs.get_data(picks=picks_mag)  # (n_epochs, n_channels, n_times)
+
+    # Compute peak-to-peak amplitude per epoch per channel
+    ptp = np.ptp(data, axis=2)  # (n_epochs, n_channels)
+
+    # Check reject threshold (too high amplitude)
+    if "mag" in reject_threshold:
+        reject_val = reject_threshold["mag"]
+        bad_reject = np.any(ptp > reject_val, axis=1)
+        logger.debug(f"Epochs exceeding reject threshold: {np.sum(bad_reject)}")
+        bad_mask |= bad_reject
+
+    # Check flat threshold (too low amplitude)
+    if "mag" in flat_threshold:
+        flat_val = flat_threshold["mag"]
+        bad_flat = np.any(ptp < flat_val, axis=1)
+        logger.debug(f"Epochs below flat threshold: {np.sum(bad_flat)}")
+        bad_mask |= bad_flat
+
+    n_bad = int(np.sum(bad_mask))
+    pct_bad = 100 * n_bad / n_epochs if n_epochs > 0 else 0.0
+
+    stats = {
+        "n_total": n_epochs,
+        "n_bad": n_bad,
+        "n_good": n_epochs - n_bad,
+        "pct_bad": pct_bad,
+        "reject_threshold": reject_threshold,
+        "flat_threshold": flat_threshold,
+        "n_bad_reject": int(np.sum(bad_reject)) if "mag" in reject_threshold else 0,
+        "n_bad_flat": int(np.sum(bad_flat)) if "mag" in flat_threshold else 0,
+    }
+
+    logger.info(
+        f"Threshold detection: {n_bad}/{n_epochs} bad epochs "
+        f"({pct_bad:.1f}%)"
+    )
+
+    return bad_mask, stats
