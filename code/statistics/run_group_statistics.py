@@ -110,7 +110,7 @@ def get_feature_folder(
         Path to feature folder.
     """
     data_root = Path(config["paths"]["data_root"])
-    processed = data_root / config["paths"]["processed"]
+    processed = data_root / config["paths"]["features"]
 
     # Map feature types to folder names
     if feature_type.startswith("fooof_"):
@@ -486,7 +486,7 @@ def main():
 
     # Set up output directory
     data_root = Path(config["paths"]["data_root"])
-    output_dir = data_root / config["paths"]["processed"] / f"statistics_{args.space}" / "group"
+    output_dir = data_root / config["paths"]["features"] / f"statistics_{args.space}" / "group"
 
     logger.info("=" * 80)
     logger.info("GROUP-LEVEL STATISTICAL ANALYSIS")
@@ -559,7 +559,7 @@ def main():
             plot_effect_size_topomap,
         )
 
-        plots_dir = data_root / config["paths"]["processed"] / f"statistics_{args.space}" / "plots"
+        plots_dir = data_root / config["paths"]["features"] / f"statistics_{args.space}" / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate plots (placeholder for now)

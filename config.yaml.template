@@ -11,7 +11,7 @@ paths:
   # Data paths (relative to data_root)
   raw: sourcedata/
   derivatives: derivatives/
-  processed: processed/
+  features: features/
 
   # Project-specific paths (in saflow/ project directory)
   reports: ./reports
@@ -119,8 +119,21 @@ preprocessing:
 source_reconstruction:
   method: dSPM
   snr: 3.0
-  atlas: aparc.a2009s
-  parc: aparc.a2009s  # Parcellation for ROI extraction
+
+  # Default atlases for ROI extraction (used by apply_atlas.py)
+  # These are applied after morphing to fsaverage template
+  # Common options:
+  #   - aparc.a2009s (Destrieux atlas, 148 ROIs)
+  #   - aparc (Desikan-Killiany, 68 ROIs)
+  #   - Schaefer2018_100Parcels_7Networks_order (100 ROIs)
+  #   - Schaefer2018_200Parcels_7Networks_order (200 ROIs)
+  #   - Schaefer2018_400Parcels_7Networks_order (400 ROIs)
+  #   - HCPMMP1 (Glasser atlas, 360 ROIs)
+  atlases:
+    - aparc.a2009s
+    - Schaefer2018_100Parcels_7Networks_order
+    - Schaefer2018_200Parcels_7Networks_order
+    - Schaefer2018_400Parcels_7Networks_order
 
 # =============================================================================
 # Behavioral Analysis Configuration

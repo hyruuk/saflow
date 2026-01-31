@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runs",
         type=str,
-        help="Space-separated run numbers (e.g., '02 03 04'). Mutually exclusive with --run.",
+        help="Space-separated run numbers (e.g., '02 03 04'). If neither --run nor --runs specified, processes all runs from config.",
     )
 
     parser.add_argument(
@@ -111,12 +111,9 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    # Validate run arguments
+    # Validate run arguments (mutually exclusive but both optional - defaults to all runs)
     if args.run and args.runs:
         parser.error("--run and --runs are mutually exclusive")
-
-    if not args.run and not args.runs:
-        parser.error("Either --run or --runs must be specified")
 
     return args
 
@@ -160,9 +157,8 @@ def process_single_run(
     # Get computing parameters
     n_jobs = config["computing"]["n_jobs"]
 
-    # Get FreeSurfer subjects directory
-    data_root = Path(config["paths"]["data_root"])
-    fs_subjects_dir = data_root / config["paths"]["freesurfer_subjects_dir"]
+    # Get FreeSurfer subjects directory (already expanded in config)
+    fs_subjects_dir = Path(config["paths"]["freesurfer_subjects_dir"])
 
     if not fs_subjects_dir.exists():
         logger.error(f"FreeSurfer subjects directory not found: {fs_subjects_dir}")
@@ -398,9 +394,9 @@ def main() -> int:
     log_dir.mkdir(parents=True, exist_ok=True)
 
     setup_logging(
-        log_level=args.log_level,
-        log_dir=log_dir,
-        log_prefix=f"source_recon_sub-{args.subject}",
+        name=__name__,
+        log_file=log_dir / f"source_recon_sub-{args.subject}.log",
+        level=args.log_level,
     )
 
     logger = logging.getLogger(__name__)
@@ -410,22 +406,25 @@ def main() -> int:
     logger.info(f"Processing: {args.processing}")
 
     # Determine BIDS root
+    data_root = Path(config["paths"]["data_root"])
     if args.bids_root:
         bids_root = args.bids_root
     else:
-        data_root = Path(config["paths"]["data_root"])
-        bids_root = data_root / config["paths"]["bids"]
+        bids_root = data_root / "bids"
 
-    derivatives_root = bids_root / "derivatives"
+    derivatives_root = data_root / config["paths"]["derivatives"]
 
     logger.info(f"BIDS root: {bids_root}")
     logger.info(f"Derivatives root: {derivatives_root}")
 
-    # Parse runs
+    # Parse runs - default to all runs from config if not specified
     if args.run:
         runs = [args.run]
-    else:
+    elif args.runs:
         runs = args.runs.split()
+    else:
+        runs = config["bids"]["task_runs"]
+        logger.info(f"No runs specified, using all runs from config: {runs}")
 
     logger.info(f"Processing {len(runs)} run(s): {', '.join(runs)}")
 

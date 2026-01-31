@@ -100,7 +100,7 @@ def get_feature_folder(
         Path to feature folder.
     """
     data_root = Path(config["paths"]["data_root"])
-    processed = data_root / config["paths"]["processed"]
+    processed = data_root / config["paths"]["features"]
 
     # Map feature types to folder names
     if feature_type.startswith("fooof_"):
@@ -536,7 +536,7 @@ def main():
 
     # Set up output directory
     data_root = Path(config["paths"]["data_root"])
-    output_dir = data_root / config["paths"]["processed"] / f"classification_{args.space}" / "group"
+    output_dir = data_root / config["paths"]["features"] / f"classification_{args.space}" / "group"
 
     logger.info("=" * 80)
     logger.info("CLASSIFICATION ANALYSIS")

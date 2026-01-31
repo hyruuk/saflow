@@ -195,14 +195,19 @@ def scan_derivatives(derivatives_root: Path, subject: str) -> List[str]:
     return sorted(set(runs))
 
 
-def scan_features(processed_root: Path, subject: str) -> Dict[str, bool]:
+def scan_features(features_root: Path, subject: str) -> Dict[str, bool]:
     """Check which feature types exist for a subject."""
     features = {"fooof": False, "psd": False, "complexity": False}
 
-    # Check each feature type
-    for feature_type in features.keys():
-        feature_dir = processed_root / f"features_sensor" / feature_type / f"sub-{subject}"
-        if feature_dir.exists() and any(feature_dir.glob("*.npy")):
+    # Check each feature type (using new folder naming convention)
+    feature_dirs = {
+        "fooof": features_root / "fooof_sensor" / f"sub-{subject}",
+        "psd": features_root / "welch_psds_sensor" / f"sub-{subject}",
+        "complexity": features_root / "complexity_sensor" / f"sub-{subject}",
+    }
+
+    for feature_type, feature_dir in feature_dirs.items():
+        if feature_dir.exists() and any(feature_dir.glob("*.npz")):
             features[feature_type] = True
 
     return features
@@ -222,8 +227,8 @@ def scan_dataset(config: Dict) -> DatasetSummary:
     data_root = Path(config["paths"]["data_root"])
     sourcedata = data_root / "sourcedata"
     bids_root = data_root / "bids"
-    derivatives_root = data_root / "derivatives"
-    processed_root = data_root / "processed"
+    derivatives_root = data_root / config["paths"]["derivatives"]
+    features_root = data_root / config["paths"]["features"]
 
     # Get subject-date mapping
     subj_date_map = get_subject_date_mapping(sourcedata / "meg")
@@ -249,7 +254,7 @@ def scan_dataset(config: Dict) -> DatasetSummary:
         sf.preproc_runs = scan_derivatives(derivatives_root, subject)
 
         # Features
-        features = scan_features(processed_root, subject)
+        features = scan_features(features_root, subject)
         sf.has_fooof = features["fooof"]
         sf.has_psd = features["psd"]
         sf.has_complexity = features["complexity"]

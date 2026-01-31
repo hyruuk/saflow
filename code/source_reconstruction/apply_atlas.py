@@ -1,26 +1,30 @@
 """Apply atlas/parcellation to source estimates (Stage 2b).
 
-This script applies a cortical parcellation (e.g., aparc.a2009s) to morphed
+This script applies cortical parcellations (e.g., aparc.a2009s, Schaefer) to morphed
 source estimates, averaging time series within each ROI/label.
 
 Outputs:
-- ROI-averaged time series (pickled dictionary with data + region names)
+- ROI-averaged time series (.npz format with data + region names)
+- JSON sidecar with metadata
 
 Usage:
-    # Single subject/run
-    python -m code.source_reconstruction.apply_atlas --subject 04 --run 02
+    # Single subject, all runs, default atlases
+    python -m code.source_reconstruction.apply_atlas --subject 04
 
-    # Multiple runs
+    # Specific runs
     python -m code.source_reconstruction.apply_atlas --subject 04 --runs "02 03 04"
 
-    # Specify atlas
-    python -m code.source_reconstruction.apply_atlas --subject 04 --run 02 --atlas aparc.a2009s
+    # Specific atlas
+    python -m code.source_reconstruction.apply_atlas --subject 04 --atlas aparc.a2009s
+
+    # Multiple atlases
+    python -m code.source_reconstruction.apply_atlas --subject 04 --atlases "aparc.a2009s Schaefer2018_100Parcels_7Networks_order"
 """
 
 import argparse
 import json
 import logging
-import pickle
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -33,6 +37,14 @@ from mne_bids import BIDSPath
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
 from code.utils.validation import validate_subject_run
+
+# Default atlases to apply
+DEFAULT_ATLASES = [
+    "aparc.a2009s",
+    "Schaefer2018_100Parcels_7Networks_order",
+    "Schaefer2018_200Parcels_7Networks_order",
+    "Schaefer2018_400Parcels_7Networks_order",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,13 +70,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runs",
         type=str,
-        help="Space-separated run numbers (e.g., '02 03 04'). Mutually exclusive with --run.",
+        help="Space-separated run numbers (e.g., '02 03 04'). If neither --run nor --runs specified, processes all runs from config.",
     )
 
     parser.add_argument(
         "--atlas",
         type=str,
-        help="Atlas/parcellation name (e.g., 'aparc.a2009s', 'aparc'). Defaults to config.",
+        help="Single atlas/parcellation name. Mutually exclusive with --atlases.",
+    )
+
+    parser.add_argument(
+        "--atlases",
+        type=str,
+        help="Space-separated atlas names (e.g., 'aparc.a2009s Schaefer2018_100Parcels_7Networks_order'). If neither --atlas nor --atlases specified, uses default set.",
     )
 
     parser.add_argument(
@@ -105,12 +123,13 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    # Validate run arguments
+    # Validate run arguments (mutually exclusive but both optional)
     if args.run and args.runs:
         parser.error("--run and --runs are mutually exclusive")
 
-    if not args.run and not args.runs:
-        parser.error("Either --run or --runs must be specified")
+    # Validate atlas arguments (mutually exclusive but both optional)
+    if args.atlas and args.atlases:
+        parser.error("--atlas and --atlases are mutually exclusive")
 
     return args
 
@@ -120,46 +139,30 @@ def create_atlas_paths(
     run: str,
     atlas: str,
     processing: str,
-    bids_root: Path,
-) -> Dict[str, BIDSPath]:
-    """Create BIDSPath objects for atlas application.
+    derivatives_root: Path,
+) -> Dict[str, Path]:
+    """Create paths for atlas application.
 
     Args:
         subject: Subject ID
         run: Run number
         atlas: Atlas name
         processing: Processing state
-        bids_root: BIDS root directory
+        derivatives_root: Derivatives directory (for both input and output)
 
     Returns:
-        Dictionary with 'input' and 'output' BIDSPath objects
+        Dictionary with 'input' and 'output' paths
     """
-    derivatives_root = bids_root / "derivatives"
+    # Input: morphed sources (in derivatives)
+    input_dir = derivatives_root / "morphed_sources" / f"sub-{subject}" / "meg"
+    input_file = input_dir / f"sub-{subject}_task-gradCPT_run-{run}_proc-{processing}_desc-morphed-stc.h5"
 
-    # Input: morphed sources
-    input_bidspath = BIDSPath(
-        subject=subject,
-        task="gradCPT",
-        run=run,
-        datatype="meg",
-        processing=processing,
-        description="morphed",
-        root=derivatives_root / "morphed_sources",
-    )
+    # Output: atlas timeseries (in derivatives, part of source reconstruction pipeline)
+    output_dir = derivatives_root / f"atlas_timeseries_{atlas}" / f"sub-{subject}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / f"sub-{subject}_ses-recording_task-gradCPT_run-{run}_space-{atlas}_timeseries.npz"
 
-    # Output: atlased sources
-    output_bidspath = BIDSPath(
-        subject=subject,
-        task="gradCPT",
-        run=run,
-        datatype="meg",
-        processing=processing,
-        description=f"atlased_{atlas}",
-        root=derivatives_root / f"atlased_sources_{atlas}",
-    )
-    output_bidspath.mkdir(exist_ok=True)
-
-    return {"input": input_bidspath, "output": output_bidspath}
+    return {"input": input_file, "output": output_file}
 
 
 def apply_atlas_to_stc(
@@ -235,10 +238,10 @@ def process_single_run(
     atlas: str,
     processing: str,
     config: dict,
-    bids_root: Path,
+    derivatives_root: Path,
     skip_existing: bool,
 ) -> bool:
-    """Process a single subject/run.
+    """Process a single subject/run with one atlas.
 
     Args:
         subject: Subject ID
@@ -246,7 +249,7 @@ def process_single_run(
         atlas: Atlas name
         processing: Processing state
         config: Configuration dictionary
-        bids_root: BIDS root directory
+        derivatives_root: Derivatives directory
         skip_existing: Skip if output exists
 
     Returns:
@@ -254,14 +257,10 @@ def process_single_run(
     """
     logger = logging.getLogger(__name__)
 
-    logger.info("=" * 80)
-    logger.info(f"Processing sub-{subject}, run-{run}")
-    logger.info(f"Atlas: {atlas}, Processing: {processing}")
-    logger.info("=" * 80)
+    logger.info(f"  [{atlas}] Processing sub-{subject}, run-{run}")
 
-    # Get FreeSurfer subjects directory
-    data_root = Path(config["paths"]["data_root"])
-    fs_subjects_dir = data_root / config["paths"]["freesurfer_subjects_dir"]
+    # Get FreeSurfer subjects directory (already expanded in config)
+    fs_subjects_dir = Path(config["paths"]["freesurfer_subjects_dir"])
 
     if not fs_subjects_dir.exists():
         logger.error(f"FreeSurfer subjects directory not found: {fs_subjects_dir}")
@@ -269,82 +268,90 @@ def process_single_run(
 
     # Create paths
     try:
-        filepaths = create_atlas_paths(subject, run, atlas, processing, bids_root)
+        filepaths = create_atlas_paths(
+            subject, run, atlas, processing, derivatives_root
+        )
     except Exception as e:
         logger.error(f"Failed to create paths: {e}")
         return False
 
     # Check if output exists
-    output_path = Path(str(filepaths["output"].fpath) + "-avg.pkl")
+    output_path = filepaths["output"]
     if skip_existing and output_path.exists():
-        logger.info(f"Output already exists, skipping: {output_path}")
+        logger.info(f"  [{atlas}] Output exists, skipping: {output_path.name}")
         return True
 
     # Load source estimate
-    input_path = Path(str(filepaths["input"].fpath) + "-stc.h5")
+    input_path = filepaths["input"]
     if not input_path.exists():
         logger.error(f"Input source estimate not found: {input_path}")
         logger.error("Run run_inverse_solution.py first to generate source estimates")
         return False
 
-    logger.info(f"Loading source estimate: {input_path}")
+    logger.debug(f"Loading source estimate: {input_path}")
     try:
         stc = mne.read_source_estimate(str(input_path), verbose=False)
     except Exception as e:
         logger.error(f"Failed to load source estimate: {e}", exc_info=True)
         return False
 
-    logger.info(f"Loaded STC: {stc.data.shape[0]} sources, {stc.data.shape[1]} timepoints")
+    logger.debug(f"Loaded STC: {stc.data.shape[0]} sources, {stc.data.shape[1]} timepoints")
 
     # Apply atlas
-    logger.info(f"Applying atlas '{atlas}'...")
     try:
         region_averages = apply_atlas_to_stc(stc, atlas, fs_subjects_dir)
     except Exception as e:
-        logger.error(f"Failed to apply atlas: {e}", exc_info=True)
+        logger.error(f"Failed to apply atlas '{atlas}': {e}", exc_info=True)
         return False
 
-    # Convert to arrays
-    region_data = np.array(list(region_averages.values()))
-    region_names = list(region_averages.keys())
+    # Convert to arrays - sort by region name for consistency
+    sorted_regions = sorted(region_averages.keys())
+    region_data = np.array([region_averages[r] for r in sorted_regions])
+    region_names = sorted_regions
 
-    logger.info(f"Result: {len(region_names)} regions × {region_data.shape[1]} timepoints")
+    logger.info(f"  [{atlas}] {len(region_names)} ROIs × {region_data.shape[1]} timepoints")
 
-    # Save
-    logger.info(f"Saving ROI-averaged data: {output_path}")
+    # Get git hash for provenance
     try:
-        with open(output_path, "wb") as f:
-            pickle.dump(
-                {
-                    "data": region_data,
-                    "region_names": region_names,
-                    "sfreq": stc.sfreq,
-                },
-                f,
-            )
+        git_hash = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent)
+            .decode()
+            .strip()
+        )
+    except Exception:
+        git_hash = "unknown"
+
+    # Save as .npz (consistent with other features)
+    logger.debug(f"Saving ROI-averaged data: {output_path}")
+    try:
+        np.savez_compressed(
+            output_path,
+            data=region_data,  # (n_rois, n_times)
+            roi_names=region_names,
+            sfreq=stc.sfreq,
+        )
     except Exception as e:
         logger.error(f"Failed to save output: {e}", exc_info=True)
         return False
 
-    # Save metadata
+    # Save metadata JSON sidecar
     metadata = {
         "subject": subject,
         "run": run,
         "atlas": atlas,
         "processing": processing,
-        "n_regions": len(region_names),
-        "n_timepoints": region_data.shape[1],
-        "sfreq": stc.sfreq,
-        "region_names": region_names,
-        "processing_successful": True,
+        "n_rois": len(region_names),
+        "n_timepoints": int(region_data.shape[1]),
+        "sfreq": float(stc.sfreq),
+        "roi_names": region_names,
+        "git_hash": git_hash,
     }
 
-    metadata_path = Path(str(filepaths["output"].fpath) + "_params.json")
+    metadata_path = output_path.with_name(output_path.name.replace(".npz", "_params.json"))
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
 
-    logger.info(f"Saved metadata: {metadata_path}")
-    logger.info(f"✓ Successfully processed sub-{subject}, run-{run}")
+    logger.debug(f"Saved metadata: {metadata_path.name}")
 
     return True
 
@@ -360,80 +367,94 @@ def main() -> int:
         print(f"ERROR: Failed to load configuration: {e}", file=sys.stderr)
         return 1
 
-    # Determine atlas
+    # Determine atlases to process
     if args.atlas:
-        atlas = args.atlas
+        atlases = [args.atlas]
+    elif args.atlases:
+        atlases = args.atlases.split()
     else:
-        atlas = config["source_reconstruction"]["atlas"]
+        # Use atlases from config, or fall back to hardcoded defaults
+        atlases = config.get("source_reconstruction", {}).get("atlases", DEFAULT_ATLASES)
 
     # Setup logging
     log_dir = Path(config["paths"]["logs"]) / "source_reconstruction"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     setup_logging(
-        log_level=args.log_level,
-        log_dir=log_dir,
-        log_prefix=f"apply_atlas_sub-{args.subject}",
+        name=__name__,
+        log_file=log_dir / f"apply_atlas_sub-{args.subject}.log",
+        level=args.log_level,
     )
 
     logger = logging.getLogger(__name__)
-    logger.info("Starting atlas application (Stage 2b)")
+    logger.info("=" * 80)
+    logger.info("Atlas Application (Stage 2b)")
+    logger.info("=" * 80)
     logger.info(f"Subject: {args.subject}")
-    logger.info(f"Atlas: {atlas}")
+    logger.info(f"Atlases: {', '.join(atlases)}")
 
-    # Determine BIDS root
+    # Determine paths
+    data_root = Path(config["paths"]["data_root"])
     if args.bids_root:
         bids_root = args.bids_root
     else:
-        data_root = Path(config["paths"]["data_root"])
-        bids_root = data_root / config["paths"]["bids"]
+        bids_root = data_root / "bids"
 
-    logger.info(f"BIDS root: {bids_root}")
+    derivatives_root = data_root / config["paths"]["derivatives"]
 
-    # Parse runs
+    logger.info(f"Derivatives root: {derivatives_root}")
+
+    # Parse runs - default to all runs from config if not specified
     if args.run:
         runs = [args.run]
-    else:
+    elif args.runs:
         runs = args.runs.split()
+    else:
+        runs = config["bids"]["task_runs"]
+        logger.info(f"No runs specified, using all runs from config: {runs}")
 
     logger.info(f"Processing {len(runs)} run(s): {', '.join(runs)}")
 
-    # Process each run
+    # Process each atlas × run combination
+    total_tasks = len(atlases) * len(runs)
     success_count = 0
-    failed_runs = []
+    failed_tasks = []
 
-    for run in runs:
-        # Validate subject/run
-        if not validate_subject_run(args.subject, run, config):
-            logger.error(f"Invalid subject/run combination: sub-{args.subject}, run-{run}")
-            failed_runs.append(run)
-            continue
+    for atlas in atlases:
+        logger.info(f"\n[Atlas: {atlas}]")
 
-        # Process
-        success = process_single_run(
-            subject=args.subject,
-            run=run,
-            atlas=atlas,
-            processing=args.processing,
-            config=config,
-            bids_root=bids_root,
-            skip_existing=args.skip_existing,
-        )
+        for run in runs:
+            # Validate subject/run
+            if not validate_subject_run(args.subject, run, config):
+                logger.error(f"Invalid subject/run combination: sub-{args.subject}, run-{run}")
+                failed_tasks.append(f"{atlas}/run-{run}")
+                continue
 
-        if success:
-            success_count += 1
-        else:
-            failed_runs.append(run)
+            # Process
+            success = process_single_run(
+                subject=args.subject,
+                run=run,
+                atlas=atlas,
+                processing=args.processing,
+                config=config,
+                derivatives_root=derivatives_root,
+                skip_existing=args.skip_existing,
+            )
+
+            if success:
+                success_count += 1
+            else:
+                failed_tasks.append(f"{atlas}/run-{run}")
 
     # Summary
     logger.info("=" * 80)
     logger.info("Processing complete")
-    logger.info(f"  Successful: {success_count}/{len(runs)}")
-    if failed_runs:
-        logger.warning(f"  Failed runs: {', '.join(failed_runs)}")
+    logger.info(f"  Successful: {success_count}/{total_tasks}")
+    if failed_tasks:
+        logger.warning(f"  Failed: {', '.join(failed_tasks)}")
         return 1
 
-    logger.info("✓ All runs processed successfully")
+    logger.info("✓ All atlas applications complete")
     return 0
 
 

@@ -356,9 +356,9 @@ def main() -> int:
     derivatives_root = data_root / config["paths"]["derivatives"]
     task_name = config["bids"]["task_name"]
 
-    # Build output path in processed/ (features go here, derivatives/ is for preprocessing)
-    processed_root = data_root / "processed"
-    output_root = processed_root / f"welch_psds_{args.space}" / f"sub-{args.subject}"
+    # Build output path in features/ (features go here, derivatives/ is for preprocessing)
+    features_root = data_root / config["paths"]["features"]
+    output_root = features_root / f"welch_psds_{args.space}" / f"sub-{args.subject}"
 
     # Check if output already exists
     output_file = (

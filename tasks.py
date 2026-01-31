@@ -443,6 +443,57 @@ def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         _source_recon_local(c, subject, runs, bids_root, log_level, skip_existing)
 
 
+@task
+def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=False, dry_run=False):
+    """Apply atlas parcellation to morphed source estimates (Stage 2b).
+
+    Extracts ROI-level time series from vertex-level source estimates using
+    cortical parcellations. By default applies:
+    - aparc.a2009s (Destrieux, 148 ROIs)
+    - Schaefer2018_100Parcels_7Networks_order
+    - Schaefer2018_200Parcels_7Networks_order
+    - Schaefer2018_400Parcels_7Networks_order
+
+    Output: processed/atlas_timeseries_{atlas}/sub-{subject}/*.npz
+
+    Examples:
+        invoke pipeline.atlas --subject=04
+        invoke pipeline.atlas --subject=04 --atlases="aparc.a2009s"
+        invoke pipeline.atlas --subject=04 --runs="02 03"
+    """
+    print("=" * 80)
+    print("Atlas Application - Stage 2b")
+    print("=" * 80)
+
+    if slurm:
+        print("ERROR: SLURM execution not yet implemented for atlas")
+        return
+
+    if not subject:
+        print("ERROR: --subject is required for local execution")
+        return
+
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.source_reconstruction.apply_atlas"]
+    cmd.extend(["--subject", subject])
+
+    if runs:
+        cmd.extend(["--runs", runs])
+
+    if atlases:
+        cmd.extend(["--atlases", atlases])
+
+    if skip_existing:
+        cmd.append("--skip-existing")
+    else:
+        cmd.append("--no-skip-existing")
+
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+
+    print(f"\n✓ Atlas application complete for sub-{subject}")
+
+
 # ==============================================================================
 # features.* Tasks - Feature Extraction
 # ==============================================================================
@@ -984,6 +1035,7 @@ pipeline.add_task(validate_inputs, name="validate-inputs")
 pipeline.add_task(bids)
 pipeline.add_task(preprocess)
 pipeline.add_task(source_recon, name="source-recon")
+pipeline.add_task(atlas)
 
 # Feature extraction tasks
 features = Collection("features")

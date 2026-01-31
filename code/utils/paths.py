@@ -32,16 +32,20 @@ def get_derivatives_root(config: Dict[str, Any]) -> Path:
     return Path(config["paths"]["derivatives"])
 
 
-def get_processed_root(config: Dict[str, Any]) -> Path:
-    """Get processed data root directory.
+def get_features_root(config: Dict[str, Any]) -> Path:
+    """Get features data root directory.
 
     Args:
         config: Configuration dictionary.
 
     Returns:
-        Path to processed directory.
+        Path to features directory.
     """
-    return Path(config["paths"]["processed"])
+    return Path(config["paths"]["features"])
+
+
+# Backward compatibility alias
+get_processed_root = get_features_root
 
 
 def get_subject_dir(

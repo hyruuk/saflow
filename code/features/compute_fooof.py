@@ -65,8 +65,8 @@ def load_welch_psd(
         FileNotFoundError: If Welch PSD file not found
     """
     data_root = Path(config["paths"]["data_root"])
-    processed_root = data_root / "processed"
-    welch_dir = processed_root / f"welch_psds_{space}" / f"sub-{subject}"
+    features_root = data_root / config["paths"]["features"]
+    welch_dir = features_root / f"welch_psds_{space}" / f"sub-{subject}"
 
     # Find Welch PSD file (npz format from compute_welch_psd.py)
     task_name = config["bids"]["task_name"]
@@ -233,11 +233,11 @@ def process_subject_run(
 
     # Setup output directories
     data_root = Path(config["paths"]["data_root"])
-    processed_root = data_root / config["paths"]["processed"]
+    features_root = data_root / config["paths"]["features"]
     task_name = config["bids"]["task_name"]
 
     # FOOOF parameters output
-    fooof_dir = processed_root / f"fooof_{space}" / f"sub-{subject}"
+    fooof_dir = features_root / f"fooof_{space}" / f"sub-{subject}"
     fooof_dir.mkdir(parents=True, exist_ok=True)
     fooof_file = (
         fooof_dir
@@ -245,7 +245,7 @@ def process_subject_run(
     )
 
     # Corrected PSDs output (same structure as welch_psds)
-    corrected_dir = processed_root / f"welch_psds_corrected_{space}" / f"sub-{subject}"
+    corrected_dir = features_root / f"welch_psds_corrected_{space}" / f"sub-{subject}"
     corrected_dir.mkdir(parents=True, exist_ok=True)
     corrected_file = (
         corrected_dir

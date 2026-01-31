@@ -285,7 +285,7 @@ def process_subject_run(
     task_name = config["bids"]["task_name"]
 
     # Output directory and file
-    output_root = Path(config["paths"]["processed"]) / f"complexity_{space}"
+    output_root = Path(config["paths"]["features"]) / f"complexity_{space}"
     output_dir = output_root / f"sub-{subject}"
     output_dir.mkdir(parents=True, exist_ok=True)
 

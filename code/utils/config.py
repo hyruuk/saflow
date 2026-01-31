@@ -91,7 +91,7 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ConfigurationError(f"Missing required section: {section}")
 
     # Validate paths section
-    required_paths = ["data_root", "raw", "derivatives", "processed"]
+    required_paths = ["data_root", "raw", "derivatives", "features"]
     for path_key in required_paths:
         if path_key not in config["paths"]:
             raise ConfigurationError(f"Missing required path: paths.{path_key}")
@@ -147,7 +147,7 @@ def expand_paths(config: Dict[str, Any]) -> Dict[str, Any]:
     config["paths"]["data_root"] = str(data_root)
 
     # Expand paths relative to data_root
-    for key in ["raw", "derivatives", "processed"]:
+    for key in ["raw", "derivatives", "features"]:
         path = Path(config["paths"][key])
         if not path.is_absolute():
             path = data_root / path
@@ -159,9 +159,11 @@ def expand_paths(config: Dict[str, Any]) -> Dict[str, Any]:
             path = Path(config["paths"][key]).expanduser().resolve()
             config["paths"][key] = str(path)
 
-    # Expand FreeSurfer subjects directory if present
+    # Expand FreeSurfer subjects directory if present (relative to data_root)
     if "freesurfer_subjects_dir" in config["paths"]:
-        fs_dir = Path(config["paths"]["freesurfer_subjects_dir"]).expanduser().resolve()
+        fs_dir = Path(config["paths"]["freesurfer_subjects_dir"])
+        if not fs_dir.is_absolute():
+            fs_dir = data_root / fs_dir
         config["paths"]["freesurfer_subjects_dir"] = str(fs_dir)
 
     return config
