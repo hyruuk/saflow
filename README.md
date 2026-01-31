@@ -72,6 +72,7 @@ Epochs are defined relative to stimulus event markers (t=0 = stimulus onset at 0
                                    /   \
                                   /     \
                                  /       \
+                                /         \
                           50%  ●           ●  50%
                               /             \
                              /               \
@@ -79,16 +80,9 @@ Epochs are defined relative to stimulus event markers (t=0 = stimulus onset at 0
                            /                   \
                      0%   ●                     ●   0%
   ────────────────────────┴─────────────────────┴───────────── time
-                          ↑          ↑          ↑
-                         t=0       tmin       tmax
-
-                                     │←epoch→│
+                          ↑    ↑           ↑
+                         t=0  tmin        tmax
 ```
-
-- **t=0 (0s)**: Event marker at stimulus onset (0% intensity)
-- **tmin (0.426s)**: Epoch starts at 50% intensity (rising)
-- **Peak (0.852s)**: 100% stimulus intensity (midpoint of epoch)
-- **tmax (1.278s)**: Epoch ends at 50% intensity (falling)
 
 - **t=0**: Event marker at stimulus onset (0% intensity, start of fade-in)
 - **tmin (0.426s)**: Epoch starts at 50% intensity (rising phase)
