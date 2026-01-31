@@ -85,9 +85,10 @@ def check_dataset(c, verbose=False):
 
 
 @task
-def check_qc(c, subject=None, all_subjects=False, runs=None,
-             output_dir="reports/qc", verbose=False):
+def check_qc(c, subject=None, runs=None, output_dir="reports/qc", verbose=False):
     """Run data quality checks on BIDS MEG data.
+
+    By default, checks all subjects. Use --subject to check a single subject.
 
     Reports on:
     - ISI (Inter-Stimulus Interval) consistency and outliers
@@ -98,22 +99,18 @@ def check_qc(c, subject=None, all_subjects=False, runs=None,
     - Head motion (if HPI available)
 
     Examples:
-        invoke dev.check.qc --subject=04
-        invoke dev.check.qc --all-subjects
+        invoke dev.check.qc                    # All subjects (default)
+        invoke dev.check.qc --subject=04       # Single subject
         invoke dev.check.qc --subject=04 --runs="02 03 04"
-        invoke dev.check.qc --all-subjects --verbose
+        invoke dev.check.qc --verbose
     """
-    if not subject and not all_subjects:
-        print("ERROR: Must specify --subject or --all-subjects")
-        return
-
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.qc.check_qc"]
 
-    if all_subjects:
-        cmd.append("--all")
-    elif subject:
+    if subject:
         cmd.extend(["--subject", subject])
+    else:
+        cmd.append("--all")
 
     if runs:
         cmd.extend(["--runs"] + runs.split())
