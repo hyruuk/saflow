@@ -9,12 +9,12 @@
 #   ./setup.sh [OPTIONS]
 #
 # Options:
-#   --python      Specify Python executable (default: python3.9)
+#   --python      Specify Python executable (default: auto-detect best 3.9-3.12)
 #   --force       Force reinstall if venv already exists
 #   --help        Show this help message
 #
 # Examples:
-#   ./setup.sh                      # Standard installation (interactive config)
+#   ./setup.sh                      # Standard installation (auto-detects Python)
 #   ./setup.sh --python python3.10  # Use specific Python version
 #   ./setup.sh --force              # Force reinstall
 #
@@ -30,7 +30,7 @@ set -e  # Exit on error
 # No colors for output
 
 # Default values
-PYTHON_CMD="python3.9"
+PYTHON_CMD=""  # Will be auto-detected if not specified
 FORCE_REINSTALL=false
 VENV_DIR="env"
 
@@ -90,10 +90,46 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ==============================================================================
+# Python Auto-Detection
+# ==============================================================================
+
+# Find the best available Python version (prefer 3.11 > 3.10 > 3.9)
+find_best_python() {
+    local candidates=("python3.11" "python3.10" "python3.9" "python3")
+
+    for cmd in "${candidates[@]}"; do
+        if command -v "$cmd" &> /dev/null; then
+            # Verify it's actually a supported version (3.9-3.12)
+            local version_info=$("$cmd" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null)
+            local major=$(echo "$version_info" | cut -d' ' -f1)
+            local minor=$(echo "$version_info" | cut -d' ' -f2)
+
+            if [[ "$major" == "3" ]] && [[ "$minor" -ge 9 ]] && [[ "$minor" -le 12 ]]; then
+                echo "$cmd"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+# ==============================================================================
 # Preflight Checks
 # ==============================================================================
 
 print_header "Saflow Environment Setup"
+
+# Auto-detect Python if not specified
+if [[ -z "$PYTHON_CMD" ]]; then
+    PYTHON_CMD=$(find_best_python)
+    if [[ -z "$PYTHON_CMD" ]]; then
+        print_error "No suitable Python found (requires 3.9-3.12)"
+        echo "  Please install Python 3.9+ or specify a different executable with --python"
+        exit 1
+    fi
+    print_info "Auto-detected Python: $PYTHON_CMD"
+fi
 
 # Check if Python is available
 if ! command -v "$PYTHON_CMD" &> /dev/null; then
