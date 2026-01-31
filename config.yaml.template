@@ -243,52 +243,40 @@ features:
       peak_threshold: 2.0
       aperiodic_mode: "fixed"  # 'fixed' or 'knee'
 
-  # Complexity metrics configuration
+  # Complexity metrics configuration (using antropy library)
   complexity:
     # Lempel-Ziv Complexity (LZC)
     lzc:
-      - name: "antropy_median"
-        library: "antropy"
+      - name: "median"
         normalize: true
         symbolize: "median"  # Binarize using median threshold
-
-      - name: "neurokit_permutation"
-        library: "neurokit2"
-        permutation: true
-        dimension: 7
-        delay: 2
 
     # Entropy measures
     entropy:
       - name: "permutation"
         metric: "perm_entropy"
-        library: "antropy"
         order: 3              # Embedding dimension
         delay: 1              # Time delay
         normalize: true
 
       - name: "spectral"
         metric: "spectral_entropy"
-        library: "antropy"
         sf: null              # Sampling frequency (auto-detected)
         method: "welch"
         normalize: true
 
       - name: "sample"
         metric: "sample_entropy"
-        library: "antropy"
         order: 2
-        r: 0.2                # Tolerance (fraction of std)
+        tolerance: 0.2        # Tolerance (fraction of std)
 
       - name: "approximate"
         metric: "app_entropy"
-        library: "antropy"
         order: 2
-        r: 0.2
+        tolerance: 0.2
 
       - name: "svd"
         metric: "svd_entropy"
-        library: "antropy"
         order: 3
         delay: 1
         normalize: true
@@ -297,20 +285,16 @@ features:
     fractal:
       - name: "higuchi"
         metric: "higuchi_fd"
-        library: "antropy"
         kmax: 10              # Maximum k value
 
       - name: "petrosian"
         metric: "petrosian_fd"
-        library: "antropy"
 
       - name: "katz"
         metric: "katz_fd"
-        library: "antropy"
 
       - name: "dfa"
         metric: "detrended_fluctuation"
-        library: "antropy"
 
 # =============================================================================
 # Computing Configuration

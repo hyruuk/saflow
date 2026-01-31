@@ -554,8 +554,8 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
 
 
 @task
-def complexity(c, subject=None, runs=None, space="sensor", metrics="lzc entropy fractal",
-               skip_existing=True, slurm=False, dry_run=False):
+def complexity(c, subject=None, runs=None, complexity_type="lzc entropy fractal",
+               overwrite=False, slurm=False, dry_run=False):
     """Extract complexity and entropy measures.
 
     Computes:
@@ -566,7 +566,7 @@ def complexity(c, subject=None, runs=None, space="sensor", metrics="lzc entropy 
     Examples:
         invoke features.complexity --subject=04
         invoke features.complexity --subject=04 --runs="02 03"
-        invoke features.complexity --metrics="lzc entropy"
+        invoke features.complexity --complexity-type="lzc entropy"
     """
     from code.utils.config import load_config
 
@@ -592,11 +592,10 @@ def complexity(c, subject=None, runs=None, space="sensor", metrics="lzc entropy 
         cmd = [python_exe, "-m", "code.features.compute_complexity"]
         cmd.extend(["--subject", subject])
         cmd.extend(["--run", run])
-        cmd.extend(["--space", space])
-        cmd.extend(["--metrics"] + metrics.split())
+        cmd.extend(["--complexity-type"] + complexity_type.split())
 
-        if skip_existing:
-            cmd.append("--skip-existing")
+        if overwrite:
+            cmd.append("--overwrite")
 
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
@@ -607,11 +606,14 @@ def complexity(c, subject=None, runs=None, space="sensor", metrics="lzc entropy 
 
 
 @task
-def extract_all(c, subject=None, space="sensor", skip_existing=True, slurm=False, dry_run=False):
-    """Extract all feature types (FOOOF, PSD, complexity).
+def extract_all(c, subject=None, overwrite=False, slurm=False, dry_run=False):
+    """Extract all feature types (PSD, FOOOF, complexity).
+
+    Order: PSD -> FOOOF -> Complexity (FOOOF depends on PSD)
 
     Examples:
         invoke features.all --subject=04
+        invoke features.all --subject=04 --overwrite
     """
     print("=" * 80)
     print("Feature Extraction - All Features")
@@ -625,14 +627,17 @@ def extract_all(c, subject=None, space="sensor", skip_existing=True, slurm=False
         print("ERROR: --subject is required for local execution")
         return
 
-    print("\n[1/3] Extracting FOOOF features...")
-    fooof(c, subject=subject, space=space, skip_existing=skip_existing)
+    # Convert overwrite to skip_existing for fooof/psd tasks
+    skip_existing = not overwrite
 
-    print("\n[2/3] Extracting PSD features...")
-    psd(c, subject=subject, space=space, skip_existing=skip_existing)
+    print("\n[1/3] Extracting PSD features...")
+    psd(c, subject=subject, skip_existing=skip_existing)
+
+    print("\n[2/3] Extracting FOOOF features...")
+    fooof(c, subject=subject, skip_existing=skip_existing)
 
     print("\n[3/3] Extracting Complexity features...")
-    complexity(c, subject=subject, space=space, skip_existing=skip_existing)
+    complexity(c, subject=subject, overwrite=overwrite)
 
     print("\n" + "=" * 80)
     print("✓ All feature extraction complete!")

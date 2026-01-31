@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Complexity Feature Extraction
-==============================
+Complexity Feature Extraction (Per-Epoch Pipeline)
+===================================================
 
 Compute various complexity measures (LZC, entropy, fractal dimension) on MEG data.
 
-This script supports multiple complexity metrics from antropy and neurokit2 libraries:
+This script uses the same per-epoch pipeline as PSD and FOOOF:
+1. Load continuous data
+2. Segment based on Freq/Rare events
+3. Compute complexity per epoch
+4. Save results with trial metadata
+
+This script supports multiple complexity metrics from the antropy library:
 - Lempel-Ziv Complexity (LZC)
 - Various entropy measures (permutation, sample, approximate, spectral, SVD)
 - Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
@@ -21,38 +27,42 @@ Usage:
     python code/features/compute_complexity.py --subject 04 --complexity-type entropy fractal
 
 Output:
-    {processed}/features_complexity_{space}/
+    {processed}/complexity_{space}/
     ├── sub-04/
-    │   ├── sub-04_task-gradCPT_run-02_lzc-antropy_median.pkl
-    │   ├── sub-04_task-gradCPT_run-02_entropy-permutation.pkl
-    │   ├── sub-04_task-gradCPT_run-02_fractal-higuchi.pkl
-    │   └── ...
+    │   ├── sub-04_..._desc-complexity.npz
+    │   └── sub-04_..._desc-complexity_params.json
+
+Output format (.npz):
+    - lzc_median: shape (n_epochs, n_channels)
+    - entropy_permutation: shape (n_epochs, n_channels)
+    - entropy_spectral: shape (n_epochs, n_channels)
+    - fractal_higuchi: shape (n_epochs, n_channels)
+    - ... (all configured metrics)
+    - trial_metadata: dict with trial info
+    - ch_names: list of channel names
 """
 
 import argparse
+import json
 import logging
-import pickle
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import mne
 import numpy as np
+import pandas as pd
 from joblib import Parallel, delayed
-from mne_bids import BIDSPath, read_raw_bids
 
 # Local imports
+from code.features.utils import segment_spatial_temporal_data
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
 from code.utils.validation import validate_subject, validate_run
 
-# Complexity libraries
+# Complexity library
 import antropy
-from neurokit2.complexity import (
-    complexity_delay,
-    complexity_dimension,
-    complexity_lempelziv,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -85,31 +95,6 @@ def compute_lzc_antropy(
 
     # Compute LZC
     lzc = antropy.lziv_complexity(signal_binarized, normalize=normalize)
-
-    return lzc
-
-
-def compute_lzc_neurokit(
-    signal: np.ndarray,
-    permutation: bool = True,
-    dimension: int = 7,
-    delay: int = 2,
-) -> float:
-    """
-    Compute Lempel-Ziv Complexity using neurokit2.
-
-    Args:
-        signal: 1D time series
-        permutation: Whether to use permutation LZC
-        dimension: Embedding dimension
-        delay: Time delay
-
-    Returns:
-        LZC value
-    """
-    lzc = complexity_lempelziv(
-        signal, permutation=permutation, dimension=dimension, delay=delay
-    )[0]
 
     return lzc
 
@@ -195,27 +180,16 @@ def compute_complexity_for_channel(
     """
     try:
         if complexity_type == "lzc":
-            library = params.get("library", "antropy")
-            if library == "antropy":
-                value = compute_lzc_antropy(
-                    signal,
-                    normalize=params.get("normalize", True),
-                    symbolize=params.get("symbolize", "median"),
-                )
-            elif library == "neurokit2":
-                value = compute_lzc_neurokit(
-                    signal,
-                    permutation=params.get("permutation", True),
-                    dimension=params.get("dimension", 7),
-                    delay=params.get("delay", 2),
-                )
-            else:
-                raise ValueError(f"Unknown library for LZC: {library}")
+            value = compute_lzc_antropy(
+                signal,
+                normalize=params.get("normalize", True),
+                symbolize=params.get("symbolize", "median"),
+            )
 
         elif complexity_type == "entropy":
             metric = params["metric"]
-            # Prepare kwargs
-            kwargs = {k: v for k, v in params.items() if k not in ["metric", "library", "name"]}
+            # Prepare kwargs (exclude metadata keys)
+            kwargs = {k: v for k, v in params.items() if k not in ["metric", "name"]}
             # Add sampling frequency if needed
             if metric == "spectral_entropy":
                 kwargs["sf"] = sfreq
@@ -223,8 +197,8 @@ def compute_complexity_for_channel(
 
         elif complexity_type == "fractal":
             metric = params["metric"]
-            # Prepare kwargs
-            kwargs = {k: v for k, v in params.items() if k not in ["metric", "library", "name"]}
+            # Prepare kwargs (exclude metadata keys)
+            kwargs = {k: v for k, v in params.items() if k not in ["metric", "name"]}
             value = compute_fractal_metric(signal, metric, **kwargs)
 
         else:
@@ -281,9 +255,15 @@ def process_subject_run(
     config: Dict[str, Any],
     complexity_types: Optional[List[str]] = None,
     overwrite: bool = False,
-) -> None:
+) -> Optional[Path]:
     """
-    Process one subject/run: compute complexity features.
+    Process one subject/run: compute all complexity features per epoch.
+
+    Uses the same per-epoch pipeline as PSD and FOOOF:
+    1. Load continuous data
+    2. Load events and segment into epochs
+    3. Compute all complexity metrics per epoch
+    4. Save in single .npz file with JSON sidecar
 
     Args:
         subject: Subject ID
@@ -291,36 +271,59 @@ def process_subject_run(
         config: Configuration dictionary
         complexity_types: List of complexity types to compute (None = all)
         overwrite: Whether to overwrite existing files
+
+    Returns:
+        Path to output file, or None if skipped
     """
     logger.info(f"Processing subject {subject}, run {run}")
 
     # Get paths
     space = config["analysis"]["space"]
-    bids_root = Path(config["paths"]["derivatives"]) / "bids"
+    data_root = Path(config["paths"]["data_root"])
+    derivatives_root = Path(config["paths"]["derivatives"])
+    bids_root = data_root / "bids"
+    task_name = config["bids"]["task_name"]
 
-    # Build BIDS path for preprocessed data
-    processing_track = config["analysis"]["processing_tracks"][
-        0
-    ]  # Use first track (continuous or epochs)
+    # Output directory and file
+    output_root = Path(config["paths"]["processed"]) / f"complexity_{space}"
+    output_dir = output_root / f"sub-{subject}"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    bids_path = BIDSPath(
-        subject=subject,
-        task=config["bids"]["task_name"],
-        run=run,
-        session="recording",
-        datatype="meg",
-        root=bids_root,
-        processing=processing_track,
-        extension=".fif",
+    output_file = output_dir / (
+        f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_"
+        f"space-{space}_desc-complexity.npz"
     )
 
-    if not bids_path.fpath.exists():
-        logger.error(f"Preprocessed file not found: {bids_path.fpath}")
-        return
+    if output_file.exists() and not overwrite:
+        logger.info(f"Output exists, skipping: {output_file.name}")
+        return None
+
+    # Build path for preprocessed data (ICA-cleaned continuous data)
+    preproc_dir = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
+    preproc_file = preproc_dir / f"sub-{subject}_task-{task_name}_run-{run}_proc-clean_meg.fif"
+
+    if not preproc_file.exists():
+        logger.error(f"Preprocessed file not found: {preproc_file}")
+        return None
+
+    # Load events.tsv for trial metadata
+    events_path = (
+        bids_root
+        / f"sub-{subject}"
+        / "meg"
+        / f"sub-{subject}_task-{task_name}_run-{run}_events.tsv"
+    )
+
+    if not events_path.exists():
+        logger.error(f"Events file not found: {events_path}")
+        return None
+
+    events_df = pd.read_csv(events_path, sep="\t")
+    logger.info(f"Loaded {len(events_df)} events from {events_path}")
 
     # Load data
-    logger.info(f"Loading data from {bids_path.fpath}")
-    raw = read_raw_bids(bids_path)
+    logger.info(f"Loading data from {preproc_file}")
+    raw = mne.io.read_raw_fif(preproc_file, preload=True)
 
     # Pick MEG channels only
     picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, eog=False)
@@ -332,10 +335,20 @@ def process_subject_run(
         f"Data shape: {data.shape} ({data.shape[0]} channels, {data.shape[1]} samples)"
     )
 
-    # Output directory
-    output_root = Path(config["paths"]["processed"]) / f"features_complexity_{space}"
-    output_dir = output_root / f"sub-{subject}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Get epoch timing from config
+    tmin = config["analysis"]["epochs"]["tmin"]
+    tmax = config["analysis"]["epochs"]["tmax"]
+
+    # Segment data into epochs
+    segmented_data, trial_metadata = segment_spatial_temporal_data(
+        data=data,
+        events_df=events_df,
+        sfreq=sfreq,
+        tmin=tmin,
+        tmax=tmax,
+    )
+    # Shape: (n_epochs, n_channels, n_samples)
+    logger.info(f"Segmented data shape: {segmented_data.shape}")
 
     # Get complexity config
     complexity_config = config["features"].get("complexity", {})
@@ -346,6 +359,11 @@ def process_subject_run(
 
     # Compute each complexity type
     n_jobs = config["computing"]["n_jobs"]
+    n_epochs = segmented_data.shape[0]
+
+    # Store all complexity results
+    complexity_results = {}
+    params_info = {}
 
     for comp_type in complexity_types:
         if comp_type not in complexity_config:
@@ -356,48 +374,72 @@ def process_subject_run(
 
         for param_set in param_sets:
             param_name = param_set.get("name", "unnamed")
+            metric_key = f"{comp_type}_{param_name}"
 
-            # Output filename
-            output_fname = output_dir / (
-                f"sub-{subject}_task-{config['bids']['task_name']}_run-{run}_"
-                f"{comp_type}-{param_name}.pkl"
-            )
+            logger.info(f"Computing {comp_type} with parameters: {param_name}")
 
-            if output_fname.exists() and not overwrite:
-                logger.info(f"Output exists, skipping: {output_fname.name}")
-                continue
+            # Compute complexity per epoch
+            complexity_values = []
+            for epoch_idx in range(n_epochs):
+                epoch_data = segmented_data[epoch_idx]  # (n_channels, n_samples)
+                values = compute_complexity_all_channels(
+                    epoch_data, comp_type, param_set, sfreq, n_jobs=n_jobs
+                )
+                complexity_values.append(values)
 
+            complexity_values = np.array(complexity_values)
+            # Shape: (n_epochs, n_channels)
+            logger.info(f"  {metric_key} shape: {complexity_values.shape}")
             logger.info(
-                f"Computing {comp_type} with parameters: {param_name}"
-            )
-
-            # Compute complexity
-            complexity_values = compute_complexity_all_channels(
-                data, comp_type, param_set, sfreq, n_jobs=n_jobs
-            )
-
-            # Prepare output
-            output_data = {
-                "data": complexity_values,
-                "ch_names": ch_names,
-                "complexity_type": comp_type,
-                "params": param_set,
-                "sfreq": sfreq,
-                "subject": subject,
-                "run": run,
-                "space": space,
-                "processing_track": processing_track,
-            }
-
-            # Save
-            with open(output_fname, "wb") as f:
-                pickle.dump(output_data, f)
-
-            logger.info(f"Saved to {output_fname}")
-            logger.info(
-                f"  {comp_type}-{param_name} range: "
+                f"  {metric_key} range: "
                 f"[{np.nanmin(complexity_values):.6f}, {np.nanmax(complexity_values):.6f}]"
             )
+
+            complexity_results[metric_key] = complexity_values
+            params_info[metric_key] = param_set
+
+    # Get git hash for provenance
+    try:
+        git_hash = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent)
+            .decode()
+            .strip()
+        )
+    except Exception:
+        git_hash = "unknown"
+
+    # Save all results to single .npz file
+    logger.info(f"Saving complexity results: {output_file.name}")
+    np.savez_compressed(
+        output_file,
+        **complexity_results,
+        trial_metadata=trial_metadata.to_dict('list'),
+        ch_names=ch_names,
+    )
+
+    # Save JSON sidecar with parameters
+    params_file = output_file.with_name(output_file.name.replace(".npz", "_params.json"))
+    params_data = {
+        "subject": subject,
+        "run": run,
+        "space": space,
+        "sfreq": float(sfreq),
+        "tmin": tmin,
+        "tmax": tmax,
+        "n_epochs": int(n_epochs),
+        "n_channels": len(ch_names),
+        "metrics": list(complexity_results.keys()),
+        "metric_params": params_info,
+        "git_hash": git_hash,
+    }
+
+    with open(params_file, "w") as f:
+        json.dump(params_data, f, indent=2)
+
+    logger.info(f"Saved parameters to {params_file.name}")
+    logger.info(f"Metrics computed: {list(complexity_results.keys())}")
+
+    return output_file
 
 
 def main():
@@ -447,8 +489,9 @@ def main():
     log_dir = Path(config["paths"]["logs"]) / "features" / "complexity"
     log_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(
-        log_dir / f"complexity_{args.subject}_{args.run}.log",
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        __name__,
+        log_file=log_dir / f"complexity_{args.subject}_{args.run}.log",
+        level="DEBUG" if args.verbose else "INFO",
     )
 
     logger.info("=" * 80)

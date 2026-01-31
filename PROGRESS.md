@@ -117,7 +117,7 @@ Complete refactoring of cc_saflow → saflow with:
     - MEG/EEG: mne, mne-bids, autoreject
     - Scientific computing: numpy, scipy, pandas
     - Machine learning: scikit-learn, xgboost, mlneurotools
-    - Signal processing: fooof, neurokit2
+    - Signal processing: fooof, antropy
     - Statistics: statsmodels, statannotations
     - Visualization: matplotlib, seaborn
     - Utilities: joblib, tqdm, rich, h5io, str2bool

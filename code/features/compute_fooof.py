@@ -1,11 +1,23 @@
 """FOOOF (Fitting Oscillations & One Over F) feature extraction.
 
 This script fits FOOOF models to Welch PSDs across sensor/source/atlas spaces.
-It supports per-trial fitting and IN/OUT zone averaging for comparative analysis.
+It supports per-trial fitting and produces:
+1. FOOOF parameters (exponent, offset, r_squared) per trial
+2. Aperiodic-corrected PSDs in the same format as original Welch PSDs
 
 Usage:
     python -m code.features.compute_fooof --subject 04 --run 02 --space sensor
-    python -m code.features.compute_fooof --subject 04 --run 02 --space source --inout-bounds 25 75
+
+Output:
+    {processed}/fooof_{space}/
+    ├── sub-04/
+    │   ├── sub-04_..._desc-fooof.npz           # FOOOF parameters
+    │   └── sub-04_..._desc-fooof_params.json   # Metadata
+
+    {processed}/welch_psds_corrected_{space}/
+    ├── sub-04/
+    │   ├── sub-04_..._desc-welch-corrected_psds.npz   # Corrected PSDs
+    │   └── sub-04_..._desc-welch-corrected_psds_params.json
 
 Author: Claude (Anthropic)
 Date: 2026-01-31
@@ -14,7 +26,6 @@ Date: 2026-01-31
 import argparse
 import json
 import logging
-import pickle
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,7 +34,6 @@ import numpy as np
 import pandas as pd
 from fooof import FOOOF, FOOOFGroup
 
-from code.utils.behavioral import classify_trials_from_vtc
 from code.utils.config import load_config
 from code.utils.logging_config import log_provenance, setup_logging
 from code.utils.validation import validate_subject_run
@@ -88,27 +98,26 @@ def load_welch_psd(
     return psd_array, freq_bins, events_df
 
 
-def fit_fooof_group(
-    psd_array: np.ndarray,
+def fit_fooof_single(
+    psd: np.ndarray,
     freq_bins: np.ndarray,
     freq_range: Tuple[float, float],
     fooof_params: Dict[str, Any],
-) -> FOOOFGroup:
-    """Fit FOOOF to multi-channel/multi-ROI PSD.
+) -> Tuple[Dict[str, float], np.ndarray]:
+    """Fit FOOOF to a single PSD and return parameters + corrected PSD.
 
     Args:
-        psd_array: PSD data, shape (n_spatial, n_freqs)
+        psd: PSD data, shape (n_freqs,)
         freq_bins: Frequency bins in Hz
         freq_range: Tuple of (min_freq, max_freq) for fitting
         fooof_params: FOOOF configuration parameters
 
     Returns:
-        FOOOFGroup object with fitted models
+        Tuple of:
+        - params: Dict with exponent, offset, r_squared
+        - corrected_psd: Aperiodic-corrected PSD, shape (n_freqs,)
     """
-    n_spatial = psd_array.shape[0]
-
-    # Initialize FOOOFGroup
-    fg = FOOOFGroup(
+    fm = FOOOF(
         peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
         max_n_peaks=fooof_params.get("max_n_peaks", 4),
         min_peak_height=fooof_params.get("min_peak_height", 0.10),
@@ -117,88 +126,83 @@ def fit_fooof_group(
         verbose=False,
     )
 
-    # Fit FOOOF
-    logger.debug(
-        f"Fitting FOOOF: {n_spatial} spatial units, "
-        f"freq_range={freq_range}, mode={fooof_params.get('aperiodic_mode', 'fixed')}"
-    )
+    fm.fit(freq_bins, psd, freq_range=freq_range)
 
-    fg.fit(freq_bins, psd_array, freq_range=freq_range)
+    # Extract parameters
+    params = {
+        "exponent": fm.aperiodic_params_[1] if fm.has_model else np.nan,
+        "offset": fm.aperiodic_params_[0] if fm.has_model else np.nan,
+        "r_squared": fm.r_squared_ if fm.has_model else np.nan,
+    }
 
-    logger.debug(
-        f"FOOOF fitting complete: "
-        f"{len(fg.group_results)} models fit, "
-        f"mean r² = {np.mean([r.r_squared for r in fg.group_results]):.3f}"
-    )
+    # Get corrected (flattened) PSD - aperiodic component removed
+    # This is the residual after removing the 1/f component
+    if fm.has_model:
+        # _spectrum_flat is the flattened spectrum (periodic only)
+        # We need to get the full-length corrected spectrum
+        # FOOOF only fits within freq_range, so we need to handle this carefully
 
-    return fg
+        # Get the frequency mask for the fit range
+        freq_mask = (freq_bins >= freq_range[0]) & (freq_bins <= freq_range[1])
+
+        # Initialize corrected PSD with NaN outside fit range
+        corrected_psd = np.full_like(psd, np.nan)
+
+        # Get the flattened spectrum from FOOOF (only for fit range)
+        if hasattr(fm, '_spectrum_flat') and fm._spectrum_flat is not None:
+            corrected_psd[freq_mask] = fm._spectrum_flat
+        else:
+            # Fallback: compute manually
+            # corrected = log(psd) - aperiodic_fit
+            log_psd = np.log10(psd[freq_mask])
+            aperiodic_fit = fm._ap_fit if hasattr(fm, '_ap_fit') else np.zeros_like(log_psd)
+            corrected_psd[freq_mask] = log_psd - aperiodic_fit
+    else:
+        corrected_psd = np.full_like(psd, np.nan)
+
+    return params, corrected_psd
 
 
-def extract_fooof_params(fg: FOOOFGroup) -> Dict[str, np.ndarray]:
-    """Extract aperiodic and periodic parameters from FOOOFGroup.
+def fit_fooof_group(
+    psd_array: np.ndarray,
+    freq_bins: np.ndarray,
+    freq_range: Tuple[float, float],
+    fooof_params: Dict[str, Any],
+) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
+    """Fit FOOOF to multi-channel PSD.
 
     Args:
-        fg: Fitted FOOOFGroup object
+        psd_array: PSD data, shape (n_spatial, n_freqs)
+        freq_bins: Frequency bins in Hz
+        freq_range: Tuple of (min_freq, max_freq) for fitting
+        fooof_params: FOOOF configuration parameters
 
     Returns:
-        Dictionary containing:
-        - 'exponent': Aperiodic exponent per spatial unit
-        - 'offset': Aperiodic offset per spatial unit
-        - 'r_squared': Model fit quality per spatial unit
-        - 'peak_params': Peak parameters (CF, PW, BW) per spatial unit
+        Tuple of:
+        - params: Dict with arrays of exponent, offset, r_squared (n_spatial,)
+        - corrected_psds: Corrected PSDs, shape (n_spatial, n_freqs)
     """
-    n_spatial = len(fg.group_results)
+    n_spatial = psd_array.shape[0]
 
-    # Extract aperiodic parameters
-    exponents = np.array([r.aperiodic_params[1] for r in fg.group_results])
-    offsets = np.array([r.aperiodic_params[0] for r in fg.group_results])
-    r_squared = np.array([r.r_squared for r in fg.group_results])
+    exponents = np.zeros(n_spatial)
+    offsets = np.zeros(n_spatial)
+    r_squareds = np.zeros(n_spatial)
+    corrected_psds = np.zeros_like(psd_array)
 
-    # Extract peak parameters (CF, PW, BW for each peak)
-    peak_params = []
-    for r in fg.group_results:
-        if len(r.peak_params) > 0:
-            peak_params.append(r.peak_params)  # (n_peaks, 3)
-        else:
-            peak_params.append(np.array([]))  # No peaks
+    for i in range(n_spatial):
+        params, corrected = fit_fooof_single(
+            psd_array[i], freq_bins, freq_range, fooof_params
+        )
+        exponents[i] = params["exponent"]
+        offsets[i] = params["offset"]
+        r_squareds[i] = params["r_squared"]
+        corrected_psds[i] = corrected
 
     return {
         "exponent": exponents,
         "offset": offsets,
-        "r_squared": r_squared,
-        "peak_params": peak_params,
-    }
-
-
-def average_psd_by_zone(
-    psd_array: np.ndarray,
-    zones: Dict[str, np.ndarray],
-) -> Dict[str, np.ndarray]:
-    """Average PSD across trials within IN/OUT zones.
-
-    Args:
-        psd_array: PSD data, shape (n_trials, n_spatial, n_freqs)
-        zones: Trial classification from classify_trials_from_vtc
-
-    Returns:
-        Dictionary with:
-        - 'IN_psd': Averaged PSD for IN trials, shape (n_spatial, n_freqs)
-        - 'OUT_psd': Averaged PSD for OUT trials, shape (n_spatial, n_freqs)
-    """
-    in_idx = zones["IN_idx"]
-    out_idx = zones["OUT_idx"]
-
-    in_psd = np.mean(psd_array[in_idx], axis=0)  # (n_spatial, n_freqs)
-    out_psd = np.mean(psd_array[out_idx], axis=0)  # (n_spatial, n_freqs)
-
-    logger.info(
-        f"Averaged PSD: IN={len(in_idx)} trials, OUT={len(out_idx)} trials"
-    )
-
-    return {
-        "IN_psd": in_psd,
-        "OUT_psd": out_psd,
-    }
+        "r_squared": r_squareds,
+    }, corrected_psds
 
 
 def process_subject_run(
@@ -206,215 +210,161 @@ def process_subject_run(
     run: str,
     space: str,
     config: Dict[str, Any],
-    inout_bounds: Tuple[int, int],
     skip_existing: bool = True,
-) -> Path:
-    """Process one subject/run: fit FOOOF to Welch PSDs with IN/OUT averaging.
+) -> Optional[Path]:
+    """Process one subject/run: fit FOOOF to Welch PSDs.
+
+    Produces:
+    1. FOOOF parameters (.npz) - exponent, offset, r_squared per trial/channel
+    2. Corrected PSDs (.npz) - same format as original Welch PSDs
 
     Args:
         subject: Subject ID
         run: Run ID
         space: Analysis space (sensor/source/atlas)
         config: Configuration dictionary
-        inout_bounds: Percentile bounds for IN/OUT classification
         skip_existing: Skip if output already exists
 
     Returns:
-        Path to saved output file
+        Path to saved FOOOF output file, or None if skipped
     """
     # Validate input
     validate_subject_run(subject, run, config)
 
-    # Setup output directory
+    # Setup output directories
     data_root = Path(config["paths"]["data_root"])
     processed_root = data_root / config["paths"]["processed"]
-    output_dir = processed_root / f"features_fooof_{space}" / f"sub-{subject}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    task_name = config["bids"]["task_name"]
 
-    # Check if output exists
-    output_file = (
-        output_dir
-        / f"sub-{subject}_task-gradCPT_run-{run}_space-{space}_desc-fooof.pkl"
+    # FOOOF parameters output
+    fooof_dir = processed_root / f"fooof_{space}" / f"sub-{subject}"
+    fooof_dir.mkdir(parents=True, exist_ok=True)
+    fooof_file = (
+        fooof_dir
+        / f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_space-{space}_desc-fooof.npz"
     )
 
-    if skip_existing and output_file.exists():
-        logger.info(f"Output exists, skipping: {output_file.name}")
-        return output_file
+    # Corrected PSDs output (same structure as welch_psds)
+    corrected_dir = processed_root / f"welch_psds_corrected_{space}" / f"sub-{subject}"
+    corrected_dir.mkdir(parents=True, exist_ok=True)
+    corrected_file = (
+        corrected_dir
+        / f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_space-{space}_desc-welch-corrected_psds.npz"
+    )
+
+    if skip_existing and fooof_file.exists() and corrected_file.exists():
+        logger.info(f"Output exists, skipping: {fooof_file.name}")
+        return fooof_file
 
     # Load Welch PSD
     logger.info(f"Processing sub-{subject} run-{run} space-{space}")
     psd_array, freq_bins, events_df = load_welch_psd(subject, run, space, config)
 
-    # Load VTC from BIDS events (ground truth) and assign IN/OUT zones
-    logger.info(f"Loading VTC from BIDS and assigning IN/OUT zones (bounds={inout_bounds})")
-
-    try:
-        # Load BIDS events.tsv which has VTC data
-        bids_root = data_root / "bids"
-        task_name = config["bids"]["task_name"]
-        bids_events_path = (
-            bids_root / f"sub-{subject}" / "meg"
-            / f"sub-{subject}_task-{task_name}_run-{run}_events.tsv"
-        )
-
-        if not bids_events_path.exists():
-            logger.warning(f"BIDS events not found: {bids_events_path}")
-            vtc_filtered = None
-        else:
-            bids_events = pd.read_csv(bids_events_path, sep="\t")
-
-            # Get trial indices from Welch PSD events to match with BIDS events
-            if "trial_idx" in events_df.columns:
-                trial_indices = events_df["trial_idx"].values
-            else:
-                # Fallback: assume sequential trials
-                trial_indices = np.arange(len(events_df))
-
-            # Extract VTC for matching trials from BIDS events
-            # BIDS events have all events, filter to stimulus trials with valid trial_idx
-            stim_events = bids_events[bids_events["trial_idx"] >= 0].copy()
-
-            # Match by trial_idx
-            vtc_filtered = []
-            for idx in trial_indices:
-                matching = stim_events[stim_events["trial_idx"] == idx]
-                if len(matching) > 0 and "VTC_filtered" in matching.columns:
-                    val = matching["VTC_filtered"].iloc[0]
-                    vtc_filtered.append(float(val) if val != "n/a" else np.nan)
-                else:
-                    vtc_filtered.append(np.nan)
-            vtc_filtered = np.array(vtc_filtered)
-
-            valid_count = np.sum(~np.isnan(vtc_filtered))
-            logger.info(f"Loaded VTC from BIDS: {valid_count}/{len(vtc_filtered)} valid values")
-
-            if valid_count == 0:
-                vtc_filtered = None
-
-    except Exception as e:
-        logger.error(f"Could not load VTC data: {e}")
-        logger.warning("Proceeding without IN/OUT zone assignment")
-        vtc_filtered = None
-
-    # Assign IN/OUT zones if VTC available
-    if vtc_filtered is not None:
-        zones = classify_trials_from_vtc(vtc_filtered, inout_bounds=inout_bounds)
-        logger.info(f"Zone assignment: {len(zones['IN_idx'])} IN, {len(zones['OUT_idx'])} OUT, {len(zones['MID_idx'])} MID trials")
-
-        # Average PSD by zone
-        avg_psds = average_psd_by_zone(psd_array, zones)
-        in_psd = avg_psds["IN_psd"]
-        out_psd = avg_psds["OUT_psd"]
-    else:
-        zones = None
-        in_psd = None
-        out_psd = None
-
-    # Get FOOOF parameters from config (config has list of param sets, use first)
+    # Get FOOOF parameters from config
     fooof_params_list = config["features"]["fooof"]
     fooof_params = fooof_params_list[0] if isinstance(fooof_params_list, list) else fooof_params_list
     freq_range = tuple(fooof_params["freq_range"])
 
     # Fit FOOOF to per-trial PSDs
-    logger.info("Fitting FOOOF to per-trial PSDs")
-    trial_fooofs = []
-    trial_params = {
-        "exponent": [],
-        "offset": [],
-        "r_squared": [],
-        "peak_params": [],
-    }
+    logger.info(f"Fitting FOOOF to {psd_array.shape[0]} trials")
+    n_trials = psd_array.shape[0]
+    n_spatial = psd_array.shape[1]
 
-    for trial_idx in range(psd_array.shape[0]):
+    # Initialize arrays
+    exponents = np.zeros((n_trials, n_spatial))
+    offsets = np.zeros((n_trials, n_spatial))
+    r_squareds = np.zeros((n_trials, n_spatial))
+    corrected_psds = np.zeros_like(psd_array)
+
+    for trial_idx in range(n_trials):
         trial_psd = psd_array[trial_idx]  # (n_spatial, n_freqs)
+        params, corrected = fit_fooof_group(trial_psd, freq_bins, freq_range, fooof_params)
 
-        fg = fit_fooof_group(trial_psd, freq_bins, freq_range, fooof_params)
-        trial_fooofs.append(fg)
+        exponents[trial_idx] = params["exponent"]
+        offsets[trial_idx] = params["offset"]
+        r_squareds[trial_idx] = params["r_squared"]
+        corrected_psds[trial_idx] = corrected
 
-        # Extract parameters
-        params = extract_fooof_params(fg)
-        trial_params["exponent"].append(params["exponent"])
-        trial_params["offset"].append(params["offset"])
-        trial_params["r_squared"].append(params["r_squared"])
-        trial_params["peak_params"].append(params["peak_params"])
+        if (trial_idx + 1) % 50 == 0:
+            logger.info(f"  Processed {trial_idx + 1}/{n_trials} trials")
 
-    # Convert to arrays
-    trial_params["exponent"] = np.array(trial_params["exponent"])  # (n_trials, n_spatial)
-    trial_params["offset"] = np.array(trial_params["offset"])
-    trial_params["r_squared"] = np.array(trial_params["r_squared"])
+    logger.info(f"FOOOF fitting complete: mean r² = {np.nanmean(r_squareds):.3f}")
 
-    logger.info(f"Per-trial FOOOF complete: {len(trial_fooofs)} trials processed")
+    # Get git hash for provenance
+    try:
+        git_hash = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent)
+            .decode()
+            .strip()
+        )
+    except Exception:
+        git_hash = "unknown"
 
-    # Fit FOOOF to IN/OUT averaged PSDs
-    if in_psd is not None and out_psd is not None:
-        logger.info("Fitting FOOOF to IN/OUT averaged PSDs")
+    # Save FOOOF parameters
+    logger.info(f"Saving FOOOF parameters: {fooof_file.name}")
+    np.savez_compressed(
+        fooof_file,
+        exponent=exponents,  # (n_trials, n_spatial)
+        offset=offsets,
+        r_squared=r_squareds,
+        trial_metadata=events_df.to_dict('list'),
+        freqs=freq_bins,
+    )
 
-        fg_in = fit_fooof_group(in_psd, freq_bins, freq_range, fooof_params)
-        fg_out = fit_fooof_group(out_psd, freq_bins, freq_range, fooof_params)
-
-        in_params = extract_fooof_params(fg_in)
-        out_params = extract_fooof_params(fg_out)
-    else:
-        fg_in = None
-        fg_out = None
-        in_params = None
-        out_params = None
-
-    # Prepare output
-    output_data = {
-        # Per-trial results
-        "trial_fooofs": trial_fooofs,
-        "trial_params": trial_params,
-        # IN/OUT averaged results
-        "IN_fooof": fg_in,
-        "OUT_fooof": fg_out,
-        "IN_params": in_params,
-        "OUT_params": out_params,
-        # Metadata
-        "freq_bins": freq_bins,
-        "freq_range": freq_range,
-        "zones": zones,
-        "events": events_df,
-        "inout_bounds": inout_bounds,
-        # Provenance
-        "config": {
-            "subject": subject,
-            "run": run,
-            "space": space,
-            "fooof_params": fooof_params,
-            "n_trials": psd_array.shape[0],
-            "n_spatial": psd_array.shape[1],
-        },
-    }
-
-    # Save output
-    logger.info(f"Saving FOOOF results: {output_file.name}")
-    with open(output_file, "wb") as f:
-        pickle.dump(output_data, f)
-
-    # Save metadata JSON
-    metadata_file = output_file.with_suffix(".json")
-    with open(metadata_file, "w") as f:
+    # Save FOOOF metadata JSON
+    fooof_params_file = fooof_file.with_name(fooof_file.name.replace(".npz", "_params.json"))
+    with open(fooof_params_file, "w") as f:
         json.dump(
             {
                 "subject": subject,
                 "run": run,
                 "space": space,
-                "n_trials": int(psd_array.shape[0]),
-                "n_spatial": int(psd_array.shape[1]),
+                "n_trials": int(n_trials),
+                "n_spatial": int(n_spatial),
                 "n_freqs": int(len(freq_bins)),
-                "freq_range": freq_range,
-                "inout_bounds": inout_bounds,
-                "mean_r_squared": float(np.mean(trial_params["r_squared"])),
+                "freq_range": list(freq_range),
                 "fooof_params": fooof_params,
+                "mean_r_squared": float(np.nanmean(r_squareds)),
+                "mean_exponent": float(np.nanmean(exponents)),
+                "git_hash": git_hash,
             },
             f,
             indent=2,
         )
 
-    logger.info(f"✓ FOOOF complete for sub-{subject} run-{run}")
+    # Save corrected PSDs (same format as original Welch PSDs)
+    logger.info(f"Saving corrected PSDs: {corrected_file.name}")
+    np.savez_compressed(
+        corrected_file,
+        psds=corrected_psds,  # (n_trials, n_spatial, n_freqs) - same as original
+        freqs=freq_bins,
+        trial_metadata=events_df.to_dict('list'),
+    )
 
-    return output_file
+    # Save corrected PSDs metadata JSON
+    corrected_params_file = corrected_file.with_name(corrected_file.name.replace(".npz", "_params.json"))
+    with open(corrected_params_file, "w") as f:
+        json.dump(
+            {
+                "subject": subject,
+                "run": run,
+                "space": space,
+                "description": "Aperiodic-corrected PSDs (1/f removed via FOOOF)",
+                "n_trials": int(n_trials),
+                "n_spatial": int(n_spatial),
+                "n_freqs": int(len(freq_bins)),
+                "freq_range": [float(freq_bins[0]), float(freq_bins[-1])],
+                "fooof_freq_range": list(freq_range),
+                "git_hash": git_hash,
+            },
+            f,
+            indent=2,
+        )
+
+    logger.info(f"Saved FOOOF parameters to {fooof_file}")
+    logger.info(f"Saved corrected PSDs to {corrected_file}")
+
+    return fooof_file
 
 
 def main():
@@ -429,14 +379,6 @@ def main():
         required=True,
         choices=["sensor", "source", "atlas"],
         help="Analysis space",
-    )
-    parser.add_argument(
-        "--inout-bounds",
-        nargs=2,
-        type=int,
-        default=[25, 75],
-        metavar=("LOWER", "UPPER"),
-        help="Percentile bounds for IN/OUT classification (default: 25 75)",
     )
     parser.add_argument(
         "--bids-root",
@@ -474,7 +416,7 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
 
     setup_logging(
-        name=__name__,  # Use module name for proper logger hierarchy
+        name=__name__,
         log_file=log_dir / f"fooof_sub-{args.subject}_run-{args.run}_{args.space}.log",
         level=args.log_level,
     )
@@ -493,13 +435,13 @@ def main():
             run=args.run,
             space=args.space,
             config=config,
-            inout_bounds=tuple(args.inout_bounds),
             skip_existing=args.skip_existing,
         )
 
         logger.info("=" * 80)
-        logger.info(f"✓ FOOOF extraction complete")
-        logger.info(f"Output: {output_file}")
+        logger.info(f"FOOOF extraction complete")
+        if output_file:
+            logger.info(f"Output: {output_file}")
         logger.info("=" * 80)
 
     except Exception as e:

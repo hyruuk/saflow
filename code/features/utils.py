@@ -2,6 +2,7 @@
 
 This module provides utilities for:
 - Trial classification based on VTC (IN/OUT/MID zones)
+- Data segmentation for epoched analysis
 - Feature extraction helpers
 
 Author: Claude (Anthropic)
@@ -9,11 +10,82 @@ Date: 2026-01-31
 """
 
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+def segment_spatial_temporal_data(
+    data: np.ndarray,
+    events_df: pd.DataFrame,
+    sfreq: float,
+    tmin: float = 0.426,
+    tmax: float = 1.278,
+) -> Tuple[np.ndarray, pd.DataFrame]:
+    """Segment continuous data based on events.
+
+    Works for any analysis space (sensor/source/atlas).
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Continuous data array, shape (n_spatial, n_times)
+    events_df : pd.DataFrame
+        Events dataframe with 'onset', 'trial_type' columns
+    sfreq : float
+        Sampling frequency in Hz
+    tmin : float
+        Start time of epoch relative to event onset, in seconds
+    tmax : float
+        End time of epoch relative to event onset, in seconds
+
+    Returns
+    -------
+    segmented_array : np.ndarray
+        Segmented data, shape (n_trials, n_spatial, n_samples_per_trial)
+    trial_metadata : pd.DataFrame
+        Metadata for each segmented trial
+    """
+    logger.info(f"Segmenting continuous data (tmin={tmin}, tmax={tmax})")
+
+    # Compute time samples
+    tmin_samples = int(tmin * sfreq)
+    tmax_samples = int(tmax * sfreq)
+
+    # Filter to stimulus trials only
+    stim_trials = events_df[events_df['trial_type'].isin(['Freq', 'Rare'])].copy()
+    logger.info(f"Found {len(stim_trials)} stimulus trials")
+
+    segmented_array = []
+    trial_metadata_list = []
+
+    for idx, trial in stim_trials.iterrows():
+        # Get event onset in samples
+        onset_sample = int(trial['onset'] * sfreq)
+
+        # Check boundaries
+        if onset_sample + tmax_samples >= data.shape[1]:
+            logger.debug(f"Skipping trial {idx}: extends beyond data")
+            continue
+        if onset_sample + tmin_samples < 0:
+            logger.debug(f"Skipping trial {idx}: starts before data")
+            continue
+
+        # Extract segment
+        segment = data[:, onset_sample + tmin_samples : onset_sample + tmax_samples]
+        segmented_array.append(segment)
+        trial_metadata_list.append(trial)
+
+    segmented_array = np.array(segmented_array)
+    trial_metadata = pd.DataFrame(trial_metadata_list).reset_index(drop=True)
+
+    logger.info(f"Segmented {len(segmented_array)} trials from continuous data")
+    logger.debug(f"Segmented array shape: {segmented_array.shape}")
+
+    return segmented_array, trial_metadata
 
 
 def classify_trials_from_vtc(
