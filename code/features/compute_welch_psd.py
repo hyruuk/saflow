@@ -118,8 +118,8 @@ def compute_welch_psd_from_continuous(
     data: np.ndarray,
     events_df: pd.DataFrame,
     sfreq: float,
-    n_fft: int = 1022,
-    n_overlap: int = 959,
+    n_fft: int = None,
+    n_overlap: int = None,
     tmin: float = 0.426,
     tmax: float = 1.278,
     n_jobs: int = -1,
@@ -134,10 +134,10 @@ def compute_welch_psd_from_continuous(
         Events dataframe with trial metadata
     sfreq : float
         Sampling frequency
-    n_fft : int
-        FFT length for Welch's method
-    n_overlap : int
-        Number of overlapping samples
+    n_fft : int, optional
+        FFT length for Welch's method. If None, uses min(256, n_samples)
+    n_overlap : int, optional
+        Number of overlapping samples. If None, uses n_fft // 2
     tmin : float
         Epoch start time relative to event
     tmax : float
@@ -153,6 +153,8 @@ def compute_welch_psd_from_continuous(
         Frequency bins
     trial_metadata : pd.DataFrame
         Metadata for each trial
+    params : dict
+        Dictionary with 'n_fft' and 'n_overlap' values actually used
     """
     logger.info("Computing Welch PSD from continuous data")
 
@@ -166,7 +168,15 @@ def compute_welch_psd_from_continuous(
     )
 
     logger.info(f"Segmented data shape: {segmented_data.shape}")
-    logger.info(f"Computing Welch PSD (n_fft={n_fft}, n_overlap={n_overlap})...")
+
+    # Adaptive FFT parameters based on segment length
+    n_samples = segmented_data.shape[2]
+    if n_fft is None:
+        n_fft = min(256, n_samples)  # Use smaller window for short epochs
+    if n_overlap is None:
+        n_overlap = n_fft // 2  # 50% overlap
+
+    logger.info(f"Computing Welch PSD (n_fft={n_fft}, n_overlap={n_overlap}, n_samples={n_samples})...")
 
     # Compute Welch PSD for all trials
     # Input: (n_trials, n_spatial, n_times)
@@ -184,7 +194,8 @@ def compute_welch_psd_from_continuous(
     logger.info(f"Welch PSD shape: {psds.shape}")
     logger.info(f"Frequency range: {freqs[0]:.2f} - {freqs[-1]:.2f} Hz ({len(freqs)} bins)")
 
-    return psds, freqs, trial_metadata
+    params = {"n_fft": n_fft, "n_overlap": n_overlap}
+    return psds, freqs, trial_metadata, params
 
 
 def save_welch_psds(
@@ -323,15 +334,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--n-fft",
         type=int,
-        default=1022,
-        help="FFT length for Welch's method (default: 1022)",
+        default=None,
+        help="FFT length for Welch's method (default: min(256, n_samples))",
     )
 
     parser.add_argument(
         "--n-overlap",
         type=int,
-        default=959,
-        help="Number of overlapping samples (default: 959)",
+        default=None,
+        help="Number of overlapping samples (default: n_fft // 2)",
     )
 
     parser.add_argument(
@@ -387,7 +398,11 @@ def main() -> int:
     # Setup logging
     log_dir = Path("logs") / "features"
     log_dir.mkdir(parents=True, exist_ok=True)
-    setup_logging(log_level=args.log_level, log_dir=log_dir, log_name="compute_welch_psd")
+    setup_logging(
+        name="compute_welch_psd",
+        log_file=log_dir / "compute_welch_psd.log",
+        level=args.log_level,
+    )
 
     logger.info("=" * 80)
     logger.info(f"Stage 1: Welch PSD Computation ({args.space.upper()}-LEVEL)")
@@ -404,13 +419,11 @@ def main() -> int:
     tmax = args.tmax if args.tmax is not None else config["analysis"]["epochs"]["tmax"]
     logger.info(f"Epoch timing: tmin={tmin}s, tmax={tmax}s")
 
-    # Determine BIDS root
-    bids_root = (
-        Path(args.bids_root)
-        if args.bids_root
-        else Path(config["paths"]["data_root"]) / "bids"
-    )
-    derivatives_root = bids_root / "derivatives"
+    # Determine paths
+    data_root = Path(config["paths"]["data_root"])
+    bids_root = Path(args.bids_root) if args.bids_root else data_root / "bids"
+    derivatives_root = data_root / config["paths"]["derivatives"]
+    task_name = config["bids"]["task_name"]
 
     # Build output path (simplified naming, no bounds or filter suffix)
     output_root = derivatives_root / f"welch_psds_{args.space}" / f"sub-{args.subject}" / "meg"
@@ -418,7 +431,7 @@ def main() -> int:
     # Check if output already exists
     output_file = (
         output_root
-        / f"sub-{args.subject}_ses-recording_task-gradCPT_run-{args.run}_space-{args.space}_desc-welch_psds.npz"
+        / f"sub-{args.subject}_task-{task_name}_run-{args.run}_space-{args.space}_desc-welch_psds.npz"
     )
 
     if args.skip_existing and output_file.exists():
@@ -445,12 +458,16 @@ def main() -> int:
     logger.info(f"Loaded data shape: {spatial_data.data.shape}, sfreq: {spatial_data.sfreq} Hz")
     logger.info(f"Spatial dimension: {len(spatial_data.spatial_names)} {args.space} features")
 
-    # Load events.tsv for trial metadata
+    # Load events.tsv for trial metadata (from preprocessed derivatives)
+    data_root = Path(config["paths"]["data_root"])
+    derivatives_root = data_root / config["paths"]["derivatives"]
+    task_name = config["bids"]["task_name"]
     events_path = (
-        bids_root
+        derivatives_root
+        / "preprocessed"
         / f"sub-{args.subject}"
         / "meg"
-        / f"sub-{args.subject}_ses-recording_task-gradCPT_run-{args.run}_events.tsv"
+        / f"sub-{args.subject}_task-{task_name}_run-{args.run}_proc-clean_events.tsv"
     )
 
     if not events_path.exists():
@@ -461,7 +478,7 @@ def main() -> int:
     logger.info(f"Loaded {len(events_df)} events from {events_path}")
 
     # Compute Welch PSD
-    psds, freqs, trial_metadata = compute_welch_psd_from_continuous(
+    psds, freqs, trial_metadata, welch_params = compute_welch_psd_from_continuous(
         data=spatial_data.data,
         events_df=events_df,
         sfreq=spatial_data.sfreq,
@@ -483,8 +500,8 @@ def main() -> int:
         run=args.run,
         space=args.space,
         config=config,
-        n_fft=args.n_fft,
-        n_overlap=args.n_overlap,
+        n_fft=welch_params["n_fft"],
+        n_overlap=welch_params["n_overlap"],
     )
 
     logger.info("✓ Stage 1 complete: Welch PSDs computed and saved!")

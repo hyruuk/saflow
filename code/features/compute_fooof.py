@@ -55,11 +55,12 @@ def load_welch_psd(
         FileNotFoundError: If Welch PSD file not found
     """
     data_root = Path(config["paths"]["data_root"])
-    processed_root = data_root / config["paths"]["processed"]
-    welch_dir = processed_root / f"features_welch_{space}" / f"sub-{subject}"
+    derivatives_root = data_root / config["paths"]["derivatives"]
+    welch_dir = derivatives_root / f"welch_psds_{space}" / f"sub-{subject}" / "meg"
 
-    # Find Welch PSD file
-    pattern = f"sub-{subject}_*_run-{run}_*_space-{space}_*welch*.pkl"
+    # Find Welch PSD file (npz format from compute_welch_psd.py)
+    task_name = config["bids"]["task_name"]
+    pattern = f"sub-{subject}_*_run-{run}_space-{space}_desc-welch_psds.npz"
     welch_files = list(welch_dir.glob(pattern))
 
     if not welch_files:
@@ -70,12 +71,14 @@ def load_welch_psd(
     welch_file = welch_files[0]
     logger.info(f"Loading Welch PSD: {welch_file.name}")
 
-    with open(welch_file, "rb") as f:
-        welch_data = pickle.load(f)
-
-    psd_array = welch_data["psd"]  # (n_trials, n_spatial, n_freqs)
+    # Load npz file
+    welch_data = np.load(welch_file, allow_pickle=True)
+    psd_array = welch_data["psds"]  # (n_trials, n_spatial, n_freqs)
     freq_bins = welch_data["freqs"]
-    events_df = welch_data["events"]
+
+    # Load trial metadata (saved as dict)
+    trial_metadata_dict = welch_data["trial_metadata"].item()
+    events_df = pd.DataFrame(trial_metadata_dict)
 
     logger.info(
         f"Loaded PSD: {psd_array.shape[0]} trials, {psd_array.shape[1]} spatial units, "
@@ -244,19 +247,25 @@ def process_subject_run(
 
     # Load VTC and classify trials
     logger.info(f"Loading VTC and classifying trials (bounds={inout_bounds})")
-    bids_root = data_root / config["paths"]["bids"]
-    logs_dir = Path(config["paths"]["logs"])
+    behav_dir = data_root / config["paths"]["raw"] / "behav"
 
     try:
+        # Get list of behavioral files
+        behav_files = [f.name for f in behav_dir.iterdir() if f.is_file()]
+
+        # Get filter config from config
+        filt_type = config.get("behavioral", {}).get("vtc", {}).get("filter", {}).get("type", "gaussian")
+        filt_config = config.get("behavioral", {}).get("vtc", {}).get("filter", {})
+
         vtc_data = get_VTC_from_file(
             subject=subject,
             run=run,
-            bids_root=bids_root,
-            logs_dir=logs_dir,
-            inbound=inout_bounds[0],
-            outbound=inout_bounds[1],
+            files_list=behav_files,
+            logs_dir=behav_dir,
+            filt_type=filt_type,
+            filt_config=filt_config,
         )
-        vtc_filtered = vtc_data[2]  # VTC_filtered is 3rd element
+        vtc_filtered = vtc_data[3]  # VTC_filtered is 4th element (index 3)
     except Exception as e:
         logger.error(f"Could not load VTC data: {e}")
         logger.warning("Proceeding without IN/OUT classification")
@@ -275,8 +284,9 @@ def process_subject_run(
         in_psd = None
         out_psd = None
 
-    # Get FOOOF parameters from config
-    fooof_params = config["features"]["fooof"]
+    # Get FOOOF parameters from config (config has list of param sets, use first)
+    fooof_params_list = config["features"]["fooof"]
+    fooof_params = fooof_params_list[0] if isinstance(fooof_params_list, list) else fooof_params_list
     freq_range = tuple(fooof_params["freq_range"])
 
     # Fit FOOOF to per-trial PSDs
@@ -438,6 +448,7 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
 
     setup_logging(
+        name="compute_fooof",
         log_file=log_dir / f"fooof_sub-{args.subject}_run-{args.run}_{args.space}.log",
         level=args.log_level,
     )
@@ -447,7 +458,7 @@ def main():
     logger.info("=" * 80)
 
     # Log provenance
-    log_provenance(config)
+    log_provenance(logger, "compute_fooof", config=config)
 
     # Process subject/run
     try:

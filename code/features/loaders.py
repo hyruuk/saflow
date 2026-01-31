@@ -107,34 +107,25 @@ def _load_sensor_data(
     For continuous: loads ICA-cleaned continuous data (processing="clean")
     For epochs: loads epoched data (processing="ica" or "icaar")
     """
-    derivatives_root = bids_root / "derivatives"
+    # Derivatives are at data_root/derivatives, not bids_root/derivatives
+    data_root = Path(config["paths"]["data_root"])
+    derivatives_root = data_root / config["paths"]["derivatives"]
 
     if input_type == "continuous":
         # Load continuous ICA-cleaned data
-        data_root = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
-        processing_state = "clean"  # ICA-cleaned continuous
-        suffix = "meg"
-        extension = ".fif"
+        # Files are stored as: sub-{subject}_task-gradCPT_run-{run}_proc-clean_meg.fif
+        # (no session in filename)
+        preproc_dir = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
+        task_name = config["bids"]["task_name"]
+        fif_file = preproc_dir / f"sub-{subject}_task-{task_name}_run-{run}_proc-clean_meg.fif"
 
-        bids_path = BIDSPath(
-            subject=subject,
-            session="recording",
-            task=config["bids"]["task_name"],
-            run=run,
-            processing=processing_state,
-            suffix=suffix,
-            extension=extension,
-            datatype="meg",
-            root=data_root,
-        )
-
-        if not bids_path.fpath.exists():
+        if not fif_file.exists():
             raise FileNotFoundError(
-                f"Continuous sensor data not found: {bids_path.fpath}"
+                f"Continuous sensor data not found: {fif_file}"
             )
 
-        logger.debug(f"Loading continuous MEG: {bids_path.fpath}")
-        raw = read_raw_bids(bids_path, verbose=False)
+        logger.debug(f"Loading continuous MEG: {fif_file}")
+        raw = mne.io.read_raw_fif(fif_file, preload=True, verbose=False)
 
         # Get MEG channels only
         picks = mne.pick_types(
@@ -146,25 +137,16 @@ def _load_sensor_data(
 
     elif input_type == "epochs":
         # Load epoched data (ICA or ICA+AR)
-        data_root = derivatives_root / "epochs" / f"sub-{subject}" / "meg"
+        # Files are stored as: sub-{subject}_task-gradCPT_run-{run}_proc-{ica|icaar}_meg.fif
+        epochs_dir = derivatives_root / "epochs" / f"sub-{subject}" / "meg"
+        task_name = config["bids"]["task_name"]
+        epoch_file = epochs_dir / f"sub-{subject}_task-{task_name}_run-{run}_proc-{processing}_meg.fif"
 
-        bids_path = BIDSPath(
-            subject=subject,
-            session="recording",
-            task=config["bids"]["task_name"],
-            run=run,
-            processing=processing,  # "ica" or "icaar"
-            suffix="epo",
-            extension=".fif",
-            datatype="meg",
-            root=data_root,
-        )
+        if not epoch_file.exists():
+            raise FileNotFoundError(f"Epoched sensor data not found: {epoch_file}")
 
-        if not bids_path.fpath.exists():
-            raise FileNotFoundError(f"Epoched sensor data not found: {bids_path.fpath}")
-
-        logger.debug(f"Loading epochs: {bids_path.fpath}")
-        epochs = mne.read_epochs(bids_path, preload=True, verbose=False)
+        logger.debug(f"Loading epochs: {epoch_file}")
+        epochs = mne.read_epochs(epoch_file, preload=True, verbose=False)
 
         # Get MEG channels only
         picks = mne.pick_types(
@@ -201,7 +183,8 @@ def _load_source_data(
 
     Loads morphed source estimates from derivatives/morphed_sources/
     """
-    derivatives_root = bids_root / "derivatives"
+    data_root = Path(config["paths"]["data_root"])
+    derivatives_root = data_root / config["paths"]["derivatives"]
     morph_dir = derivatives_root / "morphed_sources" / f"sub-{subject}" / "meg"
 
     if not morph_dir.exists():
@@ -249,7 +232,8 @@ def _load_atlas_data(
 
     Loads pre-computed ROI time series from derivatives/atlased_sources_{atlas}/
     """
-    derivatives_root = bids_root / "derivatives"
+    data_root = Path(config["paths"]["data_root"])
+    derivatives_root = data_root / config["paths"]["derivatives"]
     atlas_name = config["source_reconstruction"]["atlas"]
     atlas_dir = derivatives_root / f"atlased_sources_{atlas_name}" / f"sub-{subject}" / "meg"
 

@@ -448,8 +448,7 @@ def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
 # ==============================================================================
 
 @task
-def fooof(c, subject=None, space="sensor", freq_range="2 40", aperiodic_mode="fixed",
-          skip_existing=True, slurm=False, dry_run=False):
+def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False):
     """Extract FOOOF aperiodic parameters and corrected PSDs.
 
     Computes:
@@ -457,11 +456,14 @@ def fooof(c, subject=None, space="sensor", freq_range="2 40", aperiodic_mode="fi
     - Goodness of fit (r_squared, error)
     - Corrected PSDs (aperiodic component removed)
 
+    FOOOF parameters (freq_range, aperiodic_mode) come from config.yaml.
+
     Examples:
         invoke features.fooof --subject=04
-        invoke features.fooof --space=sensor
-        invoke features.fooof --freq-range="1 50" --aperiodic-mode=knee
+        invoke features.fooof --subject=04 --runs="02 03"
     """
+    from code.utils.config import load_config
+
     print("=" * 80)
     print("Feature Extraction - FOOOF")
     print("=" * 80)
@@ -474,38 +476,44 @@ def fooof(c, subject=None, space="sensor", freq_range="2 40", aperiodic_mode="fi
         print("ERROR: --subject is required for local execution")
         return
 
+    config = load_config()
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.features.run_fooof"]
-    cmd.extend(["--subject", subject])
-    cmd.extend(["--space", space])
 
-    freq = freq_range.split()
-    if len(freq) == 2:
-        cmd.extend(["--freq-range", freq[0], freq[1]])
+    for run in run_list:
+        print(f"\n[Processing run {run}]")
+        cmd = [python_exe, "-m", "code.features.compute_fooof"]
+        cmd.extend(["--subject", subject])
+        cmd.extend(["--run", run])
+        cmd.extend(["--space", space])
 
-    cmd.extend(["--aperiodic-mode", aperiodic_mode])
+        if skip_existing:
+            cmd.append("--skip-existing")
 
-    if skip_existing:
-        cmd.append("--skip-existing")
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+        if result.exited != 0:
+            print(f"WARNING: Run {run} failed")
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+    print(f"\n✓ FOOOF extraction complete for sub-{subject}")
 
 
 @task
-def psd(c, subject=None, space="sensor", method="welch", window_sec=2.0,
-        overlap=0.5, skip_existing=True, slurm=False, dry_run=False):
+def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False):
     """Extract power spectral density features.
 
     Computes:
-    - Welch PSD estimates
-    - Band power (delta, theta, alpha, beta, gamma)
-    - Peak frequency per band
+    - Welch PSD estimates per trial
+    - Saves with IN/OUT classification metadata
 
     Examples:
         invoke features.psd --subject=04
-        invoke features.psd --method=welch --window-sec=2.0
+        invoke features.psd --subject=04 --runs="02 03"
+        invoke features.psd --subject=04 --space=sensor
     """
+    from code.utils.config import load_config
+
     print("=" * 80)
     print("Feature Extraction - PSD")
     print("=" * 80)
@@ -518,23 +526,31 @@ def psd(c, subject=None, space="sensor", method="welch", window_sec=2.0,
         print("ERROR: --subject is required for local execution")
         return
 
+    config = load_config()
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.features.run_psd"]
-    cmd.extend(["--subject", subject])
-    cmd.extend(["--space", space])
-    cmd.extend(["--method", method])
-    cmd.extend(["--window-sec", str(window_sec)])
-    cmd.extend(["--overlap", str(overlap)])
 
-    if skip_existing:
-        cmd.append("--skip-existing")
+    for run in run_list:
+        print(f"\n[Processing run {run}]")
+        cmd = [python_exe, "-m", "code.features.compute_welch_psd"]
+        cmd.extend(["--subject", subject])
+        cmd.extend(["--run", run])
+        cmd.extend(["--space", space])
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+        if skip_existing:
+            cmd.append("--skip-existing")
+
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+        if result.exited != 0:
+            print(f"WARNING: Run {run} failed")
+
+    print(f"\n✓ PSD extraction complete for sub-{subject}")
 
 
 @task
-def complexity(c, subject=None, space="sensor", metrics="lzc entropy fractal",
+def complexity(c, subject=None, runs=None, space="sensor", metrics="lzc entropy fractal",
                skip_existing=True, slurm=False, dry_run=False):
     """Extract complexity and entropy measures.
 
@@ -545,8 +561,11 @@ def complexity(c, subject=None, space="sensor", metrics="lzc entropy fractal",
 
     Examples:
         invoke features.complexity --subject=04
+        invoke features.complexity --subject=04 --runs="02 03"
         invoke features.complexity --metrics="lzc entropy"
     """
+    from code.utils.config import load_config
+
     print("=" * 80)
     print("Feature Extraction - Complexity")
     print("=" * 80)
@@ -559,17 +578,28 @@ def complexity(c, subject=None, space="sensor", metrics="lzc entropy fractal",
         print("ERROR: --subject is required for local execution")
         return
 
+    config = load_config()
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.features.run_complexity"]
-    cmd.extend(["--subject", subject])
-    cmd.extend(["--space", space])
-    cmd.extend(["--metrics"] + metrics.split())
 
-    if skip_existing:
-        cmd.append("--skip-existing")
+    for run in run_list:
+        print(f"\n[Processing run {run}]")
+        cmd = [python_exe, "-m", "code.features.compute_complexity"]
+        cmd.extend(["--subject", subject])
+        cmd.extend(["--run", run])
+        cmd.extend(["--space", space])
+        cmd.extend(["--metrics"] + metrics.split())
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+        if skip_existing:
+            cmd.append("--skip-existing")
+
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+        if result.exited != 0:
+            print(f"WARNING: Run {run} failed")
+
+    print(f"\n✓ Complexity extraction complete for sub-{subject}")
 
 
 @task
