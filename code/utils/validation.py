@@ -8,7 +8,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from rich.console import Console
 from rich.table import Table
@@ -245,6 +245,86 @@ def main():
         return 0 if is_valid else 1
 
     return 0
+
+
+def validate_subject(subject: str, config: Dict[str, Any]) -> bool:
+    """Validate that subject exists in config.
+
+    Args:
+        subject: Subject ID (e.g., "04")
+        config: Configuration dictionary
+
+    Returns:
+        True if valid
+
+    Raises:
+        ValueError: If subject not in config["bids"]["subjects"]
+
+    Examples:
+        >>> config = load_config()
+        >>> validate_subject("04", config)
+        True
+    """
+    valid_subjects = config["bids"]["subjects"]
+    if subject not in valid_subjects:
+        logger.error(
+            f"Invalid subject '{subject}'. "
+            f"Valid subjects: {', '.join(valid_subjects)}"
+        )
+        raise ValueError(f"Subject {subject} not in config")
+    return True
+
+
+def validate_run(run: str, config: Dict[str, Any]) -> bool:
+    """Validate that run exists in config.
+
+    Args:
+        run: Run ID (e.g., "02")
+        config: Configuration dictionary
+
+    Returns:
+        True if valid
+
+    Raises:
+        ValueError: If run not in config["bids"]["task_runs"]
+
+    Examples:
+        >>> config = load_config()
+        >>> validate_run("02", config)
+        True
+    """
+    valid_runs = config["bids"]["task_runs"]
+    if run not in valid_runs:
+        logger.error(
+            f"Invalid run '{run}'. "
+            f"Valid runs: {', '.join(valid_runs)}"
+        )
+        raise ValueError(f"Run {run} not in config")
+    return True
+
+
+def validate_subject_run(subject: str, run: str, config: Dict[str, Any]) -> bool:
+    """Validate subject/run combination exists in config.
+
+    Args:
+        subject: Subject ID (e.g., "04")
+        run: Run ID (e.g., "02")
+        config: Configuration dictionary
+
+    Returns:
+        True if both valid
+
+    Raises:
+        ValueError: If either subject or run invalid
+
+    Examples:
+        >>> config = load_config()
+        >>> validate_subject_run("04", "02", config)
+        True
+    """
+    validate_subject(subject, config)
+    validate_run(run, config)
+    return True
 
 
 if __name__ == "__main__":

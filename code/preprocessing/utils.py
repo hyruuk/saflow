@@ -171,15 +171,13 @@ def compute_or_load_noise_cov(
     if not noise_cov_file.exists():
         logger.info(f"Computing noise covariance for {er_date}")
 
-        er_raw = read_raw_bids(
-            BIDSPath(
-                subject="emptyroom",
-                session=er_date,
-                task="noise",
-                datatype="meg",
-                root=str(bids_root),
-            )
+        # Construct path directly to avoid participants.tsv validation issues
+        er_ds_path = (
+            bids_root
+            / f"sub-emptyroom/ses-{er_date}/meg"
+            / f"sub-emptyroom_ses-{er_date}_task-noise_meg.ds"
         )
+        er_raw = mne.io.read_raw_ctf(str(er_ds_path), preload=True)
 
         noise_cov = mne.compute_raw_covariance(
             er_raw, method=["shrunk", "empirical"], rank=None, verbose=False

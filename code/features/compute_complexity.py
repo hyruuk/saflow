@@ -42,11 +42,9 @@ from joblib import Parallel, delayed
 from mne_bids import BIDSPath, read_raw_bids
 
 # Local imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.config import load_config
-from utils.logging_config import setup_logging
-from utils.paths import get_bids_path, get_output_path
-from utils.validation import validate_subject, validate_run
+from code.utils.config import load_config
+from code.utils.logging_config import setup_logging
+from code.utils.validation import validate_subject, validate_run
 
 # Complexity libraries
 import antropy

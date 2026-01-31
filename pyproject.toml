@@ -46,7 +46,7 @@ dependencies = [
     "autoreject>=0.4.0,<1.0.0",
 
     # Scientific computing
-    "numpy>=1.24.0,<2.0.0",
+    "numpy>=1.22.0,<2.0.0",  # 1.22+ for pandas 2.0 compatibility
     "scipy>=1.10.0,<2.0.0",
     "pandas>=2.0.0,<3.0.0",
 

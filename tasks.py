@@ -1040,6 +1040,75 @@ def _source_recon_slurm(
 
 
 # ==============================================================================
+# Visualization Tasks
+# ==============================================================================
+
+@task
+def plot_behavior(
+    c,
+    subject="07",
+    run="4",
+    inout_bounds="25 75",
+    output=None,
+    verbose=False,
+):
+    """Generate behavioral analysis figure.
+
+    Creates a publication-quality figure with:
+    - Panel A: VTC time course for example subject
+    - Panel B: Lapse rate comparison (IN vs OUT)
+    - Panel C: Omission error rate comparison (IN vs OUT)
+    - Panel D: Pre-event RT comparison by condition
+
+    Args:
+        subject: Example subject ID for VTC plot (default: 07)
+        run: Example run number for VTC plot (default: 4)
+        inout_bounds: Percentile bounds for IN/OUT classification (default: "25 75")
+        output: Custom output path (default: reports/figures/behavior/)
+        verbose: Enable verbose logging
+
+    Examples:
+        invoke plot-behavior
+        invoke plot-behavior --subject=04 --run=3
+        invoke plot-behavior --inout-bounds="50 50"
+        invoke plot-behavior --verbose
+        invoke plot-behavior --output=my_figure.png
+    """
+    print("=" * 80)
+    print("Behavioral Analysis Visualization")
+    print("=" * 80)
+
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command
+    cmd = [python_exe, "-m", "code.visualization.plot_behavior"]
+
+    cmd.extend(["--subject", subject])
+    cmd.extend(["--run", run])
+
+    # Parse inout_bounds
+    bounds = inout_bounds.split()
+    if len(bounds) == 2:
+        cmd.extend(["--inout-bounds", bounds[0], bounds[1]])
+
+    if output:
+        cmd.extend(["--output", output])
+
+    if verbose:
+        cmd.append("--verbose")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+
+    # Set PYTHONPATH to include project root
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
+# ==============================================================================
 # List Tasks
 # ==============================================================================
 

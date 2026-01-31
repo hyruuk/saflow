@@ -474,7 +474,7 @@ def preprocess_run(
     # Load raw data
     logger.info(f"Loading raw data: {paths['raw']}")
     console.print(f"[yellow]⏳ Loading raw BIDS data...[/yellow]")
-    raw = read_raw_bids(paths["raw"], verbose=False)
+    raw = read_raw_bids(paths["raw"], verbose=False, on_ch_mismatch="warn")
     raw.load_data()
     console.print(f"[green]✓ Loaded {raw.n_times} samples ({len(raw.ch_names)} channels)[/green]")
 
