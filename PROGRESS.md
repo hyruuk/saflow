@@ -1,9 +1,9 @@
 # Saflow Refactoring Progress Tracker
 
-**Last Updated**: 2026-01-30
-**Current Phase**: Phase 3 COMPLETE - Data Processing Pipeline (Stages 0-2) ✅
-**Analysis Focus**: Sensor-level analysis (Phase 1), Source-level planned for Phase 2
-**Status**: ✅ Stage 0-2 Implemented - Ready to test full pipeline (BIDS→Preprocessing→Source Reconstruction)
+**Last Updated**: 2026-01-31
+**Current Phase**: Phase 4 - Feature Extraction (IN PROGRESS)
+**Analysis Focus**: Unified sensor/source/atlas analysis
+**Status**: ✅ Stages 0-2 Complete | ✅ Core Feature Extraction Complete | 📋 Statistics & Classification Pending
 
 ---
 
@@ -747,6 +747,103 @@ computing:
 
 ---
 
+### ✅ Phase 4: Feature Extraction & Architectural Improvements
+**Status**: COMPLETE (2026-01-31)
+**What was done**:
+
+#### Task 4.1: Fix Critical Import Errors
+- ✅ Added missing validation functions to `code/utils/validation.py`:
+  - `validate_subject(subject, config) -> bool`
+  - `validate_run(run, config) -> bool`
+  - `validate_subject_run(subject, run, config) -> bool`
+- ✅ Fixed source reconstruction import errors (run_inverse_solution.py, apply_atlas.py)
+- ✅ Fixed compute_complexity.py import paths (was using `utils.*`, now `code.utils.*`)
+
+#### Task 4.2: Unified Data Loaders
+- ✅ Created `code/features/loaders.py` with unified multi-space architecture:
+  - Single `load_data()` function works for sensor/source/atlas spaces
+  - `SpatialData` namedtuple: consistent return type (data, sfreq, spatial_names)
+  - Supports continuous and epoched data
+  - Space-specific internal loaders: `_load_sensor_data()`, `_load_source_data()`, `_load_atlas_data()`
+- ✅ **Architectural decision**: No separate sensor/source folders - single codebase with `space` parameter
+  - Removed empty `code/features/sensor/` and `code/features/source/` directories
+  - All feature scripts use unified loaders
+
+#### Task 4.3: VTC Framework Organization
+- ✅ Moved `classify_trials_from_vtc()` from features to behavioral module:
+  - Source: `code/utils/behavioral.py` (with other VTC functions)
+  - Updated imports in: `compute_fooof.py`, `plot_behavior.py`, `features/__init__.py`
+- ✅ **Design principle**: Behavioral metrics separate from neural features
+  - VTC computation: `get_VTC_from_file()` in behavioral module
+  - Trial classification: `classify_trials_from_vtc()` in behavioral module
+  - Feature extraction: Uses behavioral module for trial classification
+
+#### Task 4.4: Complete FOOOF Implementation
+- ✅ Implemented full FOOOF pipeline (`code/features/compute_fooof.py`, 474 lines):
+  - `load_welch_psd()`: Load pre-computed Welch PSDs from derivatives
+  - `fit_fooof_group()`: Fit FOOOFGroup to multi-channel/ROI PSD
+  - `extract_fooof_params()`: Extract aperiodic (exponent, offset) and periodic (peaks) parameters
+  - `average_psd_by_zone()`: Average trials within IN/OUT zones for state comparison
+  - `process_subject_run()`: Main pipeline with per-trial + averaged fitting
+- ✅ Features:
+  - Per-trial FOOOF fitting for temporal dynamics
+  - IN/OUT zone averaging for state contrasts
+  - Comprehensive parameter extraction (exponent, offset, r², peak CF/PW/BW)
+  - Multi-space support (sensor/source/atlas)
+  - Provenance tracking (saves .pkl + .json metadata)
+  - Config-driven (freq_range, peak_width_limits, aperiodic_mode, etc.)
+
+#### Task 4.5: Documentation
+- ✅ Created comprehensive README.md:
+  - Pipeline workflow (expected task sequence)
+  - VTC framework explanation (theory, computation, usage)
+  - Dataset specificities (gradCPT task, data composition)
+  - Design choices (unified architecture, two-pass AR, config-driven)
+  - Usage examples (single subject, multi-space, HPC)
+  - Configuration guide
+- ✅ Created CHANGELOG.md:
+  - Version 0.2.0 with all feature additions
+  - Version 0.1.0 with initial pipeline
+  - Migration notes from cc_saflow
+- ✅ Updated PROGRESS.md:
+  - Phase 4 completion status
+  - Task list updates
+  - Current status summary
+
+**Files created**:
+- `code/features/loaders.py` (300+ lines)
+- `code/features/compute_fooof.py` (474 lines)
+- `README.md` (600+ lines)
+- `CHANGELOG.md` (350+ lines)
+
+**Files modified**:
+- `code/utils/validation.py` (added 3 functions, ~90 lines)
+- `code/utils/behavioral.py` (added classify_trials_from_vtc, ~90 lines)
+- `code/features/compute_complexity.py` (fixed imports)
+- `code/features/__init__.py` (updated imports)
+- `code/visualization/plot_behavior.py` (updated imports)
+- `PROGRESS.md` (updated status)
+
+**Files deleted**:
+- `code/features/sensor/` (empty directory)
+- `code/features/source/` (empty directory)
+
+**Testing results**:
+- ✅ All validation functions work
+- ✅ Source reconstruction imports successfully
+- ✅ Welch PSD script recognizes loaders
+- ✅ FOOOF imports and CLI functional
+- ✅ Unified architecture verified
+
+**Key improvements**:
+1. **Unified architecture**: Single codebase for all analysis spaces (no code duplication)
+2. **VTC in behavioral module**: Clear separation of behavioral vs. neural features
+3. **Complete FOOOF**: Per-trial + averaged fitting with comprehensive parameter extraction
+4. **Import consistency**: All scripts use `from code.utils.*` (no relative imports)
+5. **Documentation**: Comprehensive README explaining workflow, VTC, design choices
+
+---
+
 ### ✅ Phase 6.2-6.3: SLURM Integration (HPC)
 **Status**: COMPLETE (implemented early due to user request)
 **What was done**:
@@ -818,38 +915,46 @@ computing:
 
 ## Next Steps
 
-### ✅ PHASE 1 COMPLETE ✅
-### ✅ PHASE 2 COMPLETE ✅
-### ✅ PHASE 3 COMPLETE ✅
-### ✅ PHASE 6.2-6.3 COMPLETE ✅
+### ✅ PHASE 1 COMPLETE ✅ (Infrastructure)
+### ✅ PHASE 2 COMPLETE ✅ (Core Utilities)
+### ✅ PHASE 3 COMPLETE ✅ (Data Processing Pipeline)
+### ✅ PHASE 4 COMPLETE ✅ (Feature Extraction & Architectural Improvements)
+### ✅ PHASE 6.2-6.3 COMPLETE ✅ (SLURM Integration)
 
-**All Phase 1 sub-phases complete:**
-1. ~~Phase 1.1: Create project structure~~ ✅
-2. ~~Phase 1.2: Implement configuration system~~ ✅
-3. ~~Phase 1.3: Implement logging system~~ ✅
-4. ~~Phase 1.4: Setup dependency management~~ ✅
-5. ~~Phase 1.5: Create setup script~~ ✅
-6. ~~Phase 1.6: Create .gitignore~~ ✅
-7. ~~Phase 1.7: Create task runner~~ ✅
+**Completed Phases:**
+1. ~~Phase 1: Project Infrastructure~~ ✅
+   - Project structure, config system, logging, dependencies, setup script, gitignore, task runner
+2. ~~Phase 2: Core Utilities~~ ✅
+   - Behavioral, BIDS, data loading, signal processing, statistics, visualization utilities
+3. ~~Phase 3: Data Processing Pipeline~~ ✅
+   - Stage 0: BIDS Generation
+   - Stage 1: Preprocessing (ICA, AutoReject)
+   - Stage 2: Source Reconstruction (MNE inverse solutions)
+4. ~~Phase 4: Feature Extraction~~ ✅
+   - Validation functions (fix import errors)
+   - Unified data loaders (sensor/source/atlas)
+   - VTC framework organization (behavioral module)
+   - Complete FOOOF implementation
+   - Comprehensive documentation (README, CHANGELOG)
+5. ~~Phase 6.2-6.3: SLURM Integration~~ ✅ (implemented early)
+   - Job submission, templates, task integration
 
-**Phase 2 Progress:**
-1. ~~Phase 2: Migrate utilities to code/utils/~~ ✅
-
-**Phase 3 Progress:**
-1. ~~Phase 3.1: Stage 0 - BIDS Generation~~ ✅
-2. ~~Phase 3.2: Stage 1 - Preprocessing~~ ✅
-3. ~~Phase 3.3: Stage 2 - Source Reconstruction~~ ✅
-
-**Phase 6 Progress (early implementation):**
-1. ~~Phase 6.2-6.3: SLURM Integration~~ ✅
+**Remaining Phases:**
+- **Phase 5**: Statistics & Classification (IN PROGRESS)
+- **Phase 6**: Enhanced Visualization
+- **Phase 7**: Testing & Quality Assurance
+- **Phase 8**: Validation & Publication Readiness
 
 **Current Status:**
 ✅ BIDS generation (Stage 0) complete and tested
 ✅ Preprocessing pipeline (Stage 1) complete with two-pass AutoReject
 ✅ Source reconstruction (Stage 2) complete with morphing to fsaverage
 ✅ SLURM integration complete for preprocessing AND source reconstruction
-⏳ Ready to test full pipeline (Stages 0-2) locally and on HPC
-📋 Next: Phase 4 - Feature extraction (sensor-level)
+✅ Feature extraction (Stage 3) - Welch PSD, FOOOF, Complexity complete
+✅ Unified multi-space architecture implemented (no separate sensor/source code)
+✅ VTC framework in behavioral module
+⏳ Ready to test full pipeline (Stages 0-3) with real data
+📋 Next: Phase 5 - Statistics & Classification modules
 
 ---
 
@@ -863,31 +968,30 @@ computing:
 - [x] #5: Phase 1.5 - Create setup script
 - [x] #6: Phase 1.6 - Create comprehensive gitignore
 - [x] #7: Phase 1.7 - Create task runner
-- [x] #8: Phase 2.1 - Migrate saflow package utilities (REVISED: moved to code/utils/)
-- [x] #9: **Phase 3.1** - Migrate BIDS generation (Stage 0) ✅
-- [x] #10: **Phase 3.2** - Migrate preprocessing (Stage 1) ✅
-- [x] #11: **Phase 3.3** - Migrate source reconstruction (Stage 2) ✅
+- [x] #8: Phase 2.1 - Migrate utilities to code/utils/
+- [x] #9: **Phase 3.1** - BIDS generation (Stage 0) ✅
+- [x] #10: **Phase 3.2** - Preprocessing (Stage 1) ✅
+- [x] #11: **Phase 3.3** - Source reconstruction (Stage 2) ✅
+- [x] #12: **Phase 4.1** - Fix validation imports ✅
+- [x] #13: **Phase 4.2** - Unified data loaders ✅
+- [x] #14: **Phase 4.3** - VTC framework organization ✅
+- [x] #15: **Phase 4.4** - Complete FOOOF implementation ✅
+- [x] #16: **Phase 4.5** - Comprehensive documentation ✅
 - [x] #17: **Phase 6.2-6.3** - SLURM integration ✅ (implemented early)
 
 ### 🔄 Current/Next Tasks
-- [ ] #12: Phase 4.1 - Migrate sensor-level feature extraction ← **NEXT**
+- [ ] #18: Phase 5.1 - Statistics module (group contrasts, IN/OUT comparisons) ← **NEXT**
 
-### 📋 Upcoming Tasks (Phase 4+)
-- [ ] #12: Phase 4.1 - Migrate sensor-level feature extraction
-- [ ] #13: Phase 4.2 - De-duplicate feature utilities
-- [ ] #14: Phase 5.1 - Migrate sensor-level statistics
-- [ ] #15: Phase 5.2 - Migrate sensor-level classification
-- [ ] #16: Phase 6.1 - Migrate sensor-level visualization
-- [ ] #17: Phase 6.2 - Create SLURM integration
-
-### 🧪 Testing & Quality (Phase 7-8)
-- [ ] #18: Phase 7.1 - Write documentation
-- [ ] #19: Phase 7.2 - Create test suite
-- [ ] #20: Phase 7.3 - Code quality checks
-- [ ] #21: Phase 8.1 - End-to-end pipeline test
-- [ ] #22: Phase 8.2 - HPC testing
-- [ ] #23: Phase 8.3 - Multi-subject testing
-- [ ] #24: Phase 8.4 - Documentation verification
+### 📋 Upcoming Tasks (Phase 5+)
+- [ ] #18: Phase 5.1 - Statistics module (group-level stats)
+- [ ] #19: Phase 5.2 - Classification module (ML decoding)
+- [ ] #20: Phase 6.1 - Enhanced visualization (topoplots, TFR)
+- [ ] #21: Phase 7.1 - Create test suite (unit + integration)
+- [ ] #22: Phase 7.2 - Code quality automation (pre-commit hooks)
+- [ ] #23: Phase 8.1 - End-to-end pipeline test with real data
+- [ ] #24: Phase 8.2 - HPC testing at scale
+- [ ] #25: Phase 8.3 - Multi-subject validation
+- [ ] #26: Phase 8.4 - Publication-ready outputs
 
 ### Workflow Notes
 - **Incremental approach**: Implement one stage → test with real data → iterate → next stage

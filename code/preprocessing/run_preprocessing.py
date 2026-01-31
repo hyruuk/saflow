@@ -33,6 +33,7 @@ from pathlib import Path
 
 import mne
 import numpy as np
+import pandas as pd
 from mne_bids import read_raw_bids, write_raw_bids
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -471,14 +472,29 @@ def preprocess_run(
     tmin = 0.426
     tmax = 1.278
 
-    # Load raw data
+    # Load raw data directly from CTF to avoid mne-bids channel validation issues
     logger.info(f"Loading raw data: {paths['raw']}")
-    console.print(f"[yellow]⏳ Loading raw BIDS data...[/yellow]")
-    raw = read_raw_bids(paths["raw"], verbose=False, on_ch_mismatch="reorder")
-    raw.load_data()
+    console.print(f"[yellow]⏳ Loading raw CTF data...[/yellow]")
+    raw = mne.io.read_raw_ctf(str(paths["raw"].fpath), preload=True, verbose=False)
+    raw.info["line_freq"] = 60  # Set line frequency for notch filtering
     console.print(f"[green]✓ Loaded {raw.n_times} samples ({len(raw.ch_names)} channels)[/green]")
 
-    events, event_id = mne.events_from_annotations(raw)
+    # Load events from BIDS events.tsv file
+    events_tsv_path = str(paths["raw"].fpath).replace("_meg.ds", "_events.tsv")
+    events_df = pd.read_csv(events_tsv_path, sep="\t")
+
+    # Convert to MNE events array: [sample, 0, event_id]
+    # Map trial_type to event IDs (1=rare, 2=frequent based on value column)
+    sfreq = raw.info["sfreq"]
+    events_list = []
+    event_id = {}
+    for _, row in events_df.iterrows():
+        sample = int(row["onset"] * sfreq)
+        trial_type = str(row.get("trial_type", row.get("value", "unknown")))
+        if trial_type not in event_id:
+            event_id[trial_type] = len(event_id) + 1
+        events_list.append([sample, 0, event_id[trial_type]])
+    events = np.array(events_list)
     picks = mne.pick_types(raw.info, meg=True, eog=True, ecg=True)
     console.print(f"[green]✓ Detected {len(events)} events[/green]")
 
