@@ -58,6 +58,7 @@ dependencies = [
     # Signal processing & features
     "fooof>=1.0.0,<2.0.0",
     "neurokit2>=0.2.0,<1.0.0",
+    "antropy>=0.1.6,<1.0.0",
 
     # Statistics
     "statsmodels>=0.14.0,<1.0.0",

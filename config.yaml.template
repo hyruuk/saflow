@@ -207,6 +207,92 @@ features:
       - 90
       - 120
 
+  # Welch PSD parameters (can specify multiple parameter sets)
+  welch_psd:
+    - name: "default"
+      window_sec: 2.0       # Window length in seconds
+      overlap: 0.5          # Overlap fraction (0-1)
+      average: "mean"       # Averaging method: 'mean' or 'median'
+
+  # FOOOF parameters
+  fooof:
+    - name: "default"
+      freq_range: [2, 40]   # Frequency range for fitting
+      peak_width_limits: [0.5, 12.0]
+      max_n_peaks: 8
+      min_peak_height: 0.0
+      peak_threshold: 2.0
+      aperiodic_mode: "fixed"  # 'fixed' or 'knee'
+
+  # Complexity metrics configuration
+  complexity:
+    # Lempel-Ziv Complexity (LZC)
+    lzc:
+      - name: "antropy_median"
+        library: "antropy"
+        normalize: true
+        symbolize: "median"  # Binarize using median threshold
+
+      - name: "neurokit_permutation"
+        library: "neurokit2"
+        permutation: true
+        dimension: 7
+        delay: 2
+
+    # Entropy measures
+    entropy:
+      - name: "permutation"
+        metric: "perm_entropy"
+        library: "antropy"
+        order: 3              # Embedding dimension
+        delay: 1              # Time delay
+        normalize: true
+
+      - name: "spectral"
+        metric: "spectral_entropy"
+        library: "antropy"
+        sf: null              # Sampling frequency (auto-detected)
+        method: "welch"
+        normalize: true
+
+      - name: "sample"
+        metric: "sample_entropy"
+        library: "antropy"
+        order: 2
+        r: 0.2                # Tolerance (fraction of std)
+
+      - name: "approximate"
+        metric: "app_entropy"
+        library: "antropy"
+        order: 2
+        r: 0.2
+
+      - name: "svd"
+        metric: "svd_entropy"
+        library: "antropy"
+        order: 3
+        delay: 1
+        normalize: true
+
+    # Fractal dimension measures
+    fractal:
+      - name: "higuchi"
+        metric: "higuchi_fd"
+        library: "antropy"
+        kmax: 10              # Maximum k value
+
+      - name: "petrosian"
+        metric: "petrosian_fd"
+        library: "antropy"
+
+      - name: "katz"
+        metric: "katz_fd"
+        library: "antropy"
+
+      - name: "dfa"
+        metric: "detrended_fluctuation"
+        library: "antropy"
+
 # =============================================================================
 # Computing Configuration
 # =============================================================================
