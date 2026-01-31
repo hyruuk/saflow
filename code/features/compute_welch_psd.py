@@ -337,15 +337,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tmin",
         type=float,
-        default=0.426,
-        help="Epoch start time relative to event in seconds (default: 0.426)",
+        default=None,
+        help="Epoch start time relative to event in seconds (default: from config)",
     )
 
     parser.add_argument(
         "--tmax",
         type=float,
-        default=1.278,
-        help="Epoch end time relative to event in seconds (default: 1.278)",
+        default=None,
+        help="Epoch end time relative to event in seconds (default: from config)",
     )
 
     parser.add_argument(
@@ -398,6 +398,11 @@ def main() -> int:
 
     # Load configuration
     config = load_config()
+
+    # Get epoch timing from config if not specified on CLI
+    tmin = args.tmin if args.tmin is not None else config["analysis"]["epochs"]["tmin"]
+    tmax = args.tmax if args.tmax is not None else config["analysis"]["epochs"]["tmax"]
+    logger.info(f"Epoch timing: tmin={tmin}s, tmax={tmax}s")
 
     # Determine BIDS root
     bids_root = (
@@ -462,8 +467,8 @@ def main() -> int:
         sfreq=spatial_data.sfreq,
         n_fft=args.n_fft,
         n_overlap=args.n_overlap,
-        tmin=args.tmin,
-        tmax=args.tmax,
+        tmin=tmin,
+        tmax=tmax,
         n_jobs=args.n_jobs,
     )
 

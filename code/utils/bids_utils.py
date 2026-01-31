@@ -200,12 +200,18 @@ def segment_sourcelevel(
     into epochs based on stimulus events. It also loads autoreject logs to
     identify bad epochs and extracts behavioral metadata for each segment.
 
+    Note: tmin/tmax define the epoch window relative to stimulus event markers.
+    Event markers are at stimulus onset (0% intensity). These values should
+    typically come from config['analysis']['epochs'].
+    The epoch captures 50% intensity (rising) to 50% intensity (falling),
+    with the midpoint at 100% intensity (peak).
+
     Args:
         data_array: Source-level data array to segment, shape (n_channels, n_samples).
         filepaths: Dictionary of BIDSPath objects (must contain 'preproc' and 'raw').
         sfreq: Sampling frequency in Hz. Defaults to 600.0.
-        tmin: Start time of segment relative to event onset, in seconds. Defaults to 0.426.
-        tmax: End time of segment relative to event onset, in seconds. Defaults to 1.278.
+        tmin: Epoch start relative to event (50% rising intensity). Defaults to 0.426.
+        tmax: Epoch end relative to event (50% falling intensity). Defaults to 1.278.
         n_events_window: Number of events to include in each window. Defaults to 1.
 
     Returns:

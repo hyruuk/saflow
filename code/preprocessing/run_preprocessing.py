@@ -468,9 +468,16 @@ def preprocess_run(
     ica_cfg = config["preprocessing"]["ica"]
     ar_cfg = config["preprocessing"]["autoreject"]
 
-    # Epoch timing (from original cc_saflow)
-    tmin = 0.426
-    tmax = 1.278
+    # Epoch timing from config
+    # Event marker (t=0) is at stimulus onset (0% intensity).
+    # Epoch window captures high-visibility portion:
+    # - tmin: 50% intensity (rising phase)
+    # - midpoint: 100% intensity (peak)
+    # - tmax: 50% intensity (falling phase)
+    epochs_cfg = config["analysis"]["epochs"]
+    tmin = epochs_cfg["tmin"]
+    tmax = epochs_cfg["tmax"]
+    logger.info(f"Epoch timing: tmin={tmin}s, tmax={tmax}s (duration={tmax-tmin:.3f}s)")
 
     # Load raw data directly from CTF to avoid mne-bids channel validation issues
     logger.info(f"Loading raw data: {paths['raw']}")
@@ -478,6 +485,15 @@ def preprocess_run(
     raw = mne.io.read_raw_ctf(str(paths["raw"].fpath), preload=True, verbose=False)
     raw.info["line_freq"] = 60  # Set line frequency for notch filtering
     console.print(f"[green]✓ Loaded {raw.n_times} samples ({len(raw.ch_names)} channels)[/green]")
+
+    # Resample if configured (do this early, before computing event samples)
+    resample_sfreq = config["preprocessing"].get("resample_sfreq")
+    if resample_sfreq is not None and raw.info["sfreq"] != resample_sfreq:
+        original_sfreq = raw.info["sfreq"]
+        logger.info(f"Resampling from {original_sfreq} Hz to {resample_sfreq} Hz")
+        console.print(f"[yellow]⏳ Resampling from {original_sfreq} Hz to {resample_sfreq} Hz...[/yellow]")
+        raw.resample(resample_sfreq, verbose=False)
+        console.print(f"[green]✓ Resampled to {raw.info['sfreq']} Hz ({raw.n_times} samples)[/green]")
 
     # Load events from BIDS events.tsv file
     events_tsv_path = str(paths["raw"].fpath).replace("_meg.ds", "_events.tsv")

@@ -87,6 +87,10 @@ bids:
 # Preprocessing Configuration
 # =============================================================================
 preprocessing:
+  # Resample at the start of preprocessing (null = keep original sampling rate)
+  # 600 Hz recommended: clean 2x downsampling from 1200 Hz, sufficient for analyses up to 200 Hz
+  resample_sfreq: 600.0
+
   filter:
     lowcut: 0.5
     highcut: 200.0
@@ -175,6 +179,21 @@ analysis:
   #   [10, 90] - Decile split (conservative, many MID trials)
   #   [33, 67] - Tertile split
   inout_bounds: [25, 75]  # Default: focus on quartile split
+
+  # Epoch timing relative to stimulus event marker (t=0 = 0% intensity, stimulus onset)
+  # In gradCPT, stimuli gradually fade in (0%→100%) then fade out (100%→0%) over ~800ms each.
+  # The event marker is placed at stimulus onset (0% intensity, start of fade-in).
+  #
+  # Epoch window (relative to event marker):
+  #   t=0:      0% intensity (stimulus onset, start of fade-in)
+  #   tmin:     50% intensity (rising phase) - epoch starts here
+  #   midpoint: 100% intensity (peak visibility)
+  #   tmax:     50% intensity (falling phase) - epoch ends here
+  #
+  # This captures the high-visibility portion of the stimulus (~852ms).
+  epochs:
+    tmin: 0.426   # 50% intensity (rising) - epoch start
+    tmax: 1.278   # 50% intensity (falling) - epoch end
 
 # =============================================================================
 # Feature Extraction Configuration

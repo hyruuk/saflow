@@ -1040,6 +1040,167 @@ def _source_recon_slurm(
 
 
 # ==============================================================================
+# Statistics and Classification Tasks
+# ==============================================================================
+
+@task
+def statistics(
+    c,
+    feature_type,
+    space="sensor",
+    test="paired_ttest",
+    corrections="fdr bonferroni",
+    alpha=0.05,
+    n_permutations=10000,
+    visualize=False,
+    slurm=False,
+    dry_run=False,
+):
+    """Run group-level statistical analysis (IN vs OUT).
+
+    Computes group-level statistics comparing IN and OUT attentional states,
+    applies multiple comparison corrections, and computes effect sizes.
+
+    Args:
+        feature_type: Feature to analyze (e.g., 'fooof_exponent', 'psd_alpha', 'lzc')
+        space: Analysis space ('sensor', 'source', 'atlas')
+        test: Statistical test ('paired_ttest', 'independent_ttest', 'permutation')
+        corrections: Correction methods (space-separated, e.g., 'fdr bonferroni')
+        alpha: Significance threshold (default: 0.05)
+        n_permutations: Number of permutations for permutation test
+        visualize: Generate visualization plots
+        slurm: Submit job to SLURM instead of running locally
+        dry_run: Generate SLURM script without submitting (requires --slurm)
+
+    Examples:
+        # Local execution
+        invoke statistics --feature-type=fooof_exponent
+        invoke statistics --feature-type=psd_alpha --space=sensor --test=paired_ttest
+        invoke statistics --feature-type=lzc --corrections="fdr bonferroni tmax"
+
+        # With visualization
+        invoke statistics --feature-type=fooof_exponent --visualize
+
+        # SLURM execution
+        invoke statistics --feature-type=psd_alpha --slurm
+        invoke statistics --feature-type=fooof_exponent --slurm --dry-run
+    """
+    print("=" * 80)
+    print("Group-Level Statistical Analysis")
+    print("=" * 80)
+
+    if slurm:
+        print("ERROR: SLURM execution not yet implemented for statistics")
+        print("Run locally for now")
+        return
+
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command
+    cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
+    cmd.extend(["--feature-type", feature_type])
+    cmd.extend(["--space", space])
+    cmd.extend(["--test", test])
+    cmd.extend(["--correction"] + corrections.split())
+    cmd.extend(["--alpha", str(alpha)])
+    cmd.extend(["--n-permutations", str(n_permutations)])
+
+    if visualize:
+        cmd.append("--visualize")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+
+    # Set PYTHONPATH to include project root
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
+@task
+def classify(
+    c,
+    features,
+    clf="lda",
+    cv="logo",
+    space="sensor",
+    n_permutations=1000,
+    no_balance=False,
+    visualize=False,
+    slurm=False,
+    dry_run=False,
+):
+    """Run classification analysis (IN vs OUT).
+
+    Trains classifiers to decode IN vs OUT attentional states from neural
+    features using cross-validation and permutation testing.
+
+    Args:
+        features: Feature type(s) (space-separated for multivariate, e.g., 'fooof_exponent psd_alpha')
+        clf: Classifier ('lda', 'svm', 'rf', 'logistic')
+        cv: Cross-validation strategy ('logo', 'stratified', 'group')
+        space: Analysis space ('sensor', 'source', 'atlas')
+        n_permutations: Number of permutations for significance testing
+        no_balance: Disable class balancing
+        visualize: Generate visualization plots
+        slurm: Submit job to SLURM instead of running locally
+        dry_run: Generate SLURM script without submitting (requires --slurm)
+
+    Examples:
+        # Single feature classification
+        invoke classify --features=fooof_exponent
+        invoke classify --features=psd_alpha --clf=svm --cv=logo
+
+        # Multivariate classification
+        invoke classify --features="fooof_exponent psd_alpha psd_theta"
+        invoke classify --features="psd_alpha psd_beta" --clf=rf
+
+        # With visualization
+        invoke classify --features=fooof_exponent --visualize
+
+        # SLURM execution
+        invoke classify --features=psd_alpha --clf=svm --slurm
+        invoke classify --features=fooof_exponent --slurm --dry-run
+    """
+    print("=" * 80)
+    print("Classification Analysis")
+    print("=" * 80)
+
+    if slurm:
+        print("ERROR: SLURM execution not yet implemented for classification")
+        print("Run locally for now")
+        return
+
+    # Get Python executable (prefer venv)
+    python_exe = get_python_executable()
+
+    # Build command
+    cmd = [python_exe, "-m", "code.classification.run_classification"]
+    cmd.extend(["--features"] + features.split())
+    cmd.extend(["--clf", clf])
+    cmd.extend(["--cv", cv])
+    cmd.extend(["--space", space])
+    cmd.extend(["--n-permutations", str(n_permutations)])
+
+    if no_balance:
+        cmd.append("--no-balance")
+
+    if visualize:
+        cmd.append("--visualize")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+
+    # Set PYTHONPATH to include project root
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT)
+
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
+# ==============================================================================
 # Visualization Tasks
 # ==============================================================================
 

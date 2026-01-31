@@ -62,6 +62,42 @@ The **gradual Continuous Performance Task (gradCPT)** is a sustained attention t
   - **Rare (target)**: Cities (~10% of trials)
 - **Performance metrics**: Commission errors (lapses), omission errors, reaction times
 
+### Epoch Timing
+
+Epochs are defined relative to stimulus event markers (t=0 = stimulus onset at 0% intensity):
+
+```
+                                     ● 100%
+                                    / \
+                                   /   \
+                                  /     \
+                                 /       \
+                          50%  ●           ●  50%
+                              /             \
+                             /               \
+                            /                 \
+                           /                   \
+                     0%   ●                     ●   0%
+  ────────────────────────┴─────────────────────┴───────────── time
+                          ↑          ↑          ↑
+                         t=0       tmin       tmax
+
+                                     │←epoch→│
+```
+
+- **t=0 (0s)**: Event marker at stimulus onset (0% intensity)
+- **tmin (0.426s)**: Epoch starts at 50% intensity (rising)
+- **Peak (0.852s)**: 100% stimulus intensity (midpoint of epoch)
+- **tmax (1.278s)**: Epoch ends at 50% intensity (falling)
+
+- **t=0**: Event marker at stimulus onset (0% intensity, start of fade-in)
+- **tmin (0.426s)**: Epoch starts at 50% intensity (rising phase)
+- **midpoint (0.852s)**: 100% stimulus intensity (peak visibility)
+- **tmax (1.278s)**: Epoch ends at 50% intensity (falling phase)
+- **Duration**: ~852ms, capturing the high-visibility portion of stimulus presentation
+
+These values are configurable in `config.yaml` under `analysis.epochs`.
+
 ### Why GradCPT?
 
 Traditional CPT tasks use abrupt scene changes, making it difficult to separate perceptual from attentional effects. The gradCPT's gradual transitions:
@@ -76,7 +112,7 @@ Traditional CPT tasks use abrupt scene changes, making it difficult to separate 
 - **1 rest run** per subject (eyes open, 5 min)
 - **1 empty-room recording** per session (for noise covariance)
 - **CTF MEG system**: 275 channels (272 axial gradiometers + 3 reference)
-- **Sampling rate**: 600.6 Hz (downsampled from 1200 Hz during acquisition)
+- **Sampling rate**: 1200 Hz native, resampled to 600 Hz during preprocessing
 
 ---
 
