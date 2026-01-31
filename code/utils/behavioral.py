@@ -435,12 +435,12 @@ def classify_trials_from_vtc(
     vtc_filtered: np.ndarray,
     inout_bounds: Tuple[int, int] = (25, 75),
 ) -> Dict[str, np.ndarray]:
-    """Classify trials into IN/OUT/MID zones based on VTC percentiles.
+    """Assign trials to IN/OUT/MID zones based on VTC percentile splitting.
 
-    Trials are classified based on their VTC (Variability Time Course) values:
-    - IN zone: VTC < lower percentile (stable performance)
-    - OUT zone: VTC >= upper percentile (variable performance)
-    - MID zone: Between lower and upper percentiles (excluded from comparisons)
+    Trials are assigned to zones based on their VTC (Variability Time Course) values:
+    - IN zone: VTC < lower percentile (stable performance, "in the zone")
+    - OUT zone: VTC >= upper percentile (variable performance, "out of the zone")
+    - MID zone: Between lower and upper percentiles (excluded from IN/OUT comparisons)
 
     Args:
         vtc_filtered: Filtered VTC array (one value per trial).

@@ -425,13 +425,14 @@ def main() -> int:
     derivatives_root = data_root / config["paths"]["derivatives"]
     task_name = config["bids"]["task_name"]
 
-    # Build output path (simplified naming, no bounds or filter suffix)
-    output_root = derivatives_root / f"welch_psds_{args.space}" / f"sub-{args.subject}" / "meg"
+    # Build output path in processed/ (features go here, derivatives/ is for preprocessing)
+    processed_root = data_root / "processed"
+    output_root = processed_root / f"welch_psds_{args.space}" / f"sub-{args.subject}"
 
     # Check if output already exists
     output_file = (
         output_root
-        / f"sub-{args.subject}_task-{task_name}_run-{args.run}_space-{args.space}_desc-welch_psds.npz"
+        / f"sub-{args.subject}_ses-recording_task-{task_name}_run-{args.run}_space-{args.space}_desc-welch_psds.npz"
     )
 
     if args.skip_existing and output_file.exists():
@@ -458,16 +459,13 @@ def main() -> int:
     logger.info(f"Loaded data shape: {spatial_data.data.shape}, sfreq: {spatial_data.sfreq} Hz")
     logger.info(f"Spatial dimension: {len(spatial_data.spatial_names)} {args.space} features")
 
-    # Load events.tsv for trial metadata (from preprocessed derivatives)
-    data_root = Path(config["paths"]["data_root"])
-    derivatives_root = data_root / config["paths"]["derivatives"]
-    task_name = config["bids"]["task_name"]
+    # Load events.tsv for trial metadata
+    # Use BIDS events which have trial_idx for matching with VTC later
     events_path = (
-        derivatives_root
-        / "preprocessed"
+        bids_root
         / f"sub-{args.subject}"
         / "meg"
-        / f"sub-{args.subject}_task-{task_name}_run-{args.run}_proc-clean_events.tsv"
+        / f"sub-{args.subject}_task-{task_name}_run-{args.run}_events.tsv"
     )
 
     if not events_path.exists():

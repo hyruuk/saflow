@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from fooof import FOOOF, FOOOFGroup
 
-from code.utils.behavioral import classify_trials_from_vtc, get_VTC_from_file
+from code.utils.behavioral import classify_trials_from_vtc
 from code.utils.config import load_config
 from code.utils.logging_config import log_provenance, setup_logging
 from code.utils.validation import validate_subject_run
@@ -37,7 +37,7 @@ def load_welch_psd(
     space: str,
     config: Dict[str, Any],
 ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """Load pre-computed Welch PSD from derivatives.
+    """Load pre-computed Welch PSD from processed/ directory.
 
     Args:
         subject: Subject ID
@@ -55,8 +55,8 @@ def load_welch_psd(
         FileNotFoundError: If Welch PSD file not found
     """
     data_root = Path(config["paths"]["data_root"])
-    derivatives_root = data_root / config["paths"]["derivatives"]
-    welch_dir = derivatives_root / f"welch_psds_{space}" / f"sub-{subject}" / "meg"
+    processed_root = data_root / "processed"
+    welch_dir = processed_root / f"welch_psds_{space}" / f"sub-{subject}"
 
     # Find Welch PSD file (npz format from compute_welch_psd.py)
     task_name = config["bids"]["task_name"]
@@ -245,35 +245,61 @@ def process_subject_run(
     logger.info(f"Processing sub-{subject} run-{run} space-{space}")
     psd_array, freq_bins, events_df = load_welch_psd(subject, run, space, config)
 
-    # Load VTC and classify trials
-    logger.info(f"Loading VTC and classifying trials (bounds={inout_bounds})")
-    behav_dir = data_root / config["paths"]["raw"] / "behav"
+    # Load VTC from BIDS events (ground truth) and assign IN/OUT zones
+    logger.info(f"Loading VTC from BIDS and assigning IN/OUT zones (bounds={inout_bounds})")
 
     try:
-        # Get list of behavioral files
-        behav_files = [f.name for f in behav_dir.iterdir() if f.is_file()]
-
-        # Get filter config from config
-        filt_type = config.get("behavioral", {}).get("vtc", {}).get("filter", {}).get("type", "gaussian")
-        filt_config = config.get("behavioral", {}).get("vtc", {}).get("filter", {})
-
-        vtc_data = get_VTC_from_file(
-            subject=subject,
-            run=run,
-            files_list=behav_files,
-            logs_dir=behav_dir,
-            filt_type=filt_type,
-            filt_config=filt_config,
+        # Load BIDS events.tsv which has VTC data
+        bids_root = data_root / "bids"
+        task_name = config["bids"]["task_name"]
+        bids_events_path = (
+            bids_root / f"sub-{subject}" / "meg"
+            / f"sub-{subject}_task-{task_name}_run-{run}_events.tsv"
         )
-        vtc_filtered = vtc_data[3]  # VTC_filtered is 4th element (index 3)
+
+        if not bids_events_path.exists():
+            logger.warning(f"BIDS events not found: {bids_events_path}")
+            vtc_filtered = None
+        else:
+            bids_events = pd.read_csv(bids_events_path, sep="\t")
+
+            # Get trial indices from Welch PSD events to match with BIDS events
+            if "trial_idx" in events_df.columns:
+                trial_indices = events_df["trial_idx"].values
+            else:
+                # Fallback: assume sequential trials
+                trial_indices = np.arange(len(events_df))
+
+            # Extract VTC for matching trials from BIDS events
+            # BIDS events have all events, filter to stimulus trials with valid trial_idx
+            stim_events = bids_events[bids_events["trial_idx"] >= 0].copy()
+
+            # Match by trial_idx
+            vtc_filtered = []
+            for idx in trial_indices:
+                matching = stim_events[stim_events["trial_idx"] == idx]
+                if len(matching) > 0 and "VTC_filtered" in matching.columns:
+                    val = matching["VTC_filtered"].iloc[0]
+                    vtc_filtered.append(float(val) if val != "n/a" else np.nan)
+                else:
+                    vtc_filtered.append(np.nan)
+            vtc_filtered = np.array(vtc_filtered)
+
+            valid_count = np.sum(~np.isnan(vtc_filtered))
+            logger.info(f"Loaded VTC from BIDS: {valid_count}/{len(vtc_filtered)} valid values")
+
+            if valid_count == 0:
+                vtc_filtered = None
+
     except Exception as e:
         logger.error(f"Could not load VTC data: {e}")
-        logger.warning("Proceeding without IN/OUT classification")
+        logger.warning("Proceeding without IN/OUT zone assignment")
         vtc_filtered = None
 
-    # Classify trials if VTC available
+    # Assign IN/OUT zones if VTC available
     if vtc_filtered is not None:
         zones = classify_trials_from_vtc(vtc_filtered, inout_bounds=inout_bounds)
+        logger.info(f"Zone assignment: {len(zones['IN_idx'])} IN, {len(zones['OUT_idx'])} OUT, {len(zones['MID_idx'])} MID trials")
 
         # Average PSD by zone
         avg_psds = average_psd_by_zone(psd_array, zones)
@@ -448,7 +474,7 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
 
     setup_logging(
-        name="compute_fooof",
+        name=__name__,  # Use module name for proper logger hierarchy
         log_file=log_dir / f"fooof_sub-{args.subject}_run-{args.run}_{args.space}.log",
         level=args.log_level,
     )
@@ -458,7 +484,7 @@ def main():
     logger.info("=" * 80)
 
     # Log provenance
-    log_provenance(logger, "compute_fooof", config=config)
+    log_provenance(logger, __name__, config=config)
 
     # Process subject/run
     try:

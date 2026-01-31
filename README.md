@@ -608,18 +608,41 @@ saflow/
 ├── sourcedata/                # Raw CTF data (immutable)
 │   ├── meg/
 │   └── behav/
-├── bids/                      # BIDS dataset
+├── bids/                      # BIDS dataset (ground truth)
 │   ├── sub-04/
+│   │   └── meg/
+│   │       ├── *_meg.ds/              # Raw MEG data
+│   │       └── *_events.tsv           # Events with VTC, trial_idx
 │   ├── sub-05/
-│   └── code/                  # Provenance tracking
-├── derivatives/               # Processed outputs
-│   ├── preprocessed/          # Stage 1 outputs
-│   ├── epochs/
-│   ├── morphed_sources/       # Stage 2 outputs
-│   └── features_*/            # Stage 3 outputs
+│   └── code/                          # Provenance tracking
+├── derivatives/               # Preprocessing & source reconstruction
+│   ├── preprocessed/          # Stage 1: ICA-cleaned continuous data
+│   │   └── sub-04/meg/
+│   │       └── *_proc-clean_meg.fif
+│   ├── epochs/                # Stage 1: Epoched data
+│   │   └── sub-04/meg/
+│   │       ├── *_proc-ica_meg.fif     # ICA-only epochs
+│   │       └── *_proc-icaar_meg.fif   # ICA+AutoReject epochs
+│   ├── morphed_sources/       # Stage 2: Source estimates (fsaverage)
+│   ├── atlased_sources_*/     # Stage 2: Atlas-parcellated sources
+│   └── noise_covariance/      # Noise covariance matrices
+├── processed/                 # Feature extraction outputs
+│   ├── welch_psds_sensor/     # Stage 3: Welch PSDs (sensor-level)
+│   │   └── sub-04/
+│   │       └── *_desc-welch_psds.npz
+│   ├── welch_psds_source/     # Stage 3: Welch PSDs (source-level)
+│   ├── features_fooof_sensor/ # Stage 3: FOOOF results (sensor)
+│   │   └── sub-04/
+│   │       └── *_desc-fooof.pkl
+│   └── features_fooof_source/ # Stage 3: FOOOF results (source)
 └── fs_subjects/               # FreeSurfer subjects
     └── fsaverage/
 ```
+
+**Directory philosophy**:
+- **bids/**: Immutable ground truth (VTC, trial metadata from behavioral data)
+- **derivatives/**: Preprocessing outputs (cleaned signals, source estimates)
+- **processed/**: Feature extraction outputs (PSDs, FOOOF, complexity metrics)
 
 ---
 

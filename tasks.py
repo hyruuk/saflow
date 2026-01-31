@@ -490,6 +490,8 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
 
         if skip_existing:
             cmd.append("--skip-existing")
+        else:
+            cmd.append("--no-skip-existing")
 
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
@@ -540,6 +542,8 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
 
         if skip_existing:
             cmd.append("--skip-existing")
+        else:
+            cmd.append("--no-skip-existing")
 
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
@@ -789,7 +793,7 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
 
     if not bids_root:
         data_root = Path(config["paths"]["data_root"])
-        bids_root = data_root / config["paths"]["derivatives"] / "bids"
+        bids_root = data_root / "bids"
     else:
         bids_root = Path(bids_root)
 
