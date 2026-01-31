@@ -392,19 +392,22 @@ def bids(c, input_dir=None, output_dir=None, subjects=None, log_level="INFO", dr
 
 @task
 def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
-               skip_existing=True, crop=None, slurm=False, dry_run=False):
+               skip_existing=True, crop=None, with_autoreject=False, slurm=False, dry_run=False):
     """Run MEG preprocessing (Stage 1).
 
     Examples:
         invoke pipeline.preprocess --subject=04
         invoke pipeline.preprocess --subject=04 --runs="02 03"
         invoke pipeline.preprocess --subject=04 --crop=50  # Quick test with 50s
+        invoke pipeline.preprocess --subject=04 --with-autoreject  # Enable 2nd AR pass
         invoke pipeline.preprocess --slurm
     """
     print("=" * 80)
     print("MEG Preprocessing - Stage 1")
     if crop:
         print(f"[TEST MODE] Cropping to first {crop} seconds")
+    if with_autoreject:
+        print("[WITH AUTOREJECT] Second AutoReject pass enabled")
     print("=" * 80)
 
     if slurm:
@@ -414,7 +417,7 @@ def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
             print("ERROR: --subject is required for local execution")
             print("Use --slurm to process all subjects in parallel on HPC")
             return
-        _preprocess_local(c, subject, runs, bids_root, log_level, skip_existing, crop)
+        _preprocess_local(c, subject, runs, bids_root, log_level, skip_existing, crop, with_autoreject)
 
 
 @task
@@ -719,7 +722,7 @@ def behavior(c, subject="07", run="4", inout_bounds="25 75", output=None, verbos
 # Helper Functions (Private)
 # ==============================================================================
 
-def _preprocess_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True, crop=None):
+def _preprocess_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True, crop=None, with_autoreject=False):
     """Run preprocessing locally."""
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.preprocessing.run_preprocessing"]
@@ -734,6 +737,8 @@ def _preprocess_local(c, subject, runs=None, bids_root=None, log_level="INFO", s
         cmd.append("--skip-existing")
     if crop:
         cmd.extend(["--crop", str(crop)])
+    if with_autoreject:
+        cmd.append("--with-autoreject")
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())

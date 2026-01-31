@@ -157,16 +157,14 @@ def compute_or_load_noise_cov(
     noise_cov_dir = derivatives_root / "noise_covariance"
     noise_cov_dir.mkdir(parents=True, exist_ok=True)
 
-    noise_cov_bidspath = BIDSPath(
-        subject="emptyroom",
-        session=er_date,
-        task="noise",
-        datatype="meg",
-        processing="noisecov",
-        root=str(noise_cov_dir),
+    # Construct file path directly without using BIDSPath.fpath (avoids ambiguity issues)
+    noise_cov_file = (
+        noise_cov_dir
+        / f"sub-emptyroom"
+        / f"ses-{er_date}"
+        / "meg"
+        / f"sub-emptyroom_ses-{er_date}_task-noise_proc-noisecov_cov.fif"
     )
-
-    noise_cov_file = Path(str(noise_cov_bidspath.fpath) + ".fif")
 
     if not noise_cov_file.exists():
         logger.info(f"Computing noise covariance for {er_date}")
@@ -194,6 +192,9 @@ def compute_or_load_noise_cov(
         noise_cov = mne.compute_raw_covariance(
             er_raw, method=["shrunk", "empirical"], rank=None, verbose=False
         )
+
+        # Create parent directories for the output file
+        noise_cov_file.parent.mkdir(parents=True, exist_ok=True)
 
         noise_cov.save(str(noise_cov_file), overwrite=True)
         logger.info(f"Saved noise covariance to {noise_cov_file}")
@@ -324,9 +325,9 @@ def detect_bad_epochs_threshold(
         >>> print(f"Found {stats['n_bad']} bad epochs ({stats['pct_bad']:.1f}%)")
     """
     if reject_threshold is None:
-        reject_threshold = {"mag": 4000e-15}  # 4000 fT
+        reject_threshold = {"mag": 5e-12}  # 5000 fT (5 pT) - reasonable for CTF MEG
     if flat_threshold is None:
-        flat_threshold = {"mag": 1e-15}  # 1 fT
+        flat_threshold = {"mag": 1e-14}  # 10 fT
 
     logger.info(
         f"Running threshold-based epoch detection: "
