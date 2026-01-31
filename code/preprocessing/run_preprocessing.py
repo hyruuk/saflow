@@ -531,6 +531,7 @@ def preprocess_run(
     derivatives_root: Path,
     config: dict,
     skip_existing: bool = True,
+    crop: float = None,
 ):
     """Preprocess a single MEG run.
 
@@ -541,6 +542,7 @@ def preprocess_run(
         derivatives_root: Derivatives directory.
         config: Configuration dictionary.
         skip_existing: Skip if preprocessed file already exists.
+        crop: If set, crop raw data to first N seconds (for quick testing).
     """
     logger.info("=" * 80)
     logger.info(f"Preprocessing subject {subject}, run {run}")
@@ -576,6 +578,14 @@ def preprocess_run(
     raw = mne.io.read_raw_ctf(str(paths["raw"].fpath), preload=True, verbose=False)
     raw.info["line_freq"] = 60  # Set line frequency for notch filtering
     console.print(f"[green]✓ Loaded {raw.n_times} samples ({len(raw.ch_names)} channels)[/green]")
+
+    # Crop if requested (for quick testing)
+    if crop is not None:
+        original_duration = raw.times[-1]
+        logger.info(f"Cropping raw data to first {crop} seconds (original: {original_duration:.1f}s)")
+        console.print(f"[yellow]⏳ Cropping to first {crop} seconds (testing mode)...[/yellow]")
+        raw.crop(tmin=0, tmax=crop)
+        console.print(f"[green]✓ Cropped to {raw.times[-1]:.1f}s ({raw.n_times} samples)[/green]")
 
     # Resample if configured (do this early, before computing event samples)
     resample_sfreq = config["preprocessing"].get("resample_sfreq")
@@ -914,6 +924,12 @@ def main():
         help="Skip runs that are already preprocessed",
     )
     parser.add_argument(
+        "--crop",
+        type=float,
+        default=None,
+        help="Crop raw data to first N seconds (for quick testing)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -975,6 +991,7 @@ def main():
                     derivatives_root,
                     config,
                     args.skip_existing,
+                    args.crop,
                 )
             except Exception as e:
                 logger.error(f"Failed to process run {run}: {e}", exc_info=True)
