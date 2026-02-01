@@ -1,0 +1,105 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Feature Extraction Pipeline - {{ feature_type }}
+# =============================================================================
+
+echo "Feature Extraction Configuration:"
+echo "  Feature type:   {{ feature_type }}"
+echo "  Subject:        {{ subject }}"
+echo "  Run:            {{ run }}"
+echo "  Space:          {{ space }}"
+echo "  Log level:      {{ log_level }}"
+echo "  Skip existing:  {{ skip_existing }}"
+echo ""
+
+{% if feature_type == "psd" %}
+# Run Welch PSD extraction
+python -m code.features.compute_welch_psd \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --space {{ space }} \
+    --log-level {{ log_level }} \
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+
+{% elif feature_type == "fooof" %}
+# Run FOOOF extraction
+python -m code.features.compute_fooof \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --space {{ space }} \
+    --log-level {{ log_level }} \
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+
+{% elif feature_type == "complexity" %}
+# Run complexity extraction
+python -m code.features.compute_complexity \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --space {{ space }} \
+    {% if complexity_types %}--complexity-type {{ complexity_types }}{% endif %} \
+    {% if not skip_existing %}--overwrite{% endif %}
+
+{% elif feature_type == "all" %}
+# Run all feature types in sequence: PSD -> FOOOF -> Complexity
+
+echo ""
+echo "[1/3] Extracting PSD features..."
+echo "=================================================================="
+python -m code.features.compute_welch_psd \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --space {{ space }} \
+    --log-level {{ log_level }} \
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+
+PSD_EXIT=$?
+if [ $PSD_EXIT -ne 0 ]; then
+    echo "PSD extraction failed with exit code $PSD_EXIT"
+    exit $PSD_EXIT
+fi
+
+echo ""
+echo "[2/3] Extracting FOOOF features..."
+echo "=================================================================="
+python -m code.features.compute_fooof \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --space {{ space }} \
+    --log-level {{ log_level }} \
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+
+FOOOF_EXIT=$?
+if [ $FOOOF_EXIT -ne 0 ]; then
+    echo "FOOOF extraction failed with exit code $FOOOF_EXIT"
+    exit $FOOOF_EXIT
+fi
+
+echo ""
+echo "[3/3] Extracting Complexity features..."
+echo "=================================================================="
+python -m code.features.compute_complexity \
+    --subject {{ subject }} \
+    --run {{ run }} \
+    --space {{ space }} \
+    {% if not skip_existing %}--overwrite{% endif %}
+
+COMPLEXITY_EXIT=$?
+if [ $COMPLEXITY_EXIT -ne 0 ]; then
+    echo "Complexity extraction failed with exit code $COMPLEXITY_EXIT"
+    exit $COMPLEXITY_EXIT
+fi
+
+{% endif %}
+
+FEATURE_EXIT=$?
+
+if [ $FEATURE_EXIT -eq 0 ]; then
+    echo "Feature extraction ({{ feature_type }}) completed successfully"
+else
+    echo "Feature extraction ({{ feature_type }}) failed with exit code $FEATURE_EXIT"
+    exit $FEATURE_EXIT
+fi
+
+{% endblock %}

@@ -1,0 +1,35 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Atlas Parcellation Pipeline
+# =============================================================================
+
+echo "Atlas Application Configuration:"
+echo "  Subject:        {{ subject }}"
+echo "  Runs:           {{ runs }}"
+{% if atlases %}
+echo "  Atlases:        {{ atlases }}"
+{% else %}
+echo "  Atlases:        (default from config)"
+{% endif %}
+echo "  Skip existing:  {{ skip_existing }}"
+echo ""
+
+# Run atlas application
+python -m code.source_reconstruction.apply_atlas \
+    --subject {{ subject }} \
+    {% if runs %}--runs {{ runs }}{% endif %} \
+    {% if atlases %}--atlases {{ atlases }}{% endif %} \
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+
+ATLAS_EXIT=$?
+
+if [ $ATLAS_EXIT -eq 0 ]; then
+    echo "Atlas application completed successfully"
+else
+    echo "Atlas application failed with exit code $ATLAS_EXIT"
+    exit $ATLAS_EXIT
+fi
+
+{% endblock %}

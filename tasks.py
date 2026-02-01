@@ -9,17 +9,25 @@ Usage:
     invoke dev.check.qc --subject=04       # Run data quality checks
     invoke dev.check.code                  # Run linting/formatting checks
     invoke pipeline.preprocess --subject=04
-    invoke features.fooof --subject=04
+    invoke pipeline.features.fooof --subject=04
+    invoke pipeline.features.all --slurm   # All features on HPC
     invoke analysis.statistics --feature-type=fooof_exponent
 
 Namespaces:
-    dev.check   - Data validation (dataset, qc, code)
-    dev         - Development tasks (test, clean)
-    env         - Environment tasks (setup, info)
-    pipeline    - Data processing pipeline (bids, preprocess, source-recon)
-    features    - Feature extraction (fooof, psd, complexity)
-    analysis    - Statistical analysis (statistics, classify)
-    viz         - Visualization (behavior)
+    dev.check           - Data validation (dataset, qc, code)
+    dev                 - Development tasks (test, clean)
+    env                 - Environment tasks (setup, info)
+    pipeline            - Data processing pipeline (bids, preprocess, source-recon, atlas)
+    pipeline.features   - Feature extraction (psd, fooof, complexity, all)
+    analysis            - Statistical analysis (statistics, classify)
+    viz                 - Visualization (behavior)
+
+SLURM Support:
+    Most pipeline tasks support --slurm for HPC execution:
+    - invoke pipeline.preprocess --slurm
+    - invoke pipeline.source-recon --slurm
+    - invoke pipeline.features.psd --slurm
+    - invoke pipeline.features.all --slurm --space=aparc.a2009s
 """
 
 import os
@@ -450,27 +458,26 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
     Extracts ROI-level time series from vertex-level source estimates using
     cortical parcellations. By default applies:
     - aparc.a2009s (Destrieux, 148 ROIs)
-    - Schaefer2018_100Parcels_7Networks_order
-    - Schaefer2018_200Parcels_7Networks_order
-    - Schaefer2018_400Parcels_7Networks_order
+    - schaefer_100, schaefer_200, schaefer_400 (Schaefer parcellations)
 
-    Output: processed/atlas_timeseries_{atlas}/sub-{subject}/*.npz
+    Output: derivatives/atlas_timeseries_{atlas}/sub-{subject}/*.npz
 
     Examples:
         invoke pipeline.atlas --subject=04
         invoke pipeline.atlas --subject=04 --atlases="aparc.a2009s"
-        invoke pipeline.atlas --subject=04 --runs="02 03"
+        invoke pipeline.atlas --slurm  # All subjects on cluster
     """
     print("=" * 80)
     print("Atlas Application - Stage 2b")
     print("=" * 80)
 
     if slurm:
-        print("ERROR: SLURM execution not yet implemented for atlas")
+        _atlas_slurm(c, subject, runs, atlases, skip_existing, dry_run)
         return
 
     if not subject:
         print("ERROR: --subject is required for local execution")
+        print("Use --slurm to process all subjects in parallel on HPC")
         return
 
     python_exe = get_python_executable()
@@ -495,7 +502,7 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
 
 
 # ==============================================================================
-# features.* Tasks - Feature Extraction
+# pipeline.features.* Tasks - Feature Extraction
 # ==============================================================================
 
 @task
@@ -510,46 +517,24 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
     FOOOF parameters (freq_range, aperiodic_mode) come from config.yaml.
 
     Examples:
-        invoke features.fooof --subject=04
-        invoke features.fooof --subject=04 --space=aparc.a2009s
-        invoke features.fooof --subject=04 --space=schaefer_100
+        invoke pipeline.features.fooof --subject=04
+        invoke pipeline.features.fooof --subject=04 --space=aparc.a2009s
+        invoke pipeline.features.fooof --slurm  # All subjects on cluster
     """
-    from code.utils.config import load_config
-
     print("=" * 80)
     print("Feature Extraction - FOOOF")
     print("=" * 80)
 
     if slurm:
-        print("ERROR: SLURM execution not yet implemented")
+        _features_slurm(c, "fooof", subject, runs, space, skip_existing=skip_existing, dry_run=dry_run)
         return
 
     if not subject:
         print("ERROR: --subject is required for local execution")
+        print("Use --slurm to process all subjects in parallel on HPC")
         return
 
-    config = load_config()
-    run_list = runs.split() if runs else config["bids"]["task_runs"]
-
-    python_exe = get_python_executable()
-
-    for run in run_list:
-        print(f"\n[Processing run {run}]")
-        cmd = [python_exe, "-m", "code.features.compute_fooof"]
-        cmd.extend(["--subject", subject])
-        cmd.extend(["--run", run])
-        cmd.extend(["--space", space])
-
-        if skip_existing:
-            cmd.append("--skip-existing")
-        else:
-            cmd.append("--no-skip-existing")
-
-        print(f"Running: {' '.join(cmd)}\n")
-        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-        if result.exited != 0:
-            print(f"WARNING: Run {run} failed")
-
+    _features_local(c, "fooof", subject, runs, space, skip_existing=skip_existing)
     print(f"\n✓ FOOOF extraction complete for sub-{subject}")
 
 
@@ -562,46 +547,24 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
     - Saves with IN/OUT classification metadata
 
     Examples:
-        invoke features.psd --subject=04
-        invoke features.psd --subject=04 --space=aparc.a2009s
-        invoke features.psd --subject=04 --space=schaefer_100
+        invoke pipeline.features.psd --subject=04
+        invoke pipeline.features.psd --subject=04 --space=aparc.a2009s
+        invoke pipeline.features.psd --slurm  # All subjects on cluster
     """
-    from code.utils.config import load_config
-
     print("=" * 80)
     print("Feature Extraction - PSD")
     print("=" * 80)
 
     if slurm:
-        print("ERROR: SLURM execution not yet implemented")
+        _features_slurm(c, "psd", subject, runs, space, skip_existing=skip_existing, dry_run=dry_run)
         return
 
     if not subject:
         print("ERROR: --subject is required for local execution")
+        print("Use --slurm to process all subjects in parallel on HPC")
         return
 
-    config = load_config()
-    run_list = runs.split() if runs else config["bids"]["task_runs"]
-
-    python_exe = get_python_executable()
-
-    for run in run_list:
-        print(f"\n[Processing run {run}]")
-        cmd = [python_exe, "-m", "code.features.compute_welch_psd"]
-        cmd.extend(["--subject", subject])
-        cmd.extend(["--run", run])
-        cmd.extend(["--space", space])
-
-        if skip_existing:
-            cmd.append("--skip-existing")
-        else:
-            cmd.append("--no-skip-existing")
-
-        print(f"Running: {' '.join(cmd)}\n")
-        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-        if result.exited != 0:
-            print(f"WARNING: Run {run} failed")
-
+    _features_local(c, "psd", subject, runs, space, skip_existing=skip_existing)
     print(f"\n✓ PSD extraction complete for sub-{subject}")
 
 
@@ -616,82 +579,64 @@ def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc 
     - Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
 
     Examples:
-        invoke features.complexity --subject=04
-        invoke features.complexity --subject=04 --space=aparc.a2009s
-        invoke features.complexity --complexity-type="lzc entropy"
+        invoke pipeline.features.complexity --subject=04
+        invoke pipeline.features.complexity --subject=04 --space=aparc.a2009s
+        invoke pipeline.features.complexity --slurm  # All subjects on cluster
     """
-    from code.utils.config import load_config
-
     print("=" * 80)
     print("Feature Extraction - Complexity")
     print("=" * 80)
 
     if slurm:
-        print("ERROR: SLURM execution not yet implemented")
+        _features_slurm(c, "complexity", subject, runs, space, skip_existing=not overwrite,
+                        complexity_types=complexity_type, dry_run=dry_run)
         return
 
     if not subject:
         print("ERROR: --subject is required for local execution")
+        print("Use --slurm to process all subjects in parallel on HPC")
         return
 
-    config = load_config()
-    run_list = runs.split() if runs else config["bids"]["task_runs"]
-
-    python_exe = get_python_executable()
-
-    for run in run_list:
-        print(f"\n[Processing run {run}]")
-        cmd = [python_exe, "-m", "code.features.compute_complexity"]
-        cmd.extend(["--subject", subject])
-        cmd.extend(["--run", run])
-        cmd.extend(["--space", space])
-        cmd.extend(["--complexity-type"] + complexity_type.split())
-
-        if overwrite:
-            cmd.append("--overwrite")
-
-        print(f"Running: {' '.join(cmd)}\n")
-        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-        if result.exited != 0:
-            print(f"WARNING: Run {run} failed")
-
+    _features_local(c, "complexity", subject, runs, space, skip_existing=not overwrite,
+                    complexity_types=complexity_type)
     print(f"\n✓ Complexity extraction complete for sub-{subject}")
 
 
 @task
-def extract_all(c, subject=None, space="sensor", overwrite=False, slurm=False, dry_run=False):
+def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slurm=False, dry_run=False):
     """Extract all feature types (PSD, FOOOF, complexity).
 
     Order: PSD -> FOOOF -> Complexity (FOOOF depends on PSD)
 
     Examples:
-        invoke features.all --subject=04
-        invoke features.all --subject=04 --space=aparc.a2009s
-        invoke features.all --subject=04 --overwrite
+        invoke pipeline.features.all --subject=04
+        invoke pipeline.features.all --subject=04 --space=aparc.a2009s
+        invoke pipeline.features.all --slurm  # All subjects on cluster
     """
     print("=" * 80)
     print(f"Feature Extraction - All Features (space={space})")
     print("=" * 80)
 
     if slurm:
-        print("ERROR: SLURM execution not yet implemented")
+        _features_slurm(c, "all", subject, runs, space, skip_existing=not overwrite, dry_run=dry_run)
         return
 
     if not subject:
         print("ERROR: --subject is required for local execution")
+        print("Use --slurm to process all subjects in parallel on HPC")
         return
 
     # Convert overwrite to skip_existing for fooof/psd tasks
     skip_existing = not overwrite
 
     print("\n[1/3] Extracting PSD features...")
-    psd(c, subject=subject, space=space, skip_existing=skip_existing)
+    _features_local(c, "psd", subject, runs, space, skip_existing=skip_existing)
 
     print("\n[2/3] Extracting FOOOF features...")
-    fooof(c, subject=subject, space=space, skip_existing=skip_existing)
+    _features_local(c, "fooof", subject, runs, space, skip_existing=skip_existing)
 
     print("\n[3/3] Extracting Complexity features...")
-    complexity(c, subject=subject, space=space, overwrite=overwrite)
+    _features_local(c, "complexity", subject, runs, space, skip_existing=skip_existing)
 
     print("\n" + "=" * 80)
     print("✓ All feature extraction complete!")
@@ -1007,6 +952,222 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
         print(f"\n✓ Submitted {len(job_ids)} source reconstruction jobs")
 
 
+def _atlas_slurm(c, subject=None, runs=None, atlases=None,
+                 skip_existing=True, dry_run=False):
+    """Submit atlas application jobs to SLURM."""
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+
+    print("\n[SLURM Mode] Submitting atlas application jobs to cluster\n")
+
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+
+    # Use source_reconstruction resources for atlas (similar compute requirements)
+    atlas_resources = slurm_config.get("source_reconstruction", {})
+    if not atlas_resources:
+        print("ERROR: No source_reconstruction resources in config.yaml")
+        return
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "atlas"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "atlas"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
+    print(f"Total jobs: {len(subjects)}")  # One job per subject (all runs)
+
+    job_ids = []
+    for subj in subjects:
+        job_name = f"atlas_sub-{subj}"
+        runs_str = " ".join(run_list)
+        context = {
+            "job_name": job_name,
+            "account": slurm_config["account"],
+            "partition": slurm_config.get("partition", "standard"),
+            "cpus": atlas_resources["cpus"],
+            "mem": atlas_resources["mem"],
+            "time": atlas_resources["time"],
+            "log_dir": str(log_dir),
+            "venv_path": str(venv_path),
+            "project_root": str(PROJECT_ROOT),
+            "subject": subj,
+            "runs": runs_str,
+            "atlases": atlases,
+            "skip_existing": skip_existing,
+            "timestamp": timestamp,
+        }
+
+        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+        render_slurm_script("atlas.sh.j2", context, output_path=script_path)
+
+        if not dry_run:
+            try:
+                job_id = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
+                if job_id:
+                    job_ids.append(job_id)
+            except Exception as e:
+                print(f"  ✗ Failed to submit: {e}")
+        else:
+            print(f"[DRY RUN] Would submit: {script_path.name}")
+
+    if job_ids:
+        manifest_path = log_dir / f"atlas_manifest_{timestamp}.json"
+        save_job_manifest(job_ids, manifest_path, metadata={
+            "stage": "atlas",
+            "timestamp": timestamp,
+            "subjects": subjects,
+            "runs": run_list,
+        })
+        print(f"\n✓ Submitted {len(job_ids)} atlas application jobs")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would have submitted {len(subjects)} jobs")
+
+
+def _features_local(c, feature_type, subject, runs=None, space="sensor",
+                    skip_existing=True, complexity_types=None, log_level="INFO"):
+    """Run feature extraction locally."""
+    from code.utils.config import load_config
+
+    config = load_config()
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+    python_exe = get_python_executable()
+
+    for run in run_list:
+        print(f"\n[Processing run {run}]")
+
+        if feature_type == "psd":
+            cmd = [python_exe, "-m", "code.features.compute_welch_psd"]
+            cmd.extend(["--subject", subject, "--run", run, "--space", space])
+            cmd.extend(["--log-level", log_level])
+            cmd.append("--skip-existing" if skip_existing else "--no-skip-existing")
+
+        elif feature_type == "fooof":
+            cmd = [python_exe, "-m", "code.features.compute_fooof"]
+            cmd.extend(["--subject", subject, "--run", run, "--space", space])
+            cmd.extend(["--log-level", log_level])
+            cmd.append("--skip-existing" if skip_existing else "--no-skip-existing")
+
+        elif feature_type == "complexity":
+            cmd = [python_exe, "-m", "code.features.compute_complexity"]
+            cmd.extend(["--subject", subject, "--run", run, "--space", space])
+            if complexity_types:
+                cmd.extend(["--complexity-type"] + complexity_types.split())
+            if not skip_existing:
+                cmd.append("--overwrite")
+
+        else:
+            print(f"ERROR: Unknown feature type '{feature_type}'")
+            return
+
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+        if result.exited != 0:
+            print(f"WARNING: Run {run} failed")
+
+
+def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
+                    skip_existing=True, complexity_types=None, log_level="INFO", dry_run=False):
+    """Submit feature extraction jobs to SLURM."""
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+
+    print(f"\n[SLURM Mode] Submitting {feature_type} feature extraction jobs to cluster\n")
+
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+
+    features_resources = slurm_config.get("features", {})
+    if not features_resources:
+        print("ERROR: No features resources in config.yaml")
+        return
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "features"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "features"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Feature type: {feature_type}")
+    print(f"Space: {space}")
+    print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
+    print(f"Total jobs: {len(subjects) * len(run_list)}")
+
+    job_ids = []
+    for subj in subjects:
+        for run in run_list:
+            job_name = f"{feature_type}_sub-{subj}_run-{run}_{space}"
+            context = {
+                "job_name": job_name,
+                "account": slurm_config["account"],
+                "partition": slurm_config.get("partition", "standard"),
+                "cpus": features_resources["cpus"],
+                "mem": features_resources["mem"],
+                "time": features_resources["time"],
+                "log_dir": str(log_dir),
+                "venv_path": str(venv_path),
+                "project_root": str(PROJECT_ROOT),
+                "feature_type": feature_type,
+                "subject": subj,
+                "run": run,
+                "space": space,
+                "log_level": log_level,
+                "skip_existing": skip_existing,
+                "complexity_types": complexity_types,
+                "timestamp": timestamp,
+            }
+
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script("features.sh.j2", context, output_path=script_path)
+
+            if not dry_run:
+                try:
+                    job_id = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
+                    if job_id:
+                        job_ids.append(job_id)
+                except Exception as e:
+                    print(f"  ✗ Failed to submit: {e}")
+            else:
+                print(f"[DRY RUN] Would submit: {script_path.name}")
+
+    if job_ids:
+        manifest_path = log_dir / f"{feature_type}_manifest_{timestamp}.json"
+        save_job_manifest(job_ids, manifest_path, metadata={
+            "stage": f"features_{feature_type}",
+            "feature_type": feature_type,
+            "space": space,
+            "timestamp": timestamp,
+            "subjects": subjects,
+            "runs": run_list,
+        })
+        print(f"\n✓ Submitted {len(job_ids)} {feature_type} feature extraction jobs")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would have submitted {len(subjects) * len(run_list)} jobs")
+
+
 # ==============================================================================
 # Build Namespace Collections
 # ==============================================================================
@@ -1032,20 +1193,21 @@ env.add_task(info)
 env.add_task(validate_config, name="validate-config")
 env.add_task(rebuild)
 
-# Pipeline tasks
+# Feature extraction tasks (nested under pipeline)
+features = Collection("features")
+features.add_task(fooof)
+features.add_task(psd)
+features.add_task(complexity)
+features.add_task(extract_all, name="all")
+
+# Pipeline tasks (includes features as subcollection)
 pipeline = Collection("pipeline")
 pipeline.add_task(validate_inputs, name="validate-inputs")
 pipeline.add_task(bids)
 pipeline.add_task(preprocess)
 pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
-
-# Feature extraction tasks
-features = Collection("features")
-features.add_task(fooof)
-features.add_task(psd)
-features.add_task(complexity)
-features.add_task(extract_all, name="all")
+pipeline.add_collection(features)  # Nested: pipeline.features.*
 
 # Analysis tasks
 analysis = Collection("analysis")
@@ -1061,7 +1223,6 @@ namespace = Collection()
 namespace.add_collection(dev)
 namespace.add_collection(env)
 namespace.add_collection(pipeline)
-namespace.add_collection(features)
 namespace.add_collection(analysis)
 namespace.add_collection(viz)
 
