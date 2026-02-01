@@ -87,7 +87,7 @@ def create_output_paths(
 
     # Find date for noise file
     try:
-        raw = read_raw_bids(raw_bidspath, verbose=False)
+        raw = read_raw_bids(raw_bidspath, verbose=False, on_ch_mismatch='warn')
         er_date = raw.info["meas_date"].strftime("%Y%m%d")
         logger.debug(f"Found empty-room date: {er_date}")
     except Exception as e:
@@ -195,7 +195,7 @@ def compute_coregistration(
     """
     logger.info("Computing coregistration...")
 
-    raw = read_raw_bids(raw_path, verbose=False)
+    raw = read_raw_bids(raw_path, verbose=False, on_ch_mismatch='warn')
     info = raw.info
 
     # Use individual MRI if available, otherwise fsaverage

@@ -318,7 +318,7 @@ computing:
   slurm:
     enabled: true
     account: ""  # Leave empty if not using SLURM/HPC, or set to your SLURM account name
-    partition: standard
+    partition: ""  # Leave empty to use cluster default, or specify partition name
 
     # Resource allocations per pipeline stage
     preprocessing:
