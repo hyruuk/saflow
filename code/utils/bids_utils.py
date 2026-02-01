@@ -244,7 +244,7 @@ def segment_sourcelevel(
 
     # Load full events file
     try:
-        events_full_path = str(filepaths["raw"].fpath).replace("_meg.ds", "_events.tsv")
+        events_full_path = str(filepaths["raw"].fpath).replace("_meg.fif", "_events.tsv")
         events_full = pd.read_csv(events_full_path, sep="\t")
     except FileNotFoundError as e:
         logger.error(f"Events TSV file not found: {events_full_path}")

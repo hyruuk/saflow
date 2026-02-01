@@ -651,10 +651,10 @@ def preprocess_run(
     tmax = epochs_cfg["tmax"]
     logger.info(f"Epoch timing: tmin={tmin}s, tmax={tmax}s (duration={tmax-tmin:.3f}s)")
 
-    # Load raw data directly from CTF to avoid mne-bids channel validation issues
+    # Load raw BIDS data (FIF format with renamed channels)
     logger.info(f"Loading raw data: {paths['raw']}")
-    console.print(f"[yellow]⏳ Loading raw CTF data...[/yellow]")
-    raw = mne.io.read_raw_ctf(str(paths["raw"].fpath), preload=True, verbose=False)
+    console.print(f"[yellow]⏳ Loading raw BIDS data...[/yellow]")
+    raw = mne.io.read_raw_fif(str(paths["raw"].fpath), preload=True, verbose=False)
     raw.info["line_freq"] = 60  # Set line frequency for notch filtering
     console.print(f"[green]✓ Loaded {raw.n_times} samples ({len(raw.ch_names)} channels)[/green]")
 
@@ -709,7 +709,7 @@ def preprocess_run(
         console.print(f"[green]✓ Resampled to {raw.info['sfreq']} Hz ({raw.n_times} samples)[/green]")
 
     # Load events from BIDS events.tsv file
-    events_tsv_path = str(paths["raw"].fpath).replace("_meg.ds", "_events.tsv")
+    events_tsv_path = str(paths["raw"].fpath).replace("_meg.fif", "_events.tsv")
     events_df = pd.read_csv(events_tsv_path, sep="\t")
 
     # Convert to MNE events array: [sample, 0, event_id]
@@ -773,10 +773,10 @@ def preprocess_run(
     n_good = np.sum(good_mask)
     console.print(f"[green]✓ Will use {n_good}/{len(epochs_filt)} good epochs for ICA fitting[/green]")
 
-    # Compute noise covariance
+    # Compute noise covariance (also saves a copy under subject directory for source reconstruction)
     record_date = raw.info["meas_date"].strftime("%Y%m%d")
     console.print(f"[yellow]⏳ Computing/loading noise covariance (date: {record_date})...[/yellow]")
-    noise_cov = compute_or_load_noise_cov(record_date, bids_root, derivatives_root)
+    noise_cov = compute_or_load_noise_cov(record_date, bids_root, derivatives_root, subject=subject)
     console.print(f"[green]✓ Noise covariance ready[/green]")
 
     # Run ICA pipeline (fit on good epochs only)

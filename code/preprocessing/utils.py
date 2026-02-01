@@ -52,7 +52,7 @@ def create_preprocessing_paths(
         run=run,
         datatype="meg",
         suffix="meg",
-        extension=".ds",
+        extension=".fif",
         root=str(bids_root),
     )
 
@@ -137,28 +137,32 @@ def compute_or_load_noise_cov(
     er_date: str,
     bids_root: Path,
     derivatives_root: Path,
+    subject: str = None,
 ) -> mne.Covariance:
     """Compute or load noise covariance from empty-room recording.
 
     Computes noise covariance matrix from empty-room recording if not
-    already cached, otherwise loads from file.
+    already cached, otherwise loads from file. If subject is provided,
+    also saves a copy under the subject's directory for easy access
+    during source reconstruction.
 
     Args:
         er_date: Empty-room recording date (YYYYMMDD format).
         bids_root: BIDS dataset root directory.
         derivatives_root: Derivatives directory for cached covariance.
+        subject: Subject ID (e.g., '04'). If provided, saves a copy under subject dir.
 
     Returns:
         Noise covariance matrix.
 
     Examples:
-        >>> noise_cov = compute_or_load_noise_cov('20190615', bids_root, deriv_root)
+        >>> noise_cov = compute_or_load_noise_cov('20190615', bids_root, deriv_root, '04')
     """
     noise_cov_dir = derivatives_root / "noise_covariance"
     noise_cov_dir.mkdir(parents=True, exist_ok=True)
 
-    # Construct file path directly without using BIDSPath.fpath (avoids ambiguity issues)
-    noise_cov_file = (
+    # Primary file path (by empty-room date)
+    er_noise_cov_file = (
         noise_cov_dir
         / f"sub-emptyroom"
         / f"ses-{er_date}"
@@ -166,41 +170,57 @@ def compute_or_load_noise_cov(
         / f"sub-emptyroom_ses-{er_date}_task-noise_proc-noisecov_cov.fif"
     )
 
-    if not noise_cov_file.exists():
+    # Subject-specific file path (for easy access in source reconstruction)
+    subject_noise_cov_file = None
+    if subject:
+        subject_noise_cov_file = (
+            noise_cov_dir
+            / f"sub-{subject}"
+            / "meg"
+            / f"sub-{subject}_task-noise_cov.fif"
+        )
+
+    # Check if we already have the noise covariance computed
+    if er_noise_cov_file.exists():
+        logger.info(f"Loading cached noise covariance from {er_noise_cov_file}")
+        noise_cov = mne.read_cov(str(er_noise_cov_file))
+    else:
         logger.info(f"Computing noise covariance for {er_date}")
 
         # Construct path directly to avoid participants.tsv validation issues
-        er_ds_path = (
+        er_fif_path = (
             bids_root
             / f"sub-emptyroom/ses-{er_date}/meg"
-            / f"sub-emptyroom_ses-{er_date}_task-noise_meg.ds"
+            / f"sub-emptyroom_ses-{er_date}_task-noise_meg.fif"
         )
 
-        if not er_ds_path.exists():
+        if not er_fif_path.exists():
             raise FileNotFoundError(
-                f"Empty-room recording not found at: {er_ds_path}\n"
+                f"Empty-room recording not found at: {er_fif_path}\n"
                 f"Please ensure the empty-room recording for date {er_date} "
                 f"is available in the BIDS folder at:\n"
                 f"  {bids_root}/sub-emptyroom/ses-{er_date}/meg/\n"
-                f"Expected file: sub-emptyroom_ses-{er_date}_task-noise_meg.ds"
+                f"Expected file: sub-emptyroom_ses-{er_date}_task-noise_meg.fif"
             )
 
-        logger.info(f"Loading empty-room recording from: {er_ds_path}")
-        er_raw = mne.io.read_raw_ctf(str(er_ds_path), preload=True)
+        logger.info(f"Loading empty-room recording from: {er_fif_path}")
+        er_raw = mne.io.read_raw_fif(str(er_fif_path), preload=True)
 
         logger.info("Computing noise covariance (shrunk + empirical methods)...")
         noise_cov = mne.compute_raw_covariance(
             er_raw, method=["shrunk", "empirical"], rank=None, verbose=False
         )
 
-        # Create parent directories for the output file
-        noise_cov_file.parent.mkdir(parents=True, exist_ok=True)
+        # Save to empty-room location
+        er_noise_cov_file.parent.mkdir(parents=True, exist_ok=True)
+        noise_cov.save(str(er_noise_cov_file), overwrite=True)
+        logger.info(f"Saved noise covariance to {er_noise_cov_file}")
 
-        noise_cov.save(str(noise_cov_file), overwrite=True)
-        logger.info(f"Saved noise covariance to {noise_cov_file}")
-    else:
-        logger.info(f"Loading cached noise covariance from {noise_cov_file}")
-        noise_cov = mne.read_cov(str(noise_cov_file))
+    # Also save under subject directory for easy access in source reconstruction
+    if subject_noise_cov_file and not subject_noise_cov_file.exists():
+        subject_noise_cov_file.parent.mkdir(parents=True, exist_ok=True)
+        noise_cov.save(str(subject_noise_cov_file), overwrite=True)
+        logger.info(f"Saved noise covariance copy to {subject_noise_cov_file}")
 
     return noise_cov
 

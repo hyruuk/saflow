@@ -125,12 +125,11 @@ def process_noise_file(ds_path: Path, bids_root: Path):
             session=er_date,
             task="noise",
             datatype="meg",
-            extension=".ds",
             root=str(bids_root),
         )
 
         logger.info(f"Writing to {er_bids_path.basename}")
-        write_raw_bids(raw, er_bids_path, format="auto", overwrite=True, verbose=False)
+        write_raw_bids(raw, er_bids_path, format="FIF", overwrite=True, verbose=False)
 
     except Exception as e:
         logger.error(f"Failed to process noise file {ds_path.name}: {e}")
@@ -262,14 +261,14 @@ def process_subject_recording(
             # Clear annotations (will be in events file instead)
             raw.set_annotations(Annotations([], [], []))
 
-            # Write to BIDS
+            # Write to BIDS (FIF format to preserve renamed channels)
             logger.info(f"Writing to {bidspath.basename}")
             write_raw_bids(
                 raw,
                 bidspath,
                 events=events,
                 event_id=event_id,
-                format="auto",
+                format="FIF",
                 overwrite=True,
                 verbose=False,
             )
@@ -292,7 +291,7 @@ def process_subject_recording(
             )
 
         else:
-            # Resting state - no events
+            # Resting state - no events (FIF format to preserve renamed channels)
             logger.info(f"Writing resting state run: {bidspath.basename}")
             import warnings
             with warnings.catch_warnings():
@@ -300,7 +299,7 @@ def process_subject_recording(
                 write_raw_bids(
                     raw,
                     bidspath,
-                    format="auto",
+                    format="FIF",
                     overwrite=True,
                     verbose=False,
                 )

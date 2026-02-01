@@ -1,18 +1,21 @@
 """Run inverse solution computation (Stage 2).
 
 This script performs source reconstruction from preprocessed MEG data:
-1. Coregistration (MEG to MRI coordinate system)
+1. Coregistration (MEG to MRI coordinate system) - uses preprocessed data for sensor info
 2. Source space setup
 3. BEM model creation
 4. Forward solution computation
-5. Noise covariance estimation
+5. Load noise covariance (pre-computed during preprocessing)
 6. Inverse solution application
 7. Morphing to fsaverage template
+
+Note: This script requires preprocessing to be completed first, as it:
+- Uses preprocessed data for coregistration (same sensor geometry as raw)
+- Loads pre-computed noise covariance from preprocessing (derivatives/noise_covariance/sub-XX/)
 
 Outputs:
 - Coregistration transform (trans/*.fif)
 - Forward solution (fwd/*.fif)
-- Noise covariance (noise_cov/*.fif)
 - Source estimates (minimum-norm-estimate/*.h5)
 - Morphed sources (morphed_sources/*.h5)
 
@@ -184,13 +187,13 @@ def process_single_run(
     # Check MRI availability
     mri_available = utils.check_mri_availability(subject, fs_subjects_dir)
 
-    # Step 1: Coregistration
+    # Step 1: Coregistration (uses preprocessed file for sensor info)
     trans_fpath = Path(str(filepaths["trans"].fpath) + ".fif")
     if not trans_fpath.exists():
         logger.info("[1/7] Computing coregistration...")
         try:
             utils.compute_coregistration(
-                filepaths["raw"],
+                filepaths["preproc"],
                 filepaths["trans"],
                 subject,
                 fs_subjects_dir,
@@ -247,24 +250,21 @@ def process_single_run(
             logger.error(f"Failed to load forward solution: {e}", exc_info=True)
             return False
 
-    # Step 5: Noise covariance
-    noise_cov_fpath = Path(str(filepaths["noise_cov"].fpath))
+    # Step 5: Load noise covariance (pre-computed during preprocessing)
+    noise_cov_fpath = filepaths["noise_cov"]  # Already a Path object
     if not noise_cov_fpath.exists():
-        logger.info("[5/7] Computing noise covariance...")
-        try:
-            noise_cov = utils.compute_noise_covariance(filepaths["noise"])
-            noise_cov.save(str(noise_cov_fpath), overwrite=True)
-            logger.info(f"Saved noise covariance: {noise_cov_fpath}")
-        except Exception as e:
-            logger.error(f"Noise covariance computation failed: {e}", exc_info=True)
-            return False
-    else:
-        logger.info(f"[5/7] Noise covariance exists, loading: {noise_cov_fpath}")
-        try:
-            noise_cov = mne.read_cov(str(noise_cov_fpath), verbose=False)
-        except Exception as e:
-            logger.error(f"Failed to load noise covariance: {e}", exc_info=True)
-            return False
+        logger.error(
+            f"Noise covariance not found: {noise_cov_fpath}\n"
+            f"Please run preprocessing first to generate the noise covariance file."
+        )
+        return False
+
+    logger.info(f"[5/7] Loading noise covariance from preprocessing: {noise_cov_fpath}")
+    try:
+        noise_cov = mne.read_cov(str(noise_cov_fpath), verbose=False)
+    except Exception as e:
+        logger.error(f"Failed to load noise covariance: {e}", exc_info=True)
+        return False
 
     # Step 6: Apply inverse solution
     logger.info(f"[6/7] Applying inverse solution (input_type={input_type}, processing={processing})...")

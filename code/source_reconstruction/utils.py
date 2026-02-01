@@ -20,7 +20,7 @@ import mne
 import numpy as np
 from mne import SourceEstimate
 from mne.minimum_norm import apply_inverse_epochs, apply_inverse_raw, make_inverse_operator
-from mne_bids import BIDSPath, read_raw_bids
+from mne_bids import BIDSPath
 
 logger = logging.getLogger(__name__)
 
@@ -30,39 +30,30 @@ def create_output_paths(
     run: str,
     bids_root: Path,
     derivatives_root: Path,
-) -> Dict[str, BIDSPath]:
-    """Create BIDSPath objects for all source reconstruction inputs/outputs.
+) -> Dict[str, Path]:
+    """Create path objects for all source reconstruction inputs/outputs.
+
+    Note: Source reconstruction uses preprocessed files (not raw BIDS) and
+    pre-computed noise covariance from preprocessing. This avoids dependencies
+    on raw BIDS files and empty-room recordings.
 
     Args:
         subject: Subject ID (e.g., "04")
         run: Run number (e.g., "02")
-        bids_root: Path to BIDS dataset root
+        bids_root: Path to BIDS dataset root (not used, kept for API compatibility)
         derivatives_root: Path to derivatives directory
 
     Returns:
-        Dictionary mapping names to BIDSPath objects:
-            - 'raw': Raw BIDS data
-            - 'preproc': Preprocessed continuous data
-            - 'epoch': Preprocessed epochs
-            - 'noise': Empty-room noise recording
-            - 'trans': Coregistration transform
-            - 'fwd': Forward solution
-            - 'noise_cov': Noise covariance matrix
-            - 'stc': Source estimate (continuous)
-            - 'morph': Morphed source estimate
+        Dictionary mapping names to Path/BIDSPath objects:
+            - 'preproc': Preprocessed continuous data (BIDSPath)
+            - 'epoch': Preprocessed epochs (BIDSPath)
+            - 'noise_cov': Pre-computed noise covariance from preprocessing (Path)
+            - 'trans': Coregistration transform (BIDSPath)
+            - 'fwd': Forward solution (BIDSPath)
+            - 'stc': Source estimate (continuous) (BIDSPath)
+            - 'morph': Morphed source estimate (BIDSPath)
     """
     logger.debug(f"Creating output paths for sub-{subject}, run-{run}")
-
-    # Input: raw BIDS data
-    raw_bidspath = BIDSPath(
-        subject=subject,
-        task="gradCPT",
-        run=run,
-        datatype="meg",
-        suffix="meg",
-        extension=".ds",
-        root=bids_root,
-    )
 
     # Input: preprocessed continuous data
     preproc_bidspath = BIDSPath(
@@ -85,22 +76,13 @@ def create_output_paths(
         root=derivatives_root / "epochs",
     )
 
-    # Find date for noise file
-    try:
-        raw = read_raw_bids(raw_bidspath, verbose=False, on_ch_mismatch='reorder')
-        er_date = raw.info["meas_date"].strftime("%Y%m%d")
-        logger.debug(f"Found empty-room date: {er_date}")
-    except Exception as e:
-        logger.warning(f"Could not read raw data to get empty-room date: {e}")
-        er_date = "20000101"  # Fallback
-
-    # Input: noise recording
-    noise_bidspath = BIDSPath(
-        subject="emptyroom",
-        session=er_date,
-        task="noise",
-        datatype="meg",
-        root=bids_root,
+    # Input: pre-computed noise covariance from preprocessing (under subject directory)
+    noise_cov_path = (
+        derivatives_root
+        / "noise_covariance"
+        / f"sub-{subject}"
+        / "meg"
+        / f"sub-{subject}_task-noise_cov.fif"
     )
 
     # Output: coregistration transform
@@ -124,16 +106,6 @@ def create_output_paths(
         root=derivatives_root / "fwd",
     )
     fwd_bidspath.mkdir(exist_ok=True)
-
-    # Output: noise covariance
-    noise_cov_bidspath = BIDSPath(
-        subject="emptyroom",
-        session=er_date,
-        task="noise",
-        datatype="meg",
-        root=derivatives_root / "noise_cov",
-    )
-    noise_cov_bidspath.mkdir(exist_ok=True)
 
     # Output: source estimates
     stc_bidspath = BIDSPath(
@@ -160,20 +132,18 @@ def create_output_paths(
     morph_bidspath.mkdir(exist_ok=True)
 
     return {
-        "raw": raw_bidspath,
         "preproc": preproc_bidspath,
         "epoch": epoch_bidspath,
-        "noise": noise_bidspath,
+        "noise_cov": noise_cov_path,
         "trans": trans_bidspath,
         "fwd": fwd_bidspath,
-        "noise_cov": noise_cov_bidspath,
         "stc": stc_bidspath,
         "morph": morph_bidspath,
     }
 
 
 def compute_coregistration(
-    raw_path: BIDSPath,
+    preproc_path: BIDSPath,
     trans_path: BIDSPath,
     subject: str,
     subjects_dir: Path,
@@ -184,7 +154,7 @@ def compute_coregistration(
     Uses MNE's automatic coregistration with ICP fitting.
 
     Args:
-        raw_path: BIDSPath to raw data
+        preproc_path: BIDSPath to preprocessed data (used for sensor info)
         trans_path: BIDSPath to save transformation
         subject: Subject ID
         subjects_dir: FreeSurfer subjects directory
@@ -195,7 +165,8 @@ def compute_coregistration(
     """
     logger.info("Computing coregistration...")
 
-    raw = read_raw_bids(raw_path, verbose=False, on_ch_mismatch='reorder')
+    # Load info from preprocessed file (same sensor geometry as raw)
+    raw = mne.io.read_raw_fif(str(preproc_path.fpath), preload=False, verbose=False)
     info = raw.info
 
     # Use individual MRI if available, otherwise fsaverage
@@ -345,7 +316,7 @@ def compute_noise_covariance(noise_path: BIDSPath) -> mne.Covariance:
     """
     logger.info("Computing noise covariance from empty-room recording...")
 
-    noise_raw = mne.io.read_raw_ctf(noise_path, preload=True, verbose=False)
+    noise_raw = mne.io.read_raw_fif(str(noise_path.fpath), preload=True, verbose=False)
 
     noise_cov = mne.compute_raw_covariance(
         noise_raw,
