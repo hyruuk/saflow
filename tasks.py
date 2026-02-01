@@ -895,7 +895,7 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
     if bids_root:
         bids_root = Path(bids_root)
     else:
-        bids_root = data_root / config["paths"]["bids"]
+        bids_root = data_root / "bids"
 
     venv_path = Path(config["paths"]["venv"])
     if not venv_path.is_absolute():
