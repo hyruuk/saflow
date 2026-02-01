@@ -252,6 +252,7 @@ def compute_complexity_all_channels(
 def process_subject_run(
     subject: str,
     run: str,
+    space: str,
     config: Dict[str, Any],
     complexity_types: Optional[List[str]] = None,
     overwrite: bool = False,
@@ -268,6 +269,7 @@ def process_subject_run(
     Args:
         subject: Subject ID
         run: Run ID
+        space: Analysis space ('sensor', 'source', or atlas name)
         config: Configuration dictionary
         complexity_types: List of complexity types to compute (None = all)
         overwrite: Whether to overwrite existing files
@@ -275,10 +277,9 @@ def process_subject_run(
     Returns:
         Path to output file, or None if skipped
     """
-    logger.info(f"Processing subject {subject}, run {run}")
+    logger.info(f"Processing subject {subject}, run {run}, space {space}")
 
     # Get paths
-    space = config["analysis"]["space"]
     data_root = Path(config["paths"]["data_root"])
     derivatives_root = Path(config["paths"]["derivatives"])
     bids_root = data_root / "bids"
@@ -458,6 +459,12 @@ def main():
         "-r", "--run", type=str, default="all", help="Run ID (e.g., '02') or 'all'"
     )
     parser.add_argument(
+        "--space",
+        type=str,
+        default="sensor",
+        help="Analysis space: 'sensor', 'source', or atlas name (e.g., 'aparc.a2009s', 'schaefer_100')",
+    )
+    parser.add_argument(
         "-c",
         "--config",
         type=str,
@@ -500,7 +507,7 @@ def main():
     logger.info(f"Subject: {args.subject}")
     logger.info(f"Run: {args.run}")
     logger.info(f"Complexity types: {args.complexity_type or 'all'}")
-    logger.info(f"Analysis space: {config['analysis']['space']}")
+    logger.info(f"Analysis space: {args.space}")
 
     # Get subjects and runs
     subjects = (
@@ -521,6 +528,7 @@ def main():
                 process_subject_run(
                     subject,
                     run,
+                    args.space,
                     config,
                     complexity_types=args.complexity_type,
                     overwrite=args.overwrite,

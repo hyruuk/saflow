@@ -40,7 +40,10 @@ def load_data(
     Unified loader that returns consistent format regardless of space.
 
     Args:
-        space: Analysis space ("sensor", "source", or "atlas")
+        space: Analysis space - one of:
+            - "sensor": MEG channel data
+            - "source": Vertex-level source data
+            - Any atlas name (e.g., "aparc.a2009s", "schaefer_100"): ROI time series
         bids_root: BIDS root directory
         subject: Subject ID (e.g., "04")
         run: Run ID (e.g., "02")
@@ -58,15 +61,16 @@ def load_data(
             - spatial_names: List[str], names of spatial units
 
     Raises:
-        ValueError: If space is invalid or data not found
         FileNotFoundError: If data files don't exist
 
     Examples:
         >>> from pathlib import Path
         >>> spatial_data = load_data("sensor", Path("/data/bids"), "04", "02")
         >>> print(spatial_data.data.shape)  # (n_channels, n_times)
-        >>> print(spatial_data.sfreq)  # 600.6
-        >>> print(len(spatial_data.spatial_names))  # n_channels
+
+        >>> # Load atlas data by name
+        >>> spatial_data = load_data("aparc.a2009s", Path("/data/bids"), "04", "02")
+        >>> spatial_data = load_data("schaefer_100", Path("/data/bids"), "04", "02")
     """
     if config is None:
         config = load_config()
@@ -76,12 +80,7 @@ def load_data(
         f"type={input_type}, processing={processing}"
     )
 
-    valid_spaces = ["sensor", "source", "atlas"]
-    if space not in valid_spaces:
-        raise ValueError(
-            f"Invalid space '{space}'. Must be one of: {', '.join(valid_spaces)}"
-        )
-
+    # Determine if space is sensor, source, or an atlas name
     if space == "sensor":
         return _load_sensor_data(
             bids_root, subject, run, input_type, processing, config
@@ -90,8 +89,11 @@ def load_data(
         return _load_source_data(
             bids_root, subject, run, input_type, processing, config
         )
-    elif space == "atlas":
-        return _load_atlas_data(bids_root, subject, run, input_type, processing, config)
+    else:
+        # Assume it's an atlas name (e.g., "aparc.a2009s", "schaefer_100")
+        return _load_atlas_data(
+            bids_root, subject, run, input_type, processing, config, atlas_name=space
+        )
 
 
 def _load_sensor_data(
@@ -227,50 +229,48 @@ def _load_atlas_data(
     input_type: str,
     processing: str,
     config: Dict[str, Any],
+    atlas_name: str,
 ) -> SpatialData:
     """Load atlas-level data (ROI-averaged time series).
 
-    Loads pre-computed ROI time series from derivatives/atlased_sources_{atlas}/
+    Loads pre-computed ROI time series from derivatives/atlas_timeseries_{atlas}/
+
+    Args:
+        atlas_name: Short atlas name (e.g., "aparc.a2009s", "schaefer_100")
     """
     data_root = Path(config["paths"]["data_root"])
     derivatives_root = data_root / config["paths"]["derivatives"]
-    atlas_name = config["source_reconstruction"]["atlas"]
-    atlas_dir = derivatives_root / f"atlased_sources_{atlas_name}" / f"sub-{subject}" / "meg"
+
+    atlas_dir = derivatives_root / f"atlas_timeseries_{atlas_name}" / f"sub-{subject}"
 
     if not atlas_dir.exists():
-        raise FileNotFoundError(f"Atlas directory not found: {atlas_dir}")
+        raise FileNotFoundError(
+            f"Atlas directory not found: {atlas_dir}\n"
+            f"Run 'invoke pipeline.atlas --subject {subject}' first to generate atlas data."
+        )
 
-    # Find atlas file (pickle format)
-    pattern = f"sub-{subject}_*_run-{run}_*-avg.pkl"
+    # Find atlas file (.npz format)
+    pattern = f"sub-{subject}_*_run-{run}_space-{atlas_name}_timeseries.npz"
     atlas_files = list(atlas_dir.glob(pattern))
 
     if not atlas_files:
         raise FileNotFoundError(
-            f"Atlas data not found for sub-{subject} run-{run} in {atlas_dir}"
+            f"Atlas data not found for sub-{subject} run-{run} atlas={atlas_name} in {atlas_dir}"
         )
 
     atlas_file = atlas_files[0]
     logger.debug(f"Loading atlas data: {atlas_file}")
 
-    # Load pickle file
-    with open(atlas_file, "rb") as f:
-        atlas_data = pickle.load(f)
+    # Load npz file
+    atlas_data = np.load(atlas_file, allow_pickle=True)
 
     # Extract ROI time series
-    # Expected format: dict with 'data', 'sfreq', 'roi_names' keys
-    if isinstance(atlas_data, dict):
-        data = atlas_data["data"]  # (n_rois, n_times)
-        sfreq = atlas_data["sfreq"]
-        roi_names = atlas_data["roi_names"]
-    else:
-        # Fallback: assume atlas_data is the data array directly
-        data = atlas_data
-        sfreq = 600.0  # Default from config
-        roi_names = [f"ROI-{i}" for i in range(data.shape[0])]
-        logger.warning("Atlas file format unexpected, using defaults for sfreq and ROI names")
+    data = atlas_data["data"]  # (n_rois, n_times)
+    sfreq = float(atlas_data["sfreq"])
+    roi_names = list(atlas_data["roi_names"])
 
     logger.info(
-        f"Loaded atlas data: {len(roi_names)} ROIs, "
+        f"Loaded atlas data ({atlas_name}): {len(roi_names)} ROIs, "
         f"{data.shape[1]} samples, {sfreq:.1f} Hz"
     )
 

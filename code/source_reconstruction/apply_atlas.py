@@ -38,13 +38,28 @@ from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
 from code.utils.validation import validate_subject_run
 
-# Default atlases to apply
+# Default atlases to apply (short names)
 DEFAULT_ATLASES = [
     "aparc.a2009s",
-    "Schaefer2018_100Parcels_7Networks_order",
-    "Schaefer2018_200Parcels_7Networks_order",
-    "Schaefer2018_400Parcels_7Networks_order",
+    "schaefer_100",
+    "schaefer_200",
+    "schaefer_400",
 ]
+
+# Mapping from short names to full MNE/FreeSurfer atlas names
+ATLAS_ALIASES = {
+    "schaefer_100": "Schaefer2018_100Parcels_7Networks_order",
+    "schaefer_200": "Schaefer2018_200Parcels_7Networks_order",
+    "schaefer_400": "Schaefer2018_400Parcels_7Networks_order",
+    # These stay as-is
+    "aparc.a2009s": "aparc.a2009s",
+    "aparc": "aparc",
+}
+
+
+def get_mne_atlas_name(short_name: str) -> str:
+    """Convert short atlas name to full MNE/FreeSurfer name."""
+    return ATLAS_ALIASES.get(short_name, short_name)
 
 
 def parse_args() -> argparse.Namespace:
@@ -174,7 +189,7 @@ def apply_atlas_to_stc(
 
     Args:
         stc: Source estimate (should be in fsaverage space)
-        atlas: Atlas/parcellation name
+        atlas: Atlas/parcellation name (short name, will be converted to MNE name)
         subjects_dir: FreeSurfer subjects directory
 
     Returns:
@@ -182,10 +197,13 @@ def apply_atlas_to_stc(
     """
     logger = logging.getLogger(__name__)
 
+    # Convert short name to full MNE atlas name
+    mne_atlas_name = get_mne_atlas_name(atlas)
+
     # Load atlas labels
-    logger.debug(f"Loading atlas '{atlas}' from fsaverage")
+    logger.debug(f"Loading atlas '{atlas}' ({mne_atlas_name}) from fsaverage")
     labels = mne.read_labels_from_annot(
-        "fsaverage", parc=atlas, subjects_dir=subjects_dir, verbose=False
+        "fsaverage", parc=mne_atlas_name, subjects_dir=subjects_dir, verbose=False
     )
     logger.info(f"Loaded {len(labels)} labels from atlas '{atlas}'")
 

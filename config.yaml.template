@@ -122,18 +122,18 @@ source_reconstruction:
 
   # Default atlases for ROI extraction (used by apply_atlas.py)
   # These are applied after morphing to fsaverage template
-  # Common options:
+  # Short names are mapped to full MNE/FreeSurfer names internally
+  # Available short names:
   #   - aparc.a2009s (Destrieux atlas, 148 ROIs)
   #   - aparc (Desikan-Killiany, 68 ROIs)
-  #   - Schaefer2018_100Parcels_7Networks_order (100 ROIs)
-  #   - Schaefer2018_200Parcels_7Networks_order (200 ROIs)
-  #   - Schaefer2018_400Parcels_7Networks_order (400 ROIs)
-  #   - HCPMMP1 (Glasser atlas, 360 ROIs)
+  #   - schaefer_100 (Schaefer 100 parcels, 7 networks)
+  #   - schaefer_200 (Schaefer 200 parcels, 7 networks)
+  #   - schaefer_400 (Schaefer 400 parcels, 7 networks)
   atlases:
     - aparc.a2009s
-    - Schaefer2018_100Parcels_7Networks_order
-    - Schaefer2018_200Parcels_7Networks_order
-    - Schaefer2018_400Parcels_7Networks_order
+    - schaefer_100
+    - schaefer_200
+    - schaefer_400
 
 # =============================================================================
 # Behavioral Analysis Configuration

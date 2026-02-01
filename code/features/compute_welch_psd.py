@@ -250,9 +250,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--space",
         type=str,
-        choices=["sensor", "source", "atlas"],
-        required=True,
-        help="Analysis space: sensor, source, or atlas",
+        default="sensor",
+        help="Analysis space: 'sensor', 'source', or atlas name (e.g., 'aparc.a2009s', 'schaefer_100')",
     )
 
     parser.add_argument(
@@ -356,7 +355,8 @@ def main() -> int:
     derivatives_root = data_root / config["paths"]["derivatives"]
     task_name = config["bids"]["task_name"]
 
-    # Build output path in features/ (features go here, derivatives/ is for preprocessing)
+    # Build output path in features/
+    # space can be "sensor", "source", or an atlas name like "aparc.a2009s"
     features_root = data_root / config["paths"]["features"]
     output_root = features_root / f"welch_psds_{args.space}" / f"sub-{args.subject}"
 

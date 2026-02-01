@@ -511,7 +511,8 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
 
     Examples:
         invoke features.fooof --subject=04
-        invoke features.fooof --subject=04 --runs="02 03"
+        invoke features.fooof --subject=04 --space=aparc.a2009s
+        invoke features.fooof --subject=04 --space=schaefer_100
     """
     from code.utils.config import load_config
 
@@ -562,8 +563,8 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
 
     Examples:
         invoke features.psd --subject=04
-        invoke features.psd --subject=04 --runs="02 03"
-        invoke features.psd --subject=04 --space=sensor
+        invoke features.psd --subject=04 --space=aparc.a2009s
+        invoke features.psd --subject=04 --space=schaefer_100
     """
     from code.utils.config import load_config
 
@@ -605,7 +606,7 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
 
 
 @task
-def complexity(c, subject=None, runs=None, complexity_type="lzc entropy fractal",
+def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc entropy fractal",
                overwrite=False, slurm=False, dry_run=False):
     """Extract complexity and entropy measures.
 
@@ -616,7 +617,7 @@ def complexity(c, subject=None, runs=None, complexity_type="lzc entropy fractal"
 
     Examples:
         invoke features.complexity --subject=04
-        invoke features.complexity --subject=04 --runs="02 03"
+        invoke features.complexity --subject=04 --space=aparc.a2009s
         invoke features.complexity --complexity-type="lzc entropy"
     """
     from code.utils.config import load_config
@@ -643,6 +644,7 @@ def complexity(c, subject=None, runs=None, complexity_type="lzc entropy fractal"
         cmd = [python_exe, "-m", "code.features.compute_complexity"]
         cmd.extend(["--subject", subject])
         cmd.extend(["--run", run])
+        cmd.extend(["--space", space])
         cmd.extend(["--complexity-type"] + complexity_type.split())
 
         if overwrite:
@@ -657,17 +659,18 @@ def complexity(c, subject=None, runs=None, complexity_type="lzc entropy fractal"
 
 
 @task
-def extract_all(c, subject=None, overwrite=False, slurm=False, dry_run=False):
+def extract_all(c, subject=None, space="sensor", overwrite=False, slurm=False, dry_run=False):
     """Extract all feature types (PSD, FOOOF, complexity).
 
     Order: PSD -> FOOOF -> Complexity (FOOOF depends on PSD)
 
     Examples:
         invoke features.all --subject=04
+        invoke features.all --subject=04 --space=aparc.a2009s
         invoke features.all --subject=04 --overwrite
     """
     print("=" * 80)
-    print("Feature Extraction - All Features")
+    print(f"Feature Extraction - All Features (space={space})")
     print("=" * 80)
 
     if slurm:
@@ -682,13 +685,13 @@ def extract_all(c, subject=None, overwrite=False, slurm=False, dry_run=False):
     skip_existing = not overwrite
 
     print("\n[1/3] Extracting PSD features...")
-    psd(c, subject=subject, skip_existing=skip_existing)
+    psd(c, subject=subject, space=space, skip_existing=skip_existing)
 
     print("\n[2/3] Extracting FOOOF features...")
-    fooof(c, subject=subject, skip_existing=skip_existing)
+    fooof(c, subject=subject, space=space, skip_existing=skip_existing)
 
     print("\n[3/3] Extracting Complexity features...")
-    complexity(c, subject=subject, overwrite=overwrite)
+    complexity(c, subject=subject, space=space, overwrite=overwrite)
 
     print("\n" + "=" * 80)
     print("✓ All feature extraction complete!")

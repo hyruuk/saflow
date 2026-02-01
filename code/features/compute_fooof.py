@@ -376,9 +376,8 @@ def main():
     parser.add_argument("--run", required=True, help="Run ID")
     parser.add_argument(
         "--space",
-        required=True,
-        choices=["sensor", "source", "atlas"],
-        help="Analysis space",
+        default="sensor",
+        help="Analysis space: 'sensor', 'source', or atlas name (e.g., 'aparc.a2009s', 'schaefer_100')",
     )
     parser.add_argument(
         "--bids-root",
