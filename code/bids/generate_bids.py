@@ -29,7 +29,7 @@ import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import mne
 import pandas as pd
@@ -103,36 +103,79 @@ def save_provenance(output_dir: Path, config: dict, subjects_processed: List[str
     logger.info(f"Saved provenance to {provenance_file}")
 
 
-def process_noise_file(ds_path: Path, bids_root: Path):
-    """Convert empty-room noise recording to BIDS.
+def get_noise_recordings(meg_dir: Path) -> Dict[str, Path]:
+    """Find all noise recordings and index by date.
 
     Args:
-        ds_path: Path to noise .ds file.
+        meg_dir: Directory containing MEG .ds files.
+
+    Returns:
+        Dictionary mapping recording dates (YYYYMMDD) to noise file paths.
+    """
+    noise_files = {}
+    for ds_path in meg_dir.glob("*/*.ds"):
+        if "NOISE1Trial5min" in ds_path.name:
+            try:
+                raw = mne.io.read_raw_ctf(str(ds_path), verbose=False)
+                er_date = raw.info["meas_date"].strftime("%Y%m%d")
+                noise_files[er_date] = ds_path
+                logger.debug(f"Found noise recording for date {er_date}: {ds_path.name}")
+            except Exception as e:
+                logger.warning(f"Could not read noise file {ds_path.name}: {e}")
+    return noise_files
+
+
+def copy_noise_to_subject(
+    subject: str,
+    recording_date: str,
+    noise_files: Dict[str, Path],
+    bids_root: Path,
+):
+    """Copy the appropriate noise recording to a subject's BIDS folder.
+
+    Args:
+        subject: Subject ID (e.g., '04').
+        recording_date: Date of the subject's recording (YYYYMMDD).
+        noise_files: Dictionary mapping dates to noise file paths.
         bids_root: BIDS dataset root directory.
     """
-    logger.info(f"Processing noise file: {ds_path.name}")
+    if recording_date not in noise_files:
+        logger.warning(f"No noise recording found for date {recording_date} (sub-{subject})")
+        return
+
+    noise_path = noise_files[recording_date]
+    logger.info(f"Copying noise recording for sub-{subject} (date: {recording_date})")
 
     try:
-        raw = mne.io.read_raw_ctf(str(ds_path), verbose=False)
+        # Load noise recording
+        raw = mne.io.read_raw_ctf(str(noise_path), verbose=False)
         raw.info["line_freq"] = 60
 
-        # Create BIDS path for empty-room recording
-        er_date = raw.info["meas_date"].strftime("%Y%m%d")
+        # Rename channels to match subject recordings
+        mne.rename_channels(
+            raw.info,
+            {
+                "EEG057": "vEOG",
+                "EEG058": "hEOG",
+                "EEG059": "ECG",
+            },
+        )
+
+        # Create BIDS path under subject folder
         from mne_bids import BIDSPath
 
-        er_bids_path = BIDSPath(
-            subject="emptyroom",
-            session=er_date,
+        noise_bids_path = BIDSPath(
+            subject=subject,
             task="noise",
             datatype="meg",
             root=str(bids_root),
         )
 
-        logger.info(f"Writing to {er_bids_path.basename}")
-        write_raw_bids(raw, er_bids_path, format="FIF", overwrite=True, verbose=False)
+        logger.info(f"Writing noise to {noise_bids_path.basename}")
+        write_raw_bids(raw, noise_bids_path, format="FIF", overwrite=True, verbose=False)
 
     except Exception as e:
-        logger.error(f"Failed to process noise file {ds_path.name}: {e}")
+        logger.error(f"Failed to copy noise recording for sub-{subject}: {e}")
 
 
 def enrich_gradcpt_events(
@@ -451,8 +494,14 @@ def main():
         console.print("\nRun without --dry-run to process files.")
         return 0
 
-    # Process files with progress bar
+    # Index all noise recordings by date first
+    logger.info("Indexing noise recordings...")
+    noise_files = get_noise_recordings(meg_dir)
+    logger.info(f"Found {len(noise_files)} noise recordings")
+
+    # Track subjects and their recording dates
     subjects_processed = []
+    subject_dates = {}  # subject_id -> recording_date
 
     with Progress(
         SpinnerColumn(),
@@ -467,19 +516,24 @@ def main():
 
             try:
                 if "NOISE1Trial5min" in fname:
-                    # Empty-room noise recording
-                    process_noise_file(ds_path, bids_root)
+                    # Skip noise files here - we copy them to subject folders later
+                    pass
                 elif "SA" in fname and "procedure" not in fname:
                     # Subject recording
                     process_subject_recording(
                         ds_path, bids_root, behav_dir, subject_list
                     )
 
-                    # Track subjects
+                    # Track subjects and their recording dates
                     try:
                         subj_id = parse_info_from_name(fname)[0]
-                        if subj_id not in subjects_processed:
-                            subjects_processed.append(subj_id)
+                        if subj_id in subject_list:
+                            if subj_id not in subjects_processed:
+                                subjects_processed.append(subj_id)
+                            # Get recording date from file
+                            raw = mne.io.read_raw_ctf(str(ds_path), verbose=False)
+                            rec_date = raw.info["meas_date"].strftime("%Y%m%d")
+                            subject_dates[subj_id] = rec_date
                     except Exception:
                         pass
 
@@ -487,6 +541,11 @@ def main():
                 logger.error(f"Error processing {fname}: {e}", exc_info=True)
 
             progress.advance(task)
+
+    # Copy noise recordings to each subject's folder
+    console.print("\n[bold]Copying noise recordings to subject folders...[/bold]")
+    for subj_id, rec_date in subject_dates.items():
+        copy_noise_to_subject(subj_id, rec_date, noise_files, bids_root)
 
     # Save provenance
     save_provenance(bids_root, config, sorted(subjects_processed))

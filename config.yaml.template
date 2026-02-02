@@ -328,7 +328,7 @@ computing:
 
     source_reconstruction:
       cpus: 1
-      mem: 256G
+      mem: 64G
       time: "2:00:00"
 
     features:

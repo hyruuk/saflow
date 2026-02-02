@@ -17,7 +17,6 @@ import mne
 import mne_bids
 import numpy as np
 import pandas as pd
-import pickle
 from mne_bids import BIDSPath
 
 logger = logging.getLogger(__name__)
@@ -197,8 +196,11 @@ def segment_sourcelevel(
     """Segment source-level data array based on events from preprocessed MEG.
 
     This function takes a continuous source-level data array and segments it
-    into epochs based on stimulus events. It also loads autoreject logs to
-    identify bad epochs and extracts behavioral metadata for each segment.
+    into epochs based on stimulus events. It extracts behavioral metadata for
+    each segment (VTC, RT, task, INOUT zones).
+
+    Note: Bad epoch filtering should be done at stats/ML time using ARlog2.pkl,
+    not during feature extraction. This function computes features on ALL epochs.
 
     Note: tmin/tmax define the epoch window relative to stimulus event markers.
     Event markers are at stimulus onset (0% intensity). These values should
@@ -222,7 +224,6 @@ def segment_sourcelevel(
 
     Raises:
         KeyError: If required keys ('preproc', 'raw') are missing from filepaths.
-        FileNotFoundError: If AutoReject log file is not found.
 
     Examples:
         >>> fnames = create_fnames("04", "02", "/data/bids")
@@ -256,26 +257,8 @@ def segment_sourcelevel(
     epoch_length = tmax_samples - tmin_samples
     tmin_samples = tmin_samples - int(epoch_length * (n_events_window - 1))
 
-    # Load AutoReject log
-    arlog_fname = (
-        str(
-            filepaths["preproc"]
-            .copy()
-            .update(description="ARlog", processing=None)
-            .fpath
-        )
-        + ".pkl"
-    )
-
-    try:
-        with open(arlog_fname, "rb") as f:
-            ARlog = pickle.load(f)
-        bad_epochs = ARlog.bad_epochs
-    except FileNotFoundError:
-        logger.warning(f"AutoReject log not found: {arlog_fname}. Assuming no bad epochs.")
-        bad_epochs = np.zeros(len(events), dtype=bool)
-
     # Segment array
+    # Note: Bad epoch filtering is done at stats/ML time using ARlog2.pkl, not here
     segmented_array = []
     events_idx = []
     events_dict = []
@@ -299,6 +282,7 @@ def segment_sourcelevel(
                         events_idx.append(idx)
 
                         # Fill event metadata dictionary
+                        # Note: bad_epoch filtering done at stats/ML time using ARlog2.pkl
                         included_events = stim_events_list[-n_events_window:]
                         event_dict = {
                             "event_idx": idx,
@@ -309,8 +293,6 @@ def segment_sourcelevel(
                             "INOUT": events_full.loc[idx, "INOUT_50_50"],
                             "INOUT_2575": events_full.loc[idx, "INOUT_25_75"],
                             "INOUT_1090": events_full.loc[idx, "INOUT_10_90"],
-                            "bad_epoch": bad_epochs[idx],
-                            "included_bad_epochs": bad_epochs[included_events],
                             "included_events_idx": included_events,
                             "included_VTC": events_full.loc[included_events, "VTC"].values,
                             "included_task": events_full.loc[included_events, "task"].values,

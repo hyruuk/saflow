@@ -145,17 +145,17 @@ def generate_preprocessing_report(
     fig = reject_log_first.plot("horizontal", show=False)
     report.add_figure(fig, title="AutoReject decisions (1st pass - for ICA)")
 
-    # Second AutoReject pass (after ICA, with interpolation) - only if performed
+    # Second AutoReject pass (after ICA, fit only for bad epoch detection)
     if reject_log_second is not None:
         if np.sum(reject_log_second.bad_epochs) > 0:
             try:
                 fig = epochs_ica_only[reject_log_second.bad_epochs].plot(show=False)
-                report.add_figure(fig, title="Bad epochs (2nd AR pass)")
+                report.add_figure(fig, title="Bad epochs (2nd AR pass - post-ICA)")
             except Exception as e:
                 logger.warning(f"Could not plot bad epochs: {e}")
 
         fig = reject_log_second.plot("horizontal", show=False)
-        report.add_figure(fig, title="AutoReject decisions (2nd pass - with interpolation)")
+        report.add_figure(fig, title="AutoReject decisions (2nd pass - post-ICA bad epoch detection)")
 
     # Comprehensive summary with detailed metrics
     n_bad_first = np.sum(reject_log_first.bad_epochs)
@@ -165,7 +165,6 @@ def generate_preprocessing_report(
     # Second AR pass stats (if performed)
     if reject_log_second is not None:
         n_bad_second = np.sum(reject_log_second.bad_epochs)
-        n_interpolated = np.sum(reject_log_second.labels == 2)
         ar_bad = reject_log_second.bad_epochs
         # Compare threshold vs AutoReject
         threshold_bad = threshold_bad_mask
@@ -175,7 +174,6 @@ def generate_preprocessing_report(
         agreement = np.mean(ar_bad == threshold_bad) * 100
     else:
         n_bad_second = 0
-        n_interpolated = 0
         ar_bad = None
         both_bad = None
         only_ar_bad = None
@@ -194,17 +192,22 @@ def generate_preprocessing_report(
 
     if reject_log_second is not None:
         ar2_row = f"""
-    <tr style="background-color: #e6ffe6;">
-        <td><b>After AR Pass 2</b></td>
-        <td>{len(epochs_ica_ar)}</td>
-        <td>-{len(epochs_ica_only) - len(epochs_ica_ar)} ({100*(len(epochs_ica_only) - len(epochs_ica_ar))/len(epochs_ica_only):.1f}%)</td>
-        <td>Bad channels interpolated, remaining bad epochs removed</td>
+    <tr style="background-color: #e6f3ff;">
+        <td><b>AR Pass 2 (detection)</b></td>
+        <td>{len(epochs_ica_only)}</td>
+        <td>{n_bad_second} flagged ({100*n_bad_second/len(epochs_ica_only):.1f}%)</td>
+        <td>Bad epochs detected post-ICA (for downstream filtering)</td>
     </tr>"""
         ar2_details = f"""
     <h3>AutoReject Details</h3>
     <table border="1" style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #f0f0f0;">
-        <th>Metric</th><th>First Pass (for ICA)</th><th>Second Pass (after ICA)</th>
+        <th>Metric</th><th>First Pass (for ICA)</th><th>Second Pass (post-ICA detection)</th>
+    </tr>
+    <tr>
+        <td>Purpose</td>
+        <td>Exclude bad epochs for ICA fitting</td>
+        <td>Detect bad epochs for downstream filtering</td>
     </tr>
     <tr>
         <td>Input epochs</td>
@@ -217,16 +220,14 @@ def generate_preprocessing_report(
         <td>{n_bad_second} ({100*n_bad_second/len(epochs_ica_only):.1f}%)</td>
     </tr>
     <tr>
-        <td>Channels interpolated</td>
-        <td>N/A (fit only)</td>
-        <td>{n_interpolated}</td>
-    </tr>
-    <tr>
-        <td>Output epochs</td>
-        <td>{n_good_first} (for ICA fitting)</td>
-        <td>{len(epochs_ica_ar)} (final)</td>
+        <td>Mode</td>
+        <td>Fit only</td>
+        <td>Fit only (no interpolation)</td>
     </tr>
     </table>
+
+    <p><i><b>Note:</b> Second AR pass is fit-only. Bad epoch flags are saved in ARlog2.pkl
+    for use in downstream stats/ML to censor bad epochs from analysis.</i></p>
 
     <h3>Threshold vs AutoReject Comparison (Post-ICA)</h3>
     <p><i>Comparison of simple threshold-based rejection vs AutoReject on ICA-cleaned epochs.</i></p>
@@ -237,7 +238,7 @@ def generate_preprocessing_report(
     <tr>
         <td>Method</td>
         <td>Peak-to-peak amplitude</td>
-        <td>Cross-validation + interpolation</td>
+        <td>Cross-validation based</td>
     </tr>
     <tr>
         <td>Parameters</td>
@@ -280,7 +281,7 @@ def generate_preprocessing_report(
     else:
         ar2_details = f"""
     <h3>AutoReject (First Pass Only)</h3>
-    <p><i>Second AutoReject pass was skipped. Use --with-autoreject to enable.</i></p>
+    <p><i>Second AutoReject pass was skipped. Run without --skip-second-ar to enable.</i></p>
     <table border="1" style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #f0f0f0;">
         <th>Metric</th><th>First Pass (for ICA)</th>
@@ -346,8 +347,8 @@ def generate_preprocessing_report(
     </tr>
     {ar2_row}
     <tr style="background-color: #d4edda;">
-        <td><b>Final Retention</b></td>
-        <td colspan="3"><b>{len(epochs_ica_ar)}/{n_total} ({100*len(epochs_ica_ar)/n_total:.1f}% retained)</b></td>
+        <td><b>Output</b></td>
+        <td colspan="3"><b>{len(epochs_ica_only)} epochs saved</b> (all ICA-cleaned epochs; use ARlog2 to filter bad epochs in analysis)</td>
     </tr>
     </table>
 
@@ -363,11 +364,12 @@ def generate_preprocessing_report(
     <h3>Output Files</h3>
     <ul>
     <li><b>Continuous (ICA-cleaned):</b> derivatives/preprocessed/.../proc-clean_meg.fif</li>
-    <li><b>Epochs (ICA only):</b> derivatives/epochs/.../proc-ica_meg.fif (n={len(epochs_ica_only)})</li>
-    <li><b>Epochs (ICA+AR):</b> derivatives/epochs/.../proc-icaar_meg.fif (n={len(epochs_ica_ar)})</li>
+    <li><b>Epochs (ICA):</b> derivatives/epochs/.../proc-ica_meg.fif (n={len(epochs_ica_only)})</li>
+    <li><b>AR logs:</b> derivatives/preprocessed/.../ARlog1.pkl (for ICA), ARlog2.pkl (post-ICA)</li>
     </ul>
 
-    <p><i>Note: A detailed text summary is saved alongside this report (*_summary.txt)</i></p>
+    <p><i>Note: Use ARlog2.pkl to filter out bad epochs in downstream analysis (stats/ML).
+    A detailed text summary is saved alongside this report (*_summary.txt)</i></p>
     """
     report.add_html(summary_text, title="Preprocessing Summary")
 
@@ -530,7 +532,6 @@ def save_preprocessing_summary(
     # Build second AR section conditionally
     if reject_log_second is not None:
         n_bad_second = int(np.sum(reject_log_second.bad_epochs))
-        n_interpolated = int(np.sum(reject_log_second.labels == 2))
         ar_bad = reject_log_second.bad_epochs
         both_bad = int(np.sum(ar_bad & threshold_bad_mask))
         only_ar = int(np.sum(ar_bad & ~threshold_bad_mask))
@@ -538,10 +539,11 @@ def save_preprocessing_summary(
         agreement = float(np.mean(ar_bad == threshold_bad_mask) * 100)
 
         ar2_section = f"""
-Second AutoReject Pass (after ICA):
+Second AutoReject Pass (post-ICA, fit only):
+  - Purpose: Detect bad epochs for downstream filtering (stats/ML)
   - Bad epochs detected: {n_bad_second} ({100*n_bad_second/n_epochs_ica_only:.1f}%)
-  - Channels interpolated: {n_interpolated}
-  - Final epochs retained: {n_epochs_ica_ar} ({100*n_epochs_ica_ar/n_total_epochs:.1f}% of original)
+  - Mode: Fit only (no interpolation)
+  - Output: ARlog2.pkl (use to filter epochs in downstream analysis)
 
 Threshold vs AutoReject Comparison
 ----------------------------------
@@ -550,10 +552,10 @@ Threshold vs AutoReject Comparison
   - Only AutoReject rejects: {only_ar} epochs
   - Only Threshold rejects: {only_thresh} epochs
 """
-        ar2_output = f"Epochs (ICA+AR): derivatives/epochs/sub-{subject}/meg/*_proc-icaar_meg.fif (n={n_epochs_ica_ar})"
-        retention_flow = f"{n_total_epochs} → {n_total_epochs - n_bad_first} (-{n_bad_first}) → {n_epochs_ica_only} → {n_epochs_ica_ar} (-{n_epochs_ica_only - n_epochs_ica_ar})"
+        ar2_output = f"AR Log (2nd pass): derivatives/preprocessed/sub-{subject}/meg/*ARlog2.pkl"
+        retention_flow = f"{n_total_epochs} → {n_total_epochs - n_bad_first} (ICA fit) → {n_epochs_ica_only} saved ({n_bad_second} flagged for downstream filtering)"
     else:
-        ar2_section = "\nSecond AutoReject Pass: SKIPPED (use --with-autoreject to enable)\n"
+        ar2_section = "\nSecond AutoReject Pass: SKIPPED (run without --skip-second-ar to enable)\n"
         ar2_output = "(Second AR pass skipped)"
         retention_flow = f"{n_total_epochs} → {n_total_epochs - n_bad_first} (-{n_bad_first}) → {n_epochs_ica_only}"
 
@@ -609,7 +611,7 @@ def preprocess_run(
     config: dict,
     skip_existing: bool = True,
     crop: float = None,
-    with_autoreject: bool = False,
+    skip_second_ar: bool = False,
 ):
     """Preprocess a single MEG run.
 
@@ -621,7 +623,7 @@ def preprocess_run(
         config: Configuration dictionary.
         skip_existing: Skip if preprocessed file already exists.
         crop: If set, crop raw data to first N seconds (for quick testing).
-        with_autoreject: If True, run second AutoReject pass after ICA.
+        skip_second_ar: If True, skip second AutoReject pass after ICA.
     """
     logger.info("=" * 80)
     logger.info(f"Preprocessing subject {subject}, run {run}")
@@ -773,10 +775,9 @@ def preprocess_run(
     n_good = np.sum(good_mask)
     console.print(f"[green]✓ Will use {n_good}/{len(epochs_filt)} good epochs for ICA fitting[/green]")
 
-    # Compute noise covariance (also saves a copy under subject directory for source reconstruction)
-    record_date = raw.info["meas_date"].strftime("%Y%m%d")
-    console.print(f"[yellow]⏳ Computing/loading noise covariance (date: {record_date})...[/yellow]")
-    noise_cov = compute_or_load_noise_cov(record_date, bids_root, derivatives_root, subject=subject)
+    # Compute noise covariance from subject's empty-room recording
+    console.print(f"[yellow]⏳ Computing/loading noise covariance for sub-{subject}...[/yellow]")
+    noise_cov = compute_or_load_noise_cov(subject, bids_root, derivatives_root)
     console.print(f"[green]✓ Noise covariance ready[/green]")
 
     # Run ICA pipeline (fit on good epochs only)
@@ -820,21 +821,26 @@ def preprocess_run(
         f"bad epochs ({threshold_stats['pct_bad']:.1f}%)[/green]"
     )
 
-    # Second AutoReject pass (optional, fit_transform with interpolation)
-    if with_autoreject:
+    # Second AutoReject pass (fit only, for bad epoch detection post-ICA)
+    # This runs by default to identify which epochs are still bad after ICA cleaning
+    # The epochs are NOT transformed (no interpolation) - we just get the reject log
+    if not skip_second_ar:
         console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
-        console.print(f"[bold cyan]SECOND AUTOREJECT PASS (WITH INTERPOLATION)[/bold cyan]")
+        console.print(f"[bold cyan]SECOND AUTOREJECT PASS (FIT ONLY - BAD EPOCH DETECTION)[/bold cyan]")
         console.print(f"[bold cyan]{'='*60}[/bold cyan]")
-        logger.info("Running second AutoReject pass (with interpolation)")
-        epochs_ica_ar, ar_second, reject_log_second = run_autoreject_transform(
+        logger.info("Running second AutoReject pass (fit only, for bad epoch detection)")
+        ar_second, reject_log_second = run_autoreject(
             epochs_ica_only.copy(),
             n_interpolate=ar_cfg["n_interpolate"],
             consensus=ar_cfg["consensus"],
             n_jobs=config["computing"]["n_jobs"],
             random_state=42,
         )
+        # epochs_ica_ar is the same as epochs_ica_only (no transformation)
+        # but we now have reject_log_second to know which epochs are bad post-ICA
+        epochs_ica_ar = epochs_ica_only.copy()
     else:
-        console.print(f"\n[yellow]Skipping second AutoReject pass (use --with-autoreject to enable)[/yellow]")
+        console.print(f"\n[yellow]Skipping second AutoReject pass (use default to enable)[/yellow]")
         logger.info("Skipping second AutoReject pass")
         # Use ICA-only epochs as final output
         epochs_ica_ar = epochs_ica_only.copy()
@@ -899,19 +905,8 @@ def preprocess_run(
     epochs_ica_only.save(paths["epoch_ica"].fpath, overwrite=True)
     logger.info(f"✓ Epochs (ICA): {paths['epoch_ica'].fpath}")
 
-    # Save epochs (ICA + AR version) - only if second AR was performed
-    if with_autoreject and reject_log_second is not None:
-        logger.info(f"Saving epochs (ICA+AR, n={len(epochs_ica_ar)})...")
-        write_raw_bids(
-            cleaned_raw,
-            paths["epoch_ica_ar"],
-            format="FIF",
-            overwrite=True,
-            allow_preload=True,
-            verbose=False,
-        )  # Init BIDS structure
-        epochs_ica_ar.save(paths["epoch_ica_ar"].fpath, overwrite=True)
-        logger.info(f"✓ Epochs (ICA+AR): {paths['epoch_ica_ar'].fpath}")
+    # Note: We no longer save separate ICA+AR epochs since second AR is fit-only
+    # The reject_log_second is saved below and can be used for downstream filtering
 
     # Save first AutoReject log (for ICA)
     ar_log_first_path = Path(str(paths["ARlog_first"].fpath) + ".pkl")
@@ -984,12 +979,12 @@ def preprocess_run(
     if reject_log_second is not None:
         ar_bad = reject_log_second.bad_epochs
         params["autoreject_second_pass"] = {
-            "description": "Second pass (fit_transform) after ICA",
+            "description": "Second pass (fit only) after ICA for bad epoch detection",
             "n_bad_epochs": int(np.sum(reject_log_second.bad_epochs)),
             "n_total_epochs": len(epochs_ica_only),
             "pct_bad": float(100 * np.sum(reject_log_second.bad_epochs) / len(epochs_ica_only)),
-            "n_channels_interpolated": int(np.sum(reject_log_second.labels == 2)),
-            "n_epochs_final": len(epochs_ica_ar),
+            "mode": "fit_only",
+            "note": "Use ARlog2.pkl to filter bad epochs in downstream analysis",
         }
         params["threshold_vs_autoreject"] = {
             "agreement_pct": float(np.mean(ar_bad == threshold_bad_mask) * 100),
@@ -1054,10 +1049,10 @@ def main():
         help="Crop raw data to first N seconds (for quick testing)",
     )
     parser.add_argument(
-        "--with-autoreject",
+        "--skip-second-ar",
         action="store_true",
         default=False,
-        help="Run second AutoReject pass after ICA (default: ICA only)",
+        help="Skip second AutoReject pass after ICA (default: run second AR pass for bad epoch detection)",
     )
     parser.add_argument(
         "--log-level",
@@ -1122,7 +1117,7 @@ def main():
                     config,
                     args.skip_existing,
                     args.crop,
-                    args.with_autoreject,
+                    args.skip_second_ar,
                 )
             except Exception as e:
                 logger.error(f"Failed to process run {run}: {e}", exc_info=True)
@@ -1133,12 +1128,13 @@ def main():
     console.print(f"  Processed {len(runs)} runs")
     console.print(f"\n[bold]Output locations:[/bold]")
     console.print(f"  Continuous (ICA): {derivatives_root}/preprocessed/sub-{args.subject}/")
-    console.print(f"  Epochs (ICA only): {derivatives_root}/epochs/sub-{args.subject}/")
-    console.print(f"  Epochs (ICA+AR): {derivatives_root}/epochs/sub-{args.subject}/")
+    console.print(f"  Epochs (ICA): {derivatives_root}/epochs/sub-{args.subject}/")
+    console.print(f"  AR logs (for filtering): {derivatives_root}/preprocessed/sub-{args.subject}/*ARlog*.pkl")
     console.print(f"  Reports: {derivatives_root}/preprocessed/sub-{args.subject}/*_report_meg.html")
     console.print(f"  Summaries: {derivatives_root}/preprocessed/sub-{args.subject}/*_summary.txt")
     console.print(f"\n[bold]Logs:[/bold] {log_file}")
     console.print(f"\n[dim]Read *_summary.txt files for detailed preprocessing metrics[/dim]")
+    console.print(f"[dim]Use ARlog2.pkl in downstream analysis to filter out bad epochs post-ICA[/dim]")
 
     logger.info("Preprocessing complete")
     return 0
