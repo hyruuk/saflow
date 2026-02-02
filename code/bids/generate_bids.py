@@ -151,15 +151,14 @@ def copy_noise_to_subject(
         raw = mne.io.read_raw_ctf(str(noise_path), verbose=False)
         raw.info["line_freq"] = 60
 
-        # Rename channels to match subject recordings
-        mne.rename_channels(
-            raw.info,
-            {
-                "EEG057": "vEOG",
-                "EEG058": "hEOG",
-                "EEG059": "ECG",
-            },
-        )
+        # Rename channels to match subject recordings (only if they exist)
+        # Note: Empty room recordings may not have EEG channels connected
+        rename_map = {}
+        for old_name, new_name in [("EEG057", "vEOG"), ("EEG058", "hEOG"), ("EEG059", "ECG")]:
+            if old_name in raw.ch_names:
+                rename_map[old_name] = new_name
+        if rename_map:
+            mne.rename_channels(raw.info, rename_map)
 
         # Create BIDS path under subject folder
         from mne_bids import BIDSPath
