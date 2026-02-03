@@ -191,7 +191,7 @@ def compute_coregistration(
     coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=False)
 
     # Save transformation
-    trans_fpath = str(trans_path.fpath) + ".fif"
+    trans_fpath = str(trans_path.fpath)
     os.makedirs(op.dirname(trans_fpath), exist_ok=True)
     mne.write_trans(trans_fpath, coreg.trans, overwrite=True)
     logger.info(f"Saved coregistration: {trans_fpath}")
