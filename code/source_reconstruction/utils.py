@@ -95,6 +95,7 @@ def create_output_paths(
         suffix="trans",
         extension=".fif",
         root=derivatives_root / "trans",
+        check=False,  # Allow non-standard suffix for derivatives
     )
     trans_bidspath.mkdir(exist_ok=True)
 
