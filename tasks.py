@@ -438,10 +438,15 @@ def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
                  skip_existing=True, slurm=False, dry_run=False):
     """Run source reconstruction (Stage 2).
 
+    By default processes all subjects from config. Use --subject for a single subject.
+
     Examples:
-        invoke pipeline.source-recon --subject=04
-        invoke pipeline.source-recon --slurm
+        invoke pipeline.source-recon                # All subjects (default)
+        invoke pipeline.source-recon --subject=04  # Single subject
+        invoke pipeline.source-recon --slurm       # All subjects on HPC
     """
+    from code.utils.config import load_config
+
     print("=" * 80)
     print("Source Reconstruction - Stage 2")
     print("=" * 80)
@@ -449,11 +454,15 @@ def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
     if slurm:
         _source_recon_slurm(c, subject, runs, bids_root, log_level, skip_existing, dry_run)
     else:
-        if not subject:
-            print("ERROR: --subject is required for local execution")
-            print("Use --slurm to process all subjects in parallel on HPC")
-            return
-        _source_recon_local(c, subject, runs, bids_root, log_level, skip_existing)
+        config = load_config()
+        subjects = [subject] if subject else config["bids"]["subjects"]
+        print(f"Processing {len(subjects)} subject(s): {', '.join(subjects)}\n")
+
+        for subj in subjects:
+            print(f"\n{'='*40}")
+            print(f"Subject: {subj}")
+            print(f"{'='*40}")
+            _source_recon_local(c, subj, runs, bids_root, log_level, skip_existing)
 
 
 @task
@@ -467,11 +476,16 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
 
     Output: derivatives/atlas_timeseries_{atlas}/sub-{subject}/*.npz
 
+    By default processes all subjects from config. Use --subject for a single subject.
+
     Examples:
-        invoke pipeline.atlas --subject=04
+        invoke pipeline.atlas                      # All subjects (default)
+        invoke pipeline.atlas --subject=04         # Single subject
         invoke pipeline.atlas --subject=04 --atlases="aparc.a2009s"
-        invoke pipeline.atlas --slurm  # All subjects on cluster
+        invoke pipeline.atlas --slurm              # All subjects on cluster
     """
+    from code.utils.config import load_config
+
     print("=" * 80)
     print("Atlas Application - Stage 2b")
     print("=" * 80)
@@ -480,30 +494,35 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
         _atlas_slurm(c, subject, runs, atlases, skip_existing, dry_run)
         return
 
-    if not subject:
-        print("ERROR: --subject is required for local execution")
-        print("Use --slurm to process all subjects in parallel on HPC")
-        return
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    print(f"Processing {len(subjects)} subject(s): {', '.join(subjects)}\n")
 
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.source_reconstruction.apply_atlas"]
-    cmd.extend(["--subject", subject])
 
-    if runs:
-        cmd.extend(["--runs", runs])
+    for subj in subjects:
+        print(f"\n{'='*40}")
+        print(f"Subject: {subj}")
+        print(f"{'='*40}")
 
-    if atlases:
-        cmd.extend(["--atlases", atlases])
+        cmd = [python_exe, "-m", "code.source_reconstruction.apply_atlas"]
+        cmd.extend(["--subject", subj])
 
-    if skip_existing:
-        cmd.append("--skip-existing")
-    else:
-        cmd.append("--no-skip-existing")
+        if runs:
+            cmd.extend(["--runs", runs])
 
-    print(f"Running: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+        if atlases:
+            cmd.extend(["--atlases", atlases])
 
-    print(f"\n✓ Atlas application complete for sub-{subject}")
+        if skip_existing:
+            cmd.append("--skip-existing")
+        else:
+            cmd.append("--no-skip-existing")
+
+        print(f"Running: {' '.join(cmd)}\n")
+        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+
+    print(f"\n✓ Atlas application complete for {len(subjects)} subject(s)")
 
 
 # ==============================================================================
