@@ -17,6 +17,7 @@ Namespaces:
     dev.check           - Data validation (dataset, qc, code)
     dev                 - Development tasks (test, clean)
     env                 - Environment tasks (setup, info)
+    get                 - Data downloads (atlases)
     pipeline            - Data processing pipeline (bids, preprocess, source-recon, atlas)
     pipeline.features   - Feature extraction (psd, fooof, complexity, all)
     analysis            - Statistical analysis (statistics, classify)
@@ -339,6 +340,36 @@ def validate_config(c):
 def rebuild(c, mode="dev"):
     """Clean and rebuild environment."""
     setup(c, mode=mode, force=True)
+
+
+# ==============================================================================
+# get.* Tasks - Data Downloads
+# ==============================================================================
+
+@task
+def get_atlases(c):
+    """Download FreeSurfer atlas files (Schaefer, Destrieux).
+
+    Downloads atlas annotation files required for source-level parcellation:
+    - Destrieux (aparc.a2009s): 148 ROIs
+    - Schaefer 100, 200, 400 parcels (7 Networks)
+
+    Files are downloaded to the fsaverage/label directory specified in config.yaml.
+
+    Examples:
+        invoke get.atlases
+    """
+    print("=" * 80)
+    print("Downloading FreeSurfer Atlases")
+    print("=" * 80)
+
+    script_path = PROJECT_ROOT / "scripts" / "download_atlases.sh"
+
+    if not script_path.exists():
+        print(f"ERROR: Download script not found: {script_path}")
+        return
+
+    c.run(str(script_path), pty=True)
 
 
 # ==============================================================================
@@ -680,11 +711,12 @@ def statistics(c, feature_type, space="sensor", test="paired_ttest",
     Feature types:
     - FOOOF: fooof_exponent, fooof_offset, fooof_knee, fooof_r_squared
     - PSD: psd_delta, psd_theta, psd_alpha, psd_beta, psd_gamma
-    - Complexity: lzc, perm_entropy, spectral_entropy, higuchi_fd
+    - Complexity: complexity (uses dedicated script)
 
     Examples:
         invoke analysis.statistics --feature-type=fooof_exponent
         invoke analysis.statistics --feature-type=psd_alpha --visualize
+        invoke analysis.statistics --feature-type=complexity
     """
     print("=" * 80)
     print("Group-Level Statistical Analysis")
@@ -695,16 +727,88 @@ def statistics(c, feature_type, space="sensor", test="paired_ttest",
         return
 
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
-    cmd.extend(["--feature-type", feature_type])
+
+    # Use dedicated script for complexity features
+    if feature_type == "complexity" or feature_type.startswith("complexity_"):
+        print("Using dedicated complexity statistics script...")
+        cmd = [python_exe, "-m", "code.statistics.run_complexity_stats"]
+        cmd.extend(["--space", space])
+        # Map correction names
+        corr = corrections.split()[0] if corrections else "fdr"
+        cmd.extend(["--correction", corr])
+        cmd.extend(["--alpha", str(alpha)])
+        if "permutation" in corrections:
+            cmd.extend(["--n-permutations", str(n_permutations)])
+    else:
+        cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
+        cmd.extend(["--feature-type", feature_type])
+        cmd.extend(["--space", space])
+        cmd.extend(["--test", test])
+        cmd.extend(["--correction"] + corrections.split())
+        cmd.extend(["--alpha", str(alpha)])
+        cmd.extend(["--n-permutations", str(n_permutations)])
+
+        if visualize:
+            cmd.append("--visualize")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def stats_complexity(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000):
+    """Run t-tests on complexity measures (IN vs OUT).
+
+    Runs paired t-tests comparing IN vs OUT attentional states for all
+    complexity metrics:
+    - LZC (Lempel-Ziv Complexity)
+    - Entropy measures (permutation, spectral, sample, approximate, SVD)
+    - Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
+
+    Outputs:
+    - Topographic figure: reports/figures/complexity_ttest_{correction}.png
+    - Numerical results: {data_root}/features/statistics_{space}/complexity_ttest_results.npz
+
+    Examples:
+        invoke analysis.stats.complexity
+        invoke analysis.stats.complexity --correction=bonferroni
+        invoke analysis.stats.complexity --correction=permutation --n-permutations=5000
+        invoke analysis.stats.complexity --correction=none --alpha=0.01
+    """
+    print("=" * 80)
+    print("Complexity Statistics: IN vs OUT (Paired T-tests)")
+    print(f"Space: {space}, Correction: {correction}, Alpha: {alpha}")
+    print("=" * 80)
+
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.statistics.run_complexity_stats"]
     cmd.extend(["--space", space])
-    cmd.extend(["--test", test])
-    cmd.extend(["--correction"] + corrections.split())
+    cmd.extend(["--correction", correction])
     cmd.extend(["--alpha", str(alpha)])
     cmd.extend(["--n-permutations", str(n_permutations)])
 
-    if visualize:
-        cmd.append("--visualize")
+    print(f"\nRunning: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def stats_fooof(c, space="sensor", alpha=0.05):
+    """Run t-tests on FOOOF parameters (IN vs OUT).
+
+    Runs paired t-tests comparing IN vs OUT attentional states for:
+    - Aperiodic exponent (1/f slope)
+    - Aperiodic offset
+    - Model fit (r_squared)
+
+    Examples:
+        invoke analysis.stats.fooof
+    """
+    print("=" * 80)
+    print("FOOOF Statistics: IN vs OUT (Paired T-tests)")
+    print("=" * 80)
+
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.statistics.run_fooof_stats"]
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -749,6 +853,67 @@ def classify(c, features, clf="lda", cv="logo", space="sensor",
 # ==============================================================================
 # viz.* Tasks - Visualization
 # ==============================================================================
+
+@task
+def viz_stats(c, feature_type="complexity", space="sensor", alpha=0.05, show=False):
+    """Visualize saved statistical results.
+
+    Loads previously computed statistics and generates/displays topographic figures.
+    The statistics must have been computed first using analysis.stats.* tasks.
+
+    Examples:
+        invoke viz.stats                                    # Default: complexity
+        invoke viz.stats --feature-type=complexity --show   # Open figure
+        invoke viz.stats --feature-type=fooof
+    """
+    from pathlib import Path
+
+    print("=" * 80)
+    print(f"Visualizing {feature_type} Statistics")
+    print("=" * 80)
+
+    # Check if results file exists
+    from code.utils.config import load_config
+    config = load_config()
+    data_root = Path(config["paths"]["data_root"])
+    results_path = data_root / "features" / f"statistics_{space}" / f"{feature_type}_ttest_results.npz"
+
+    if not results_path.exists():
+        print(f"ERROR: Results file not found: {results_path}")
+        print(f"Run 'invoke analysis.stats.{feature_type}' first to compute statistics.")
+        return
+
+    print(f"Loading results from: {results_path}")
+
+    # Load and display summary
+    import numpy as np
+    results = np.load(results_path, allow_pickle=True)
+
+    print(f"\nResults summary:")
+    print(f"  Correction: {results.get('correction', 'unknown')}")
+    print(f"  Alpha: {results.get('alpha', 0.05)}")
+    print(f"  Subjects: {results.get('n_subjects', 'unknown')}")
+    print(f"  IN trials: {results.get('n_trials_in', 'unknown')}")
+    print(f"  OUT trials: {results.get('n_trials_out', 'unknown')}")
+
+    # Count significant channels per metric
+    print(f"\nSignificant channels (p < {alpha}):")
+    for key in results.files:
+        if key.endswith("_sig_mask"):
+            metric = key.replace("_sig_mask", "")
+            n_sig = np.sum(results[key])
+            print(f"  {metric}: {n_sig}")
+
+    # Show figure location
+    fig_path = Path("reports") / "figures" / f"{feature_type}_ttest_fdr.png"
+    if fig_path.exists():
+        print(f"\nFigure saved at: {fig_path}")
+        if show:
+            import subprocess
+            subprocess.run(["xdg-open", str(fig_path)], check=False)
+    else:
+        print(f"\nNo figure found. Run statistics to generate.")
+
 
 @task
 def behavior(c, subject="07", run="4", inout_bounds="25 75", output=None, verbose=False):
@@ -1217,6 +1382,10 @@ env.add_task(info)
 env.add_task(validate_config, name="validate-config")
 env.add_task(rebuild)
 
+# Data download tasks
+get = Collection("get")
+get.add_task(get_atlases, name="atlases")
+
 # Feature extraction tasks (nested under pipeline)
 features = Collection("features")
 features.add_task(fooof)
@@ -1233,19 +1402,27 @@ pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
 pipeline.add_collection(features)  # Nested: pipeline.features.*
 
+# Statistics subcollection (under analysis)
+stats = Collection("stats")
+stats.add_task(stats_complexity, name="complexity")
+stats.add_task(stats_fooof, name="fooof")
+
 # Analysis tasks
 analysis = Collection("analysis")
 analysis.add_task(statistics)
 analysis.add_task(classify)
+analysis.add_collection(stats)  # Nested: analysis.stats.*
 
 # Visualization tasks
 viz = Collection("viz")
+viz.add_task(viz_stats, name="stats")
 viz.add_task(behavior)
 
 # Build main namespace
 namespace = Collection()
 namespace.add_collection(dev)
 namespace.add_collection(env)
+namespace.add_collection(get)
 namespace.add_collection(pipeline)
 namespace.add_collection(analysis)
 namespace.add_collection(viz)

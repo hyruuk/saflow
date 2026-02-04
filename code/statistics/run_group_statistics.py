@@ -103,7 +103,7 @@ def get_feature_folder(
 
     Args:
         config: Configuration dictionary.
-        feature_type: Feature type (e.g., 'fooof_exponent', 'psd_alpha', 'lzc').
+        feature_type: Feature type (e.g., 'fooof_exponent', 'psd_alpha', 'lzc', 'complexity').
         space: Analysis space ('sensor', 'source', 'atlas').
 
     Returns:
@@ -113,15 +113,18 @@ def get_feature_folder(
     processed = data_root / config["paths"]["features"]
 
     # Map feature types to folder names
+    # Actual folder structure: fooof_sensor, complexity_sensor, welch_psds_sensor, etc.
     if feature_type.startswith("fooof_"):
-        folder_name = f"features_fooof_{space}"
+        folder_name = f"fooof_{space}"
     elif feature_type.startswith("psd_"):
-        folder_name = f"features_psd_{space}"
+        folder_name = f"welch_psds_{space}"
+    elif feature_type == "complexity" or feature_type.startswith("complexity_"):
+        folder_name = f"complexity_{space}"
     elif feature_type.startswith("lzc"):
-        folder_name = f"features_lzc_{space}"
+        folder_name = f"complexity_{space}"
     else:
         # Default to treating it as the feature type name
-        folder_name = f"features_{feature_type}_{space}"
+        folder_name = f"{feature_type}_{space}"
 
     return processed / folder_name
 
