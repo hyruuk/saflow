@@ -308,7 +308,7 @@ def process_single_run(
 
     logger.debug(f"Loading source estimate: {input_path}")
     try:
-        stc = mne.read_source_estimate(str(input_path), verbose=False)
+        stc = mne.read_source_estimate(str(input_path))
     except Exception as e:
         logger.error(f"Failed to load source estimate: {e}", exc_info=True)
         return False
