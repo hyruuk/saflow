@@ -361,6 +361,44 @@ logging:
   to_console: true
 
 # =============================================================================
+# Statistics Configuration
+# =============================================================================
+statistics:
+  # Default statistical test (the test statistic to compute)
+  test: paired_ttest  # 'paired_ttest', 'independent_ttest'
+
+  # Multiple comparison correction method
+  # Options:
+  #   - none: No correction (not recommended)
+  #   - fdr: Benjamini-Hochberg FDR (controls false discovery rate)
+  #   - bonferroni: Bonferroni correction (controls FWER, conservative)
+  #   - tmax: Maximum statistic permutation (controls FWER, recommended)
+  correction: tmax
+
+  # FDR method ('bh' = Benjamini-Hochberg, 'by' = Benjamini-Yekutieli)
+  fdr_method: bh
+
+  # Number of permutations (for tmax correction)
+  n_permutations: 10000
+
+  # Significance threshold
+  alpha: 0.05
+
+  # Features to analyze (can be overridden via CLI)
+  features:
+    - fooof_exponent
+    - psd_alpha
+    - psd_theta
+
+  # Effect sizes to compute
+  effect_sizes:
+    - cohens_d
+    - hedges_g
+
+  # Enable visualization
+  visualize: true
+
+# =============================================================================
 # Reproducibility Configuration
 # =============================================================================
 reproducibility:

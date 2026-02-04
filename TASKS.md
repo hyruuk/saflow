@@ -412,7 +412,7 @@ Run paired t-tests on complexity measures (IN vs OUT).
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--space` | string | sensor | Analysis space |
-| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `permutation`, `none` |
+| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
 | `--alpha` | float | 0.05 | Significance threshold |
 | `--n-permutations` | int | 1000 | Number of permutations (for permutation correction) |
 
@@ -420,7 +420,7 @@ Run paired t-tests on complexity measures (IN vs OUT).
 ```bash
 invoke analysis.stats.complexity
 invoke analysis.stats.complexity --correction=bonferroni
-invoke analysis.stats.complexity --correction=permutation --n-permutations=5000
+invoke analysis.stats.complexity --correction=tmax --n-permutations=5000
 invoke analysis.stats.complexity --correction=none --alpha=0.01
 ```
 
