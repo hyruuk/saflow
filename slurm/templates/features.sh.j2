@@ -38,7 +38,7 @@ python -m code.features.compute_complexity \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
-    {% if complexity_types %}--complexity-type {{ complexity_types }}{% endif %} \
+    {% if complexity_types %}--complexity-type "{{ complexity_types }}"{% endif %} \
     {% if not skip_existing %}--overwrite{% endif %}
 
 {% elif feature_type == "all" %}

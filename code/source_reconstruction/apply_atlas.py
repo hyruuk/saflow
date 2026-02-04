@@ -211,33 +211,36 @@ def apply_atlas_to_stc(
     vertices_lh = stc.vertices[0]
     vertices_rh = stc.vertices[1]
 
-    # Map vertices to regions
-    vertex_to_region = {}
+    # Map vertices to regions (separate by hemisphere to avoid index collisions)
+    vertex_to_region_lh = {}
+    vertex_to_region_rh = {}
 
     for label in labels:
         label_vertices = label.vertices
-        hemi = 0 if label.hemi == "lh" else 1
 
-        if hemi == 0:
+        if label.hemi == "lh":
             common_vertices = np.intersect1d(vertices_lh, label_vertices)
+            for vert in common_vertices:
+                vertex_to_region_lh[vert] = label.name
         else:
             common_vertices = np.intersect1d(vertices_rh, label_vertices)
+            for vert in common_vertices:
+                vertex_to_region_rh[vert] = label.name
 
-        for vert in common_vertices:
-            vertex_to_region[vert] = label.name
-
-    logger.debug(f"Mapped {len(vertex_to_region)} vertices to regions")
+    logger.debug(f"Mapped {len(vertex_to_region_lh)} lh vertices, {len(vertex_to_region_rh)} rh vertices to regions")
 
     # Collect data for each region
     region_data = defaultdict(list)
 
-    for vert_idx, region in vertex_to_region.items():
-        if vert_idx in vertices_lh:
-            idx = np.where(vertices_lh == vert_idx)[0][0]
-            region_data[region].append(stc.data[idx])
-        elif vert_idx in vertices_rh:
-            idx = np.where(vertices_rh == vert_idx)[0][0]
-            region_data[region].append(stc.data[len(vertices_lh) + idx])
+    # Process left hemisphere
+    for vert_idx, region in vertex_to_region_lh.items():
+        idx = np.where(vertices_lh == vert_idx)[0][0]
+        region_data[region].append(stc.data[idx])
+
+    # Process right hemisphere
+    for vert_idx, region in vertex_to_region_rh.items():
+        idx = np.where(vertices_rh == vert_idx)[0][0]
+        region_data[region].append(stc.data[len(vertices_lh) + idx])
 
     # Average within each region
     region_averages = {

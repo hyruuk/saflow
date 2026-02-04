@@ -12,13 +12,38 @@ Tasks are organized into namespaces:
 
 | Namespace | Description |
 |-----------|-------------|
-| `pipeline.*` | Main pipeline stages (BIDS, preprocess, source-recon) |
-| `features.*` | Feature extraction (FOOOF, PSD, complexity) |
-| `analysis.*` | Statistical analysis and classification |
-| `dev.*` | Development tools (tests, linting, cleaning) |
-| `dev.check.*` | Data quality and validation checks |
+| `dev.check.*` | Data validation (dataset, qc, code) |
+| `dev.*` | Development tasks (test, clean, precommit) |
 | `env.*` | Environment setup and management |
-| `viz.*` | Visualization and figures |
+| `get.*` | Data downloads (atlases) |
+| `pipeline.*` | Main pipeline stages (BIDS, preprocess, source-recon, atlas) |
+| `pipeline.features.*` | Feature extraction (psd, fooof, complexity, all) |
+| `analysis.*` | Statistical analysis (statistics, classify) |
+| `analysis.stats.*` | Dedicated statistics tasks (complexity, fooof) |
+| `viz.*` | Visualization (stats, behavior) |
+
+---
+
+## Data Download Tasks
+
+### `invoke get.atlases`
+
+Download FreeSurfer atlas annotation files required for source-level parcellation.
+
+**What it downloads:**
+- Destrieux atlas (aparc.a2009s): 148 ROIs
+- Schaefer 100 parcels (7 Networks)
+- Schaefer 200 parcels (7 Networks)
+- Schaefer 400 parcels (7 Networks)
+
+Files are downloaded to `{data_root}/{freesurfer_subjects_dir}/fsaverage/label/` as specified in `config.yaml`.
+
+**Arguments:** None
+
+**Examples:**
+```bash
+invoke get.atlases
+```
 
 ---
 
@@ -37,15 +62,14 @@ Validate that raw input data is present and complete before running pipeline.
 - Shows summary table of available runs per subject
 
 **Arguments:**
-- `--data-root PATH`: Override data root from config
-- `--verbose`: Show detailed file listings
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--data-root` | PATH | config | Override data root from config |
+| `--verbose` | flag | false | Show detailed file listings |
 
 **Examples:**
 ```bash
-# Basic validation
 invoke pipeline.validate-inputs
-
-# Verbose output with file listings
 invoke pipeline.validate-inputs --verbose
 ```
 
@@ -72,22 +96,20 @@ Run BIDS conversion (Stage 0 of pipeline).
 - Run 0 (practice) and files with unexpected run numbers are ignored
 
 **Arguments:**
-- `--input-dir PATH`: Override raw data directory from config
-- `--output-dir PATH`: Override BIDS output directory from config
-- `--subjects "ID1 ID2 ..."`: Process specific subjects only (space-separated)
-- `--log-level LEVEL`: Set logging level (DEBUG, INFO, WARNING, ERROR)
-- `--dry-run`: Validate inputs without processing files
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--input-dir` | PATH | config | Override raw data directory from config |
+| `--output-dir` | PATH | config | Override BIDS output directory from config |
+| `--subjects` | string | all | Space-separated subject IDs (e.g., "04 05 06") |
+| `--log-level` | choice | INFO | DEBUG, INFO, WARNING, ERROR |
+| `--dry-run` | flag | false | Validate inputs without processing files |
 
 **Examples:**
 ```bash
-# Basic usage (uses paths from config.yaml)
 invoke pipeline.bids
-
-# Process specific subjects only
 invoke pipeline.bids --subjects "04 05 06"
-
-# Dry run to validate before processing
 invoke pipeline.bids --dry-run
+invoke pipeline.bids --log-level DEBUG
 ```
 
 ---
@@ -103,26 +125,35 @@ Run MEG preprocessing (Stage 1 of pipeline).
 4. Creates epochs for all events
 5. Runs AutoReject to identify bad epochs for ICA
 6. Fits ICA and removes ECG/EOG artifacts
-7. Runs AutoReject with interpolation on ICA-cleaned data
+7. Runs second AutoReject pass (fit only) for bad epoch detection
 8. Saves preprocessed data, epochs, reports, and metadata
 
 **Arguments:**
-- `--subject ID`: Subject ID to process
-- `--runs "R1 R2 ..."`: Run numbers to process (default: all task runs)
-- `--log-level LEVEL`: Set logging level
-- `--skip-existing` / `--no-skip-existing`: Skip/reprocess existing files
-- `--slurm`: Submit jobs to SLURM cluster
-- `--dry-run`: Generate SLURM scripts without submitting
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | required* | Subject ID to process (required for local) |
+| `--runs` | string | all | Space-separated run numbers (e.g., "02 03 04") |
+| `--bids-root` | PATH | config | Override BIDS root directory |
+| `--log-level` | choice | INFO | DEBUG, INFO, WARNING, ERROR |
+| `--skip-existing` | flag | true | Skip if output files exist (default) |
+| `--crop` | float | none | Crop to first N seconds (for testing) |
+| `--skip-second-ar` | flag | false | Skip second AutoReject pass |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
+
+*Required for local execution; optional with `--slurm` (processes all subjects)
 
 **Examples:**
 ```bash
 # Local execution
 invoke pipeline.preprocess --subject=04
 invoke pipeline.preprocess --subject=04 --runs="02 03"
+invoke pipeline.preprocess --subject=04 --crop=50  # Quick test
 
 # SLURM execution
-invoke pipeline.preprocess --subject=04 --slurm
-invoke pipeline.preprocess --slurm  # All subjects
+invoke pipeline.preprocess --slurm              # All subjects
+invoke pipeline.preprocess --subject=04 --slurm # Single subject
+invoke pipeline.preprocess --slurm --dry-run    # Preview jobs
 ```
 
 ---
@@ -132,77 +163,201 @@ invoke pipeline.preprocess --slurm  # All subjects
 Run source reconstruction (Stage 2 of pipeline).
 
 **What it does:**
-1. Computes coregistration (MEG ↔ MRI)
-2. Sets up source space and BEM model
-3. Computes forward solution
-4. Applies inverse operator
-5. Morphs to fsaverage template
+1. Loads preprocessed continuous data
+2. Computes coregistration (MEG ↔ MRI)
+3. Sets up source space and BEM model
+4. Computes forward solution
+5. Computes noise covariance from empty-room recording
+6. Applies inverse operator (dSPM method)
+7. Morphs source estimates to fsaverage template
+8. Saves morphed source estimates (.h5 format)
 
 **Arguments:**
-- `--subject ID`: Subject ID to process
-- `--runs "R1 R2 ..."`: Run numbers to process
-- `--input-type TYPE`: `continuous` or `epochs`
-- `--processing STATE`: `clean`, `ica`, or `icaar`
-- `--slurm`: Submit to SLURM
-- `--dry-run`: Generate scripts without submitting
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | all | Subject ID (processes all if not specified) |
+| `--runs` | string | all | Space-separated run numbers |
+| `--bids-root` | PATH | config | Override BIDS root directory |
+| `--log-level` | choice | INFO | DEBUG, INFO, WARNING, ERROR |
+| `--skip-existing` | flag | true | Skip if output files exist |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
 
 **Examples:**
 ```bash
+# Local execution
+invoke pipeline.source-recon                    # All subjects
+invoke pipeline.source-recon --subject=04       # Single subject
 invoke pipeline.source-recon --subject=04 --runs="02 03"
-invoke pipeline.source-recon --subject=04 --slurm
+
+# SLURM execution
+invoke pipeline.source-recon --slurm
+invoke pipeline.source-recon --slurm --dry-run
+```
+
+---
+
+### `invoke pipeline.atlas`
+
+Apply atlas parcellation to morphed source estimates (Stage 2b).
+
+**What it does:**
+1. Loads morphed source estimates from fsaverage space
+2. Applies cortical parcellations to extract ROI time series
+3. Averages source activity within each parcel/region
+4. Saves ROI-level time series (.npz format) with metadata
+
+**Default atlases:**
+- aparc.a2009s (Destrieux, 148 ROIs)
+- schaefer_100 (Schaefer 100 parcels, 7 Networks)
+- schaefer_200 (Schaefer 200 parcels, 7 Networks)
+- schaefer_400 (Schaefer 400 parcels, 7 Networks)
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | all | Subject ID (processes all if not specified) |
+| `--runs` | string | all | Space-separated run numbers |
+| `--atlases` | string | config | Space-separated atlas names (e.g., "aparc.a2009s schaefer_100") |
+| `--skip-existing` | flag | true | Skip if output files exist |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
+
+**Examples:**
+```bash
+# Local execution
+invoke pipeline.atlas                           # All subjects, all atlases
+invoke pipeline.atlas --subject=04              # Single subject
+invoke pipeline.atlas --subject=04 --atlases="aparc.a2009s"
+
+# SLURM execution
+invoke pipeline.atlas --slurm
+invoke pipeline.atlas --slurm --dry-run
 ```
 
 ---
 
 ## Feature Extraction Tasks
 
-### `invoke features.fooof`
+All feature extraction tasks are under `pipeline.features.*`.
 
-Extract FOOOF aperiodic parameters and corrected PSDs.
+### `invoke pipeline.features.psd`
+
+Extract power spectral density features using Welch's method.
+
+**What it computes:**
+- Welch PSD estimates per trial/epoch
+- Band power for configured frequency bands
+- Saves with IN/OUT classification metadata
 
 **Arguments:**
-- `--subject ID`: Subject to process (default: all)
-- `--space SPACE`: `sensor`, `source`, or `atlas`
-- `--slurm`: Submit to SLURM
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | required* | Subject ID to process |
+| `--runs` | string | all | Space-separated run numbers |
+| `--space` | string | sensor | Analysis space: `sensor`, or atlas name (e.g., `aparc.a2009s`) |
+| `--skip-existing` | flag | true | Skip if output files exist |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
+
+*Required for local execution
 
 **Examples:**
 ```bash
-invoke features.fooof --subject=04
-invoke features.fooof --space=source --slurm
+invoke pipeline.features.psd --subject=04
+invoke pipeline.features.psd --subject=04 --space=aparc.a2009s
+invoke pipeline.features.psd --slurm
 ```
 
 ---
 
-### `invoke features.psd`
+### `invoke pipeline.features.fooof`
 
-Extract power spectral density features.
+Extract FOOOF (specparam) aperiodic parameters and corrected PSDs.
+
+**What it computes:**
+- Aperiodic parameters (exponent, offset, knee if enabled)
+- Goodness of fit metrics (r_squared, error)
+- Aperiodic-corrected PSDs (periodic component only)
+
+FOOOF parameters (freq_range, aperiodic_mode, etc.) are configured in `config.yaml`.
 
 **Arguments:**
-- `--subject ID`: Subject to process (default: all)
-- `--space SPACE`: `sensor`, `source`, or `atlas`
-- `--slurm`: Submit to SLURM
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | required* | Subject ID to process |
+| `--runs` | string | all | Space-separated run numbers |
+| `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
+| `--skip-existing` | flag | true | Skip if output files exist |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
+
+*Required for local execution
+
+**Examples:**
+```bash
+invoke pipeline.features.fooof --subject=04
+invoke pipeline.features.fooof --subject=04 --space=schaefer_100
+invoke pipeline.features.fooof --slurm
+```
 
 ---
 
-### `invoke features.complexity`
+### `invoke pipeline.features.complexity`
 
 Extract complexity and entropy measures.
 
+**What it computes:**
+- Lempel-Ziv Complexity (LZC)
+- Entropy measures: permutation, spectral, sample, approximate, SVD
+- Fractal dimensions: Higuchi, Petrosian, Katz, DFA
+
 **Arguments:**
-- `--subject ID`: Subject to process (default: all)
-- `--space SPACE`: `sensor`, `source`, or `atlas`
-- `--slurm`: Submit to SLURM
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | required* | Subject ID to process |
+| `--runs` | string | all | Space-separated run numbers |
+| `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
+| `--complexity-type` | string | "lzc entropy fractal" | Space-separated types to compute |
+| `--overwrite` | flag | false | Overwrite existing files |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
+
+*Required for local execution
+
+**Examples:**
+```bash
+invoke pipeline.features.complexity --subject=04
+invoke pipeline.features.complexity --subject=04 --complexity-type="lzc entropy"
+invoke pipeline.features.complexity --slurm
+```
 
 ---
 
-### `invoke features.all`
+### `invoke pipeline.features.all`
 
-Extract all feature types (FOOOF, PSD, complexity).
+Extract all feature types (PSD, FOOOF, complexity) in sequence.
+
+**Order:** PSD → FOOOF → Complexity (FOOOF depends on PSD)
 
 **Arguments:**
-- `--subject ID`: Subject to process (default: all)
-- `--space SPACE`: `sensor`, `source`, or `atlas`
-- `--slurm`: Submit to SLURM
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | required* | Subject ID to process |
+| `--runs` | string | all | Space-separated run numbers |
+| `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
+| `--overwrite` | flag | false | Overwrite existing files |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--dry-run` | flag | false | Generate SLURM scripts without submitting |
+
+*Required for local execution
+
+**Examples:**
+```bash
+invoke pipeline.features.all --subject=04
+invoke pipeline.features.all --subject=04 --space=aparc.a2009s
+invoke pipeline.features.all --slurm
+```
 
 ---
 
@@ -212,17 +367,84 @@ Extract all feature types (FOOOF, PSD, complexity).
 
 Run group-level statistical analysis (IN vs OUT attentional states).
 
+**Feature types:**
+- FOOOF: `fooof_exponent`, `fooof_offset`, `fooof_knee`, `fooof_r_squared`
+- PSD: `psd_delta`, `psd_theta`, `psd_alpha`, `psd_lobeta`, `psd_hibeta`, `psd_gamma1`, etc.
+- Complexity: `complexity` (uses dedicated script)
+
 **Arguments:**
-- `--feature-type TYPE`: Feature to analyze (e.g., `fooof_exponent`, `psd_alpha`)
-- `--space SPACE`: Analysis space (`sensor`, `source`, `atlas`)
-- `--test TEST`: Statistical test (`paired_ttest`, `permutation`)
-- `--corrections CORR`: Correction methods (`fdr`, `bonferroni`, `tmax`)
-- `--slurm`: Submit to SLURM
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--feature-type` | string | required | Feature to analyze |
+| `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
+| `--test` | string | paired_ttest | Statistical test: `paired_ttest`, `independent_ttest`, `permutation` |
+| `--corrections` | string | "fdr bonferroni" | Space-separated correction methods |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--n-permutations` | int | 10000 | Number of permutations (for permutation tests) |
+| `--visualize` | flag | false | Generate visualization figures |
+| `--slurm` | flag | false | Submit to SLURM (not yet implemented) |
+| `--dry-run` | flag | false | Preview without running |
 
 **Examples:**
 ```bash
-invoke analysis.statistics --feature-type=fooof_exponent --space=sensor
-invoke analysis.statistics --feature-type=psd_alpha --corrections="fdr bonferroni"
+invoke analysis.statistics --feature-type=fooof_exponent
+invoke analysis.statistics --feature-type=psd_alpha --visualize
+invoke analysis.statistics --feature-type=psd_theta --test=permutation --n-permutations=5000
+invoke analysis.statistics --feature-type=complexity
+```
+
+---
+
+### `invoke analysis.stats.complexity`
+
+Run paired t-tests on complexity measures (IN vs OUT).
+
+**What it analyzes:**
+- LZC (Lempel-Ziv Complexity)
+- Entropy measures (permutation, spectral, sample, approximate, SVD)
+- Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
+
+**Outputs:**
+- Topographic figure: `reports/figures/complexity_ttest_{correction}.png`
+- Numerical results: `{data_root}/features/statistics_{space}/complexity_ttest_results.npz`
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | sensor | Analysis space |
+| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `permutation`, `none` |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--n-permutations` | int | 1000 | Number of permutations (for permutation correction) |
+
+**Examples:**
+```bash
+invoke analysis.stats.complexity
+invoke analysis.stats.complexity --correction=bonferroni
+invoke analysis.stats.complexity --correction=permutation --n-permutations=5000
+invoke analysis.stats.complexity --correction=none --alpha=0.01
+```
+
+---
+
+### `invoke analysis.stats.fooof`
+
+Run paired t-tests on FOOOF parameters (IN vs OUT).
+
+**What it analyzes:**
+- Aperiodic exponent (1/f slope)
+- Aperiodic offset
+- Model fit (r_squared)
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | sensor | Analysis space |
+| `--alpha` | float | 0.05 | Significance threshold |
+
+**Examples:**
+```bash
+invoke analysis.stats.fooof
+invoke analysis.stats.fooof --alpha=0.01
 ```
 
 ---
@@ -232,16 +454,71 @@ invoke analysis.statistics --feature-type=psd_alpha --corrections="fdr bonferron
 Run classification analysis (decode IN vs OUT from neural features).
 
 **Arguments:**
-- `--features FEAT`: Feature type(s) to use
-- `--clf CLF`: Classifier (`lda`, `svm`, `rf`, `xgboost`)
-- `--cv CV`: Cross-validation strategy (`logo`, `stratified`)
-- `--space SPACE`: Analysis space
-- `--slurm`: Submit to SLURM
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--features` | string | required | Space-separated feature types |
+| `--clf` | string | lda | Classifier: `lda`, `svm`, `rf`, `logistic` |
+| `--cv` | string | logo | Cross-validation: `logo` (leave-one-group-out), `stratified`, `group` |
+| `--space` | string | sensor | Analysis space |
+| `--n-permutations` | int | 1000 | Permutations for significance testing |
+| `--no-balance` | flag | false | Disable class balancing within subjects |
+| `--visualize` | flag | false | Generate visualization figures |
+| `--slurm` | flag | false | Submit to SLURM (not yet implemented) |
+| `--dry-run` | flag | false | Preview without running |
 
 **Examples:**
 ```bash
-invoke analysis.classify --features=fooof_exponent --clf=lda
-invoke analysis.classify --features="psd_alpha psd_theta" --clf=svm
+invoke analysis.classify --features=fooof_exponent
+invoke analysis.classify --features="fooof_exponent psd_alpha" --clf=svm
+invoke analysis.classify --features=psd_theta --cv=stratified --visualize
+```
+
+---
+
+## Visualization Tasks
+
+### `invoke viz.stats`
+
+Visualize saved statistical results.
+
+Loads previously computed statistics and displays summary. The statistics must have been computed first using `analysis.stats.*` tasks.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--feature-type` | string | complexity | Feature type to visualize |
+| `--space` | string | sensor | Analysis space |
+| `--alpha` | float | 0.05 | Significance threshold for display |
+| `--show` | flag | false | Open figure in viewer |
+
+**Examples:**
+```bash
+invoke viz.stats
+invoke viz.stats --feature-type=complexity --show
+invoke viz.stats --feature-type=fooof
+```
+
+---
+
+### `invoke viz.behavior`
+
+Generate behavioral analysis figure (VTC, RT distributions, IN/OUT zones).
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | 07 | Subject ID |
+| `--run` | string | 4 | Run number |
+| `--inout-bounds` | string | "25 75" | Space-separated percentile bounds for IN/OUT zones |
+| `--output` | PATH | none | Output file path |
+| `--verbose` | flag | false | Verbose output |
+
+**Examples:**
+```bash
+invoke viz.behavior
+invoke viz.behavior --subject=04 --run=3
+invoke viz.behavior --inout-bounds="10 90"
+invoke viz.behavior --output=reports/figures/behavior_sub04.png
 ```
 
 ---
@@ -261,7 +538,9 @@ Check dataset completeness - which files exist for each subject across all pipel
 - Feature extraction status
 
 **Arguments:**
-- `--verbose`: Show detailed missing data information
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--verbose` | flag | false | Show detailed missing data information |
 
 **Examples:**
 ```bash
@@ -285,23 +564,27 @@ The `(+N)` notation indicates extra files (run 0 practice files, duplicates, or 
 Run data quality checks on BIDS MEG data.
 
 **What it checks:**
-- Inter-stimulus intervals (ISI)
+- Inter-stimulus intervals (ISI) consistency and outliers
 - Response detection and rates
-- Channel quality
-- Event validation
-- Data integrity
+- Reaction times
+- Channel quality (flat, noisy, saturated)
+- Event/trigger counts and timing
+- Data integrity (sampling rate, duration)
 
 **Arguments:**
-- `--subject ID`: Check specific subject (default: all subjects)
-- `--runs RUNS`: Specific runs to check
-- `--output-dir DIR`: Output directory for reports
-- `--verbose`: Detailed output
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | all | Subject ID (checks all if not specified) |
+| `--runs` | string | all | Space-separated run numbers |
+| `--output-dir` | PATH | reports/qc | Output directory for reports |
+| `--verbose` | flag | false | Detailed output |
 
 **Examples:**
 ```bash
-invoke dev.check.qc                    # Check all subjects
-invoke dev.check.qc --subject=04       # Check specific subject
-invoke dev.check.qc --verbose          # Detailed output
+invoke dev.check.qc                         # Check all subjects
+invoke dev.check.qc --subject=04            # Check specific subject
+invoke dev.check.qc --subject=04 --runs="02 03 04"
+invoke dev.check.qc --verbose
 ```
 
 ---
@@ -310,6 +593,22 @@ invoke dev.check.qc --verbose          # Detailed output
 
 Run code quality checks (linting, formatting, type checking).
 
+**What it runs:**
+1. Ruff linting (style, errors, complexity)
+2. Ruff formatting (code style consistency)
+3. Mypy type checking (type annotations)
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--fix` | flag | false | Auto-fix issues where possible |
+
+**Examples:**
+```bash
+invoke dev.check.code
+invoke dev.check.code --fix
+```
+
 ---
 
 ### `invoke dev.test`
@@ -317,8 +616,19 @@ Run code quality checks (linting, formatting, type checking).
 Run tests with pytest.
 
 **Arguments:**
-- `--verbose`: Enable verbose output
-- `--coverage` / `--no-coverage`: Generate coverage report
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--verbose` | flag | false | Enable verbose output |
+| `--coverage` | flag | true | Generate coverage report |
+| `--markers` | string | none | Pytest markers to filter tests (e.g., "not slow") |
+
+**Examples:**
+```bash
+invoke dev.test
+invoke dev.test --verbose
+invoke dev.test --markers="not slow"
+invoke dev.test --no-coverage
+```
 
 ---
 
@@ -326,37 +636,83 @@ Run tests with pytest.
 
 Run only fast tests (excludes tests marked as slow).
 
+**Arguments:** None
+
+**Examples:**
+```bash
+invoke dev.test-fast
+```
+
 ---
 
 ### `invoke dev.clean`
 
 Clean generated files (caches, build artifacts).
 
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--bytecode` | flag | true | Clean Python bytecode files |
+| `--cache` | flag | true | Clean cache directories |
+| `--coverage` | flag | true | Clean coverage reports |
+| `--build` | flag | true | Clean build artifacts |
+| `--logs` | flag | false | Clean log files |
+
+**Examples:**
+```bash
+invoke dev.clean
+invoke dev.clean --logs
+invoke dev.clean --no-bytecode --no-cache
+```
+
 ---
 
 ### `invoke dev.precommit`
 
-Run pre-commit checks (code quality + tests).
+Run pre-commit checks (code quality checks + tests).
+
+**Arguments:** None
+
+**Examples:**
+```bash
+invoke dev.precommit
+```
 
 ---
 
 ## Environment Tasks
 
-### `invoke env.info`
-
-Display project information and configuration status.
-
----
-
 ### `invoke env.setup`
 
 Run setup script to create development environment.
 
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--mode` | string | basic | Setup mode: `basic`, `dev`, `all` |
+| `--python` | string | python3.9 | Python executable to use |
+| `--force` | flag | false | Force recreation of environment |
+
+**Examples:**
+```bash
+invoke env.setup
+invoke env.setup --mode=dev
+invoke env.setup --mode=all --force
+invoke env.setup --python=python3.11
+```
+
 ---
 
-### `invoke env.rebuild`
+### `invoke env.info`
 
-Clean and rebuild the development environment.
+Display project information and configuration status.
+
+**Arguments:** None
+
+**Examples:**
+```bash
+invoke env.info
+```
 
 ---
 
@@ -364,13 +720,29 @@ Clean and rebuild the development environment.
 
 Validate configuration file syntax and required fields.
 
+**Arguments:** None
+
+**Examples:**
+```bash
+invoke env.validate-config
+```
+
 ---
 
-## Visualization Tasks
+### `invoke env.rebuild`
 
-### `invoke viz.behavior`
+Clean and rebuild the development environment.
 
-Generate behavioral analysis figure (VTC, RT distributions, etc.).
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--mode` | string | dev | Setup mode for rebuild |
+
+**Examples:**
+```bash
+invoke env.rebuild
+invoke env.rebuild --mode=all
+```
 
 ---
 
@@ -393,6 +765,20 @@ invoke pipeline.preprocess --subject=04 --slurm
 invoke pipeline.preprocess --slurm --dry-run
 ```
 
+### Supported Tasks
+
+| Task | SLURM Support |
+|------|---------------|
+| `pipeline.preprocess` | Yes |
+| `pipeline.source-recon` | Yes |
+| `pipeline.atlas` | Yes |
+| `pipeline.features.psd` | Yes |
+| `pipeline.features.fooof` | Yes |
+| `pipeline.features.complexity` | Yes |
+| `pipeline.features.all` | Yes |
+| `analysis.statistics` | Not yet |
+| `analysis.classify` | Not yet |
+
 ### Configuration
 
 SLURM settings are in `config.yaml`:
@@ -402,13 +788,22 @@ computing:
   slurm:
     enabled: true
     account: def-kjerbi
-    partition: standard
-    email: user@example.com
+    partition: ""  # Empty to let Slurm auto-select
 
     preprocessing:
       cpus: 12
       mem: 32G
       time: "12:00:00"
+
+    source_reconstruction:
+      cpus: 1
+      mem: 64G
+      time: "2:00:00"
+
+    features:
+      cpus: 12
+      mem: 32G
+      time: "6:00:00"
 ```
 
 ### Job Management
@@ -420,11 +815,20 @@ scancel JOBID                # Cancel job
 scancel -u $USER             # Cancel all jobs
 ```
 
+### Job Manifests
+
+When submitting SLURM jobs, manifests are saved to `logs/slurm/{stage}/` with:
+- Job IDs
+- Submission timestamp
+- Subjects and runs processed
+- Stage metadata
+
 ---
 
 ## Notes
 
-- All tasks support `--help` for detailed options
+- All tasks support `--help` for detailed options (e.g., `invoke pipeline.preprocess --help`)
 - Logs are saved to `logs/{stage}/`
-- Use `--skip-existing` (default) to avoid reprocessing
+- Use `--skip-existing` (default) to avoid reprocessing completed files
 - Configuration is loaded from `config.yaml`
+- Use `invoke --list` to see all available tasks

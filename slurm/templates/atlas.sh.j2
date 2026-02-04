@@ -19,8 +19,8 @@ echo ""
 # Run atlas application
 python -m code.source_reconstruction.apply_atlas \
     --subject {{ subject }} \
-    {% if runs %}--runs {{ runs }}{% endif %} \
-    {% if atlases %}--atlases {{ atlases }}{% endif %} \
+    {% if runs %}--runs "{{ runs }}"{% endif %} \
+    {% if atlases %}--atlases "{{ atlases }}"{% endif %} \
     {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
 
 ATLAS_EXIT=$?
