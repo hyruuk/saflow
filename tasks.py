@@ -1159,10 +1159,10 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
         print("ERROR: SLURM is not enabled in config.yaml")
         return
 
-    # Use source_reconstruction resources for atlas (similar compute requirements)
-    atlas_resources = slurm_config.get("source_reconstruction", {})
+    # Get atlas-specific resources from config
+    atlas_resources = slurm_config.get("atlas", {})
     if not atlas_resources:
-        print("ERROR: No source_reconstruction resources in config.yaml")
+        print("ERROR: No atlas resources in config.yaml (computing.slurm.atlas)")
         return
 
     venv_path = Path(config["paths"]["venv"])
