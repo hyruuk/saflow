@@ -189,7 +189,11 @@ fs_subjects/
 # ==============================================================================
 # SLURM output files
 slurm-*.out
+slurm-*.err
 *.sbatch
+
+# Generated SLURM scripts (keep templates only)
+slurm/scripts/
 
 # ==============================================================================
 # Documentation
