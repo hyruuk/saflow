@@ -100,12 +100,12 @@ def compute_welch_psd_from_continuous(
 
     logger.info(f"Segmented data shape: {segmented_data.shape}")
 
-    # Adaptive FFT parameters based on segment length
+    # FFT parameters: use provided values or fall back to sensible defaults
     n_samples = segmented_data.shape[2]
     if n_fft is None:
-        n_fft = min(256, n_samples)  # Use smaller window for short epochs
+        n_fft = min(256, n_samples)
     if n_overlap is None:
-        n_overlap = n_fft // 2  # 50% overlap
+        n_overlap = n_fft // 2
 
     logger.info(f"Computing Welch PSD (n_fft={n_fft}, n_overlap={n_overlap}, n_samples={n_samples})...")
 
@@ -349,6 +349,12 @@ def main() -> int:
     tmax = args.tmax if args.tmax is not None else config["analysis"]["epochs"]["tmax"]
     logger.info(f"Epoch timing: tmin={tmin}s, tmax={tmax}s")
 
+    # Resolve Welch PSD parameters: CLI args > config > defaults
+    # Config specifies window_sec and overlap fraction; we convert to n_fft/n_overlap
+    # after loading data (need sfreq). Store resolved CLI values for now.
+    cli_n_fft = args.n_fft
+    cli_n_overlap = args.n_overlap
+
     # Determine paths
     data_root = Path(config["paths"]["data_root"])
     bids_root = Path(args.bids_root) if args.bids_root else data_root / "bids"
@@ -406,13 +412,29 @@ def main() -> int:
     events_df = pd.read_csv(events_path, sep="\t")
     logger.info(f"Loaded {len(events_df)} events from {events_path}")
 
+    # Resolve Welch parameters from config if not given on CLI
+    sfreq = spatial_data.sfreq
+    n_fft = cli_n_fft
+    n_overlap = cli_n_overlap
+
+    if n_fft is None or n_overlap is None:
+        welch_cfg = config.get("features", {}).get("welch_psd", [{}])
+        # Use the first (default) welch_psd config entry
+        default_welch = welch_cfg[0] if welch_cfg else {}
+        if n_fft is None and "window_sec" in default_welch:
+            n_fft = int(default_welch["window_sec"] * sfreq)
+            logger.info(f"n_fft from config: window_sec={default_welch['window_sec']}s -> n_fft={n_fft}")
+        if n_overlap is None and "overlap" in default_welch and n_fft is not None:
+            n_overlap = int(default_welch["overlap"] * n_fft)
+            logger.info(f"n_overlap from config: overlap={default_welch['overlap']} -> n_overlap={n_overlap}")
+
     # Compute Welch PSD
     psds, freqs, trial_metadata, welch_params = compute_welch_psd_from_continuous(
         data=spatial_data.data,
         events_df=events_df,
-        sfreq=spatial_data.sfreq,
-        n_fft=args.n_fft,
-        n_overlap=args.n_overlap,
+        sfreq=sfreq,
+        n_fft=n_fft,
+        n_overlap=n_overlap,
         tmin=tmin,
         tmax=tmax,
         n_jobs=args.n_jobs,

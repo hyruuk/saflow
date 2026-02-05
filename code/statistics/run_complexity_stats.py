@@ -6,10 +6,20 @@ This script:
 3. Runs paired t-tests with optional corrections
 4. Generates topographic figures
 
+Correction methods:
+- none: No correction (not recommended)
+- fdr: Benjamini-Hochberg FDR (controls false discovery rate)
+- bonferroni: Bonferroni correction (controls FWER, very conservative)
+- tmax: Maximum statistic permutation (controls FWER, recommended)
+
+The tmax method compares each observed t-statistic to the null distribution
+of the maximum absolute t-statistic across all channels. This inherently
+controls for multiple comparisons without additional correction.
+
 Usage:
     python -m code.statistics.run_complexity_stats
     python -m code.statistics.run_complexity_stats --correction fdr --alpha 0.05
-    python -m code.statistics.run_complexity_stats --correction permutation --n-permutations 1000
+    python -m code.statistics.run_complexity_stats --correction tmax --n-permutations 10000
 """
 
 import argparse
@@ -168,9 +178,15 @@ def apply_correction(
 
     Args:
         results: Dict with tvals, pvals per metric
-        correction: 'none', 'fdr', 'bonferroni', 'permutation'
+        correction: 'none', 'fdr', 'bonferroni', 'tmax'
         alpha: Significance threshold
-        n_permutations: Number of permutations (for permutation correction)
+        n_permutations: Number of permutations (for tmax correction)
+
+    Note on tmax:
+        The tmax (maximum statistic) correction controls FWER by comparing each
+        observed t-statistic to the null distribution of the MAXIMUM absolute
+        t-statistic across all channels. This accounts for multiple comparisons
+        without requiring a separate correction step.
     """
     for metric in results:
         pvals = results[metric]["pvals"].copy()
@@ -197,10 +213,10 @@ def apply_correction(
             results[metric]["pvals_corrected"] = pvals_corrected
             results[metric]["sig_mask"] = pvals_corrected < alpha
 
-        elif correction == "permutation":
-            # Max-stat permutation test
+        elif correction == "tmax":
+            # Tmax (maximum statistic) permutation test - controls FWER
             if subj_means_in is None or subj_means_out is None:
-                logger.warning("Permutation test requires subject data, falling back to FDR")
+                logger.warning("Tmax correction requires subject data, falling back to FDR")
                 pvals_corrected = false_discovery_control(pvals, method='bh')
                 results[metric]["pvals_corrected"] = pvals_corrected
                 results[metric]["sig_mask"] = pvals_corrected < alpha
@@ -300,8 +316,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run complexity statistics")
     parser.add_argument("--space", default="sensor", help="Analysis space (default: sensor)")
     parser.add_argument("--correction", default="fdr",
-                        choices=["none", "fdr", "bonferroni", "permutation"],
-                        help="Multiple comparison correction (default: fdr)")
+                        choices=["none", "fdr", "bonferroni", "tmax"],
+                        help="Multiple comparison correction: none, fdr, bonferroni, tmax (default: fdr)")
     parser.add_argument("--alpha", type=float, default=0.05, help="Significance threshold")
     parser.add_argument("--n-permutations", type=int, default=1000,
                         help="Number of permutations (for permutation correction)")

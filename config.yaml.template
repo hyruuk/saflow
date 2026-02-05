@@ -88,8 +88,8 @@ bids:
 # =============================================================================
 preprocessing:
   # Resample at the start of preprocessing (null = keep original sampling rate)
-  # 600 Hz recommended: clean 2x downsampling from 1200 Hz, sufficient for analyses up to 200 Hz
-  resample_sfreq: 600.0
+  # 1200 Hz: keeps original sampling rate, matching cc_saflow pipeline
+  resample_sfreq: 1200.0
 
   filter:
     lowcut: 0.5
@@ -240,11 +240,17 @@ features:
       - 120
 
   # Welch PSD parameters (can specify multiple parameter sets)
+  # Welch PSD parameters (can specify multiple parameter sets)
+  # These are read by compute_welch_psd.py when --n-fft/--n-overlap are not
+  # passed on the command line. window_sec and overlap are converted to
+  # n_fft and n_overlap using the data's sampling frequency:
+  #   n_fft = int(window_sec * sfreq)
+  #   n_overlap = int(overlap * n_fft)
   welch_psd:
     - name: "default"
-      window_sec: 2.0       # Window length in seconds
-      overlap: 0.5          # Overlap fraction (0-1)
-      average: "mean"       # Averaging method: 'mean' or 'median'
+      window_sec: 0.852       # Window length in seconds (~1022 samples at 1200 Hz)
+      overlap: 0.938          # Overlap fraction (0-1) (~959/1022, matching cc_saflow)
+      average: "median"       # Averaging method: 'mean' or 'median'
 
   # FOOOF parameters
   fooof:
@@ -359,6 +365,44 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   to_file: true
   to_console: true
+
+# =============================================================================
+# Statistics Configuration
+# =============================================================================
+statistics:
+  # Default statistical test (the test statistic to compute)
+  test: paired_ttest  # 'paired_ttest', 'independent_ttest'
+
+  # Multiple comparison correction method
+  # Options:
+  #   - none: No correction (not recommended)
+  #   - fdr: Benjamini-Hochberg FDR (controls false discovery rate)
+  #   - bonferroni: Bonferroni correction (controls FWER, conservative)
+  #   - tmax: Maximum statistic permutation (controls FWER, recommended)
+  correction: tmax
+
+  # FDR method ('bh' = Benjamini-Hochberg, 'by' = Benjamini-Yekutieli)
+  fdr_method: bh
+
+  # Number of permutations (for tmax correction)
+  n_permutations: 10000
+
+  # Significance threshold
+  alpha: 0.05
+
+  # Features to analyze (can be overridden via CLI)
+  features:
+    - fooof_exponent
+    - psd_alpha
+    - psd_theta
+
+  # Effect sizes to compute
+  effect_sizes:
+    - cohens_d
+    - hedges_g
+
+  # Enable visualization
+  visualize: true
 
 # =============================================================================
 # Reproducibility Configuration

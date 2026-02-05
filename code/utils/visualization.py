@@ -125,6 +125,18 @@ def grid_topoplot(
             else:
                 current_mask = None
 
+            # Set default mask_params for white circles with black borders
+            if current_mask is not None and mask_params is None:
+                current_mask_params = dict(
+                    marker="o",
+                    markerfacecolor="w",
+                    markeredgecolor="k",
+                    linewidth=0,
+                    markersize=5,
+                )
+            else:
+                current_mask_params = mask_params
+
             # Plot topomap
             mne.viz.plot_topomap(
                 array_data[idx_row, idx_col],
@@ -133,6 +145,7 @@ def grid_topoplot(
                 show=False,
                 cmap=current_cmap,
                 mask=current_mask,
+                mask_params=current_mask_params,
                 vlim=vlims[idx_row] if vlims is not None else None,
                 extrapolate="local",
                 outlines="head",
