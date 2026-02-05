@@ -31,6 +31,10 @@ import pickle
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 import mne
 import numpy as np
 import pandas as pd
@@ -58,10 +62,136 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+def _cohen_kappa(y1: np.ndarray, y2: np.ndarray) -> float:
+    """Compute Cohen's kappa between two boolean arrays."""
+    n = len(y1)
+    if n == 0:
+        return 0.0
+    observed_agreement = np.mean(y1 == y2)
+    p1 = np.mean(y1)
+    p2 = np.mean(y2)
+    expected_agreement = p1 * p2 + (1 - p1) * (1 - p2)
+    if expected_agreement == 1.0:
+        return 1.0
+    return (observed_agreement - expected_agreement) / (1 - expected_agreement)
+
+
+def _create_epoch_comparison_figure(
+    ar1_flags: np.ndarray,
+    ar2_flags: np.ndarray,
+    threshold_flags: np.ndarray,
+) -> plt.Figure:
+    """Create a 3-column heatmap comparing bad epoch flags across methods.
+
+    Args:
+        ar1_flags: Boolean array (M,) — AR1 flags mapped to surviving epochs.
+        ar2_flags: Boolean array (M,) — AR2 flags on post-ICA epochs.
+        threshold_flags: Boolean array (M,) — Threshold flags on post-ICA epochs.
+
+    Returns:
+        Matplotlib figure.
+    """
+    n_epochs = len(ar1_flags)
+    data = np.column_stack([ar1_flags.astype(float),
+                            ar2_flags.astype(float),
+                            threshold_flags.astype(float)])
+
+    fig, ax = plt.subplots(figsize=(5, max(4, n_epochs * 0.04)))
+    from matplotlib.colors import ListedColormap
+    cmap = ListedColormap(["white", "#d32f2f"])
+    ax.imshow(data, aspect="auto", cmap=cmap, interpolation="nearest", vmin=0, vmax=1)
+
+    ax.set_xticks([0, 1, 2])
+    ax.set_xticklabels(["AR1\n(pre-ICA)", "AR2\n(post-ICA)", "Threshold\n(post-ICA)"])
+    ax.set_ylabel("Epoch index")
+    ax.set_title("3-Way Bad Epoch Comparison (red = bad)")
+
+    # Annotate counts at bottom
+    counts = [int(ar1_flags.sum()), int(ar2_flags.sum()), int(threshold_flags.sum())]
+    for i, c in enumerate(counts):
+        ax.text(i, n_epochs + 0.5, f"{c} bad",
+                ha="center", va="top", fontsize=9, fontweight="bold")
+
+    ax.set_ylim(n_epochs + 1.5, -0.5)
+    fig.tight_layout()
+    return fig
+
+
+def _create_ptp_distribution_figure(
+    epochs_pre_ica: mne.Epochs,
+    epochs_post_ica: mne.Epochs,
+    ar1_flags: np.ndarray,
+    ar2_flags: np.ndarray,
+    threshold_flags: np.ndarray,
+    reject_threshold: dict,
+) -> plt.Figure:
+    """Create PTP amplitude distribution figure with two side-by-side subplots.
+
+    Args:
+        epochs_pre_ica: Pre-ICA epochs (1Hz filtered, N epochs).
+        epochs_post_ica: Post-ICA epochs (M epochs).
+        ar1_flags: Boolean array (N,) — AR1 flags on pre-ICA epochs.
+        ar2_flags: Boolean array (M,) — AR2 flags on post-ICA epochs.
+        threshold_flags: Boolean array (M,) — Threshold flags on post-ICA epochs.
+        reject_threshold: Dict with threshold values (e.g. {'mag': 4000e-15}).
+
+    Returns:
+        Matplotlib figure.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), sharey=False)
+
+    # Pre-ICA PTP
+    picks_mag = mne.pick_types(epochs_pre_ica.info, meg="mag")
+    data_pre = epochs_pre_ica.get_data(picks=picks_mag)
+    ptp_pre = np.max(np.ptp(data_pre, axis=2), axis=1)  # max PTP across channels
+
+    good_pre = ~ar1_flags
+    ax1.hist(ptp_pre[good_pre] * 1e15, bins=30, color="#4caf50", alpha=0.7, label="Good (AR1)")
+    if ar1_flags.any():
+        ax1.hist(ptp_pre[ar1_flags] * 1e15, bins=30, color="#d32f2f", alpha=0.7, label="Bad (AR1)")
+    ax1.set_xlabel("Max PTP amplitude (fT)")
+    ax1.set_ylabel("Count")
+    ax1.set_title("Pre-ICA Epochs")
+    ax1.legend()
+
+    # Post-ICA PTP
+    picks_mag_post = mne.pick_types(epochs_post_ica.info, meg="mag")
+    data_post = epochs_post_ica.get_data(picks=picks_mag_post)
+    ptp_post = np.max(np.ptp(data_post, axis=2), axis=1)
+
+    # Categorize: good, AR2-bad, threshold-bad, both-bad
+    both_bad = ar2_flags & threshold_flags
+    only_ar2 = ar2_flags & ~threshold_flags
+    only_thresh = threshold_flags & ~ar2_flags
+    good_post = ~ar2_flags & ~threshold_flags
+
+    ax2.hist(ptp_post[good_post] * 1e15, bins=30, color="#4caf50", alpha=0.7, label="Good")
+    if only_ar2.any():
+        ax2.hist(ptp_post[only_ar2] * 1e15, bins=30, color="#d32f2f", alpha=0.7, label="Bad (AR2 only)")
+    if only_thresh.any():
+        ax2.hist(ptp_post[only_thresh] * 1e15, bins=30, color="#ff9800", alpha=0.7, label="Bad (Threshold only)")
+    if both_bad.any():
+        ax2.hist(ptp_post[both_bad] * 1e15, bins=30, color="#9c27b0", alpha=0.7, label="Bad (AR2 + Threshold)")
+
+    # Add threshold line
+    if "mag" in reject_threshold:
+        ax2.axvline(reject_threshold["mag"] * 1e15, color="red", linestyle="--",
+                     linewidth=2, label=f"Threshold ({reject_threshold['mag']*1e15:.0f} fT)")
+
+    ax2.set_xlabel("Max PTP amplitude (fT)")
+    ax2.set_title("Post-ICA Epochs")
+    ax2.legend()
+
+    fig.suptitle("Peak-to-Peak Amplitude Distribution", fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    return fig
+
+
 def generate_preprocessing_report(
     raw: mne.io.Raw,
     preproc: mne.io.Raw,
     raw_filt: mne.io.Raw,
+    epochs_filt: mne.Epochs,
     epochs: mne.Epochs,
     epochs_ica_only: mne.Epochs,
     epochs_ica_ar: mne.Epochs,
@@ -74,14 +204,16 @@ def generate_preprocessing_report(
     eog_inds: list,
     noise_cov: mne.Covariance,
     picks: list,
+    ar1_flags_mapped: np.ndarray = None,
 ) -> mne.Report:
-    """Generate HTML report for preprocessing with two-pass comparison.
+    """Generate HTML report for preprocessing with three-way comparison.
 
     Args:
         raw: Original raw data.
-        preproc: Filtered data.
-        raw_filt: Filtered data for ICA.
-        epochs: Epochs before cleaning.
+        preproc: Filtered data (ICA-cleaned continuous).
+        raw_filt: Filtered data for ICA (1 Hz highpass).
+        epochs_filt: Pre-ICA epochs (1 Hz filtered, N epochs).
+        epochs: Epochs before ICA (with reject_dict applied, M epochs).
         epochs_ica_only: Epochs after ICA only (no second AR pass).
         epochs_ica_ar: Epochs after ICA + second AR pass.
         reject_log_first: AutoReject log from first pass (for ICA).
@@ -93,6 +225,7 @@ def generate_preprocessing_report(
         eog_inds: EOG component indices.
         noise_cov: Noise covariance matrix.
         picks: Channel picks.
+        ar1_flags_mapped: AR1 flags mapped to surviving (post-reject_dict) epochs.
 
     Returns:
         MNE Report object.
@@ -134,10 +267,10 @@ def generate_preprocessing_report(
             fig = evoked.plot_joint(show=False)
             report.add_figure(fig, title=f"Evoked ({cond}) - Joint - before cleaning")
 
-    # First AutoReject pass (for ICA fitting)
+    # First AutoReject pass (for ICA fitting) — uses epochs_filt (N epochs)
     if np.sum(reject_log_first.bad_epochs) > 0:
         try:
-            fig = epochs[reject_log_first.bad_epochs].plot(show=False)
+            fig = epochs_filt[reject_log_first.bad_epochs].plot(show=False)
             report.add_figure(fig, title="Bad epochs (1st AR pass)")
         except Exception as e:
             logger.warning(f"Could not plot bad epochs: {e}")
@@ -159,165 +292,157 @@ def generate_preprocessing_report(
 
     # Comprehensive summary with detailed metrics
     n_bad_first = np.sum(reject_log_first.bad_epochs)
-    n_total = len(epochs)
-    n_good_first = n_total - n_bad_first
+    n_total_filt = len(epochs_filt)  # N: total pre-ICA epochs (1 Hz filtered)
+    n_total = len(epochs)  # M: surviving epochs after reject_dict
+    n_good_first = n_total_filt - n_bad_first
 
     # Second AR pass stats (if performed)
     if reject_log_second is not None:
         n_bad_second = np.sum(reject_log_second.bad_epochs)
-        ar_bad = reject_log_second.bad_epochs
-        # Compare threshold vs AutoReject
-        threshold_bad = threshold_bad_mask
-        both_bad = ar_bad & threshold_bad
-        only_ar_bad = ar_bad & ~threshold_bad
-        only_thresh_bad = threshold_bad & ~ar_bad
-        agreement = np.mean(ar_bad == threshold_bad) * 100
+        ar2_flags = reject_log_second.bad_epochs
     else:
         n_bad_second = 0
-        ar_bad = None
-        both_bad = None
-        only_ar_bad = None
-        only_thresh_bad = None
-        agreement = None
+        ar2_flags = np.zeros(len(epochs_ica_only), dtype=bool)
 
     # Threshold detection stats
     n_bad_threshold = threshold_stats["n_bad"]
     reject_thresh = threshold_stats["reject_threshold"].get("mag", "N/A")
     flat_thresh = threshold_stats["flat_threshold"].get("mag", "N/A")
 
-    # Build summary text conditionally based on whether second AR was performed
-    ar2_row = ""
-    ar2_details = ""
-    ar_comparison = ""
+    # --- 3-Way Comparison Figures ---
+    has_3way = (ar1_flags_mapped is not None
+                and reject_log_second is not None
+                and len(ar1_flags_mapped) == len(ar2_flags))
 
-    if reject_log_second is not None:
-        ar2_row = f"""
-    <tr style="background-color: #e6f3ff;">
-        <td><b>AR Pass 2 (detection)</b></td>
-        <td>{len(epochs_ica_only)}</td>
-        <td>{n_bad_second} flagged ({100*n_bad_second/len(epochs_ica_only):.1f}%)</td>
-        <td>Bad epochs detected post-ICA (for downstream filtering)</td>
-    </tr>"""
-        ar2_details = f"""
-    <h3>AutoReject Details</h3>
+    if has_3way:
+        ar1_m = ar1_flags_mapped
+        ar2_m = ar2_flags
+        thr_m = threshold_bad_mask
+        M = len(ar1_m)
+
+        # 3-way heatmap
+        fig_heatmap = _create_epoch_comparison_figure(ar1_m, ar2_m, thr_m)
+        report.add_figure(fig_heatmap, title="3-Way Bad Epoch Comparison")
+        plt.close(fig_heatmap)
+
+        # PTP distribution
+        fig_ptp = _create_ptp_distribution_figure(
+            epochs_filt, epochs_ica_only,
+            reject_log_first.bad_epochs, ar2_m, thr_m,
+            threshold_stats["reject_threshold"],
+        )
+        report.add_figure(fig_ptp, title="PTP Amplitude Distribution")
+        plt.close(fig_ptp)
+
+        # Compute 3-way agreement categories
+        all_bad = ar1_m & ar2_m & thr_m
+        all_good = ~ar1_m & ~ar2_m & ~thr_m
+        ar1_ar2_only = ar1_m & ar2_m & ~thr_m
+        ar1_thr_only = ar1_m & ~ar2_m & thr_m
+        ar2_thr_only = ~ar1_m & ar2_m & thr_m
+        only_ar1 = ar1_m & ~ar2_m & ~thr_m
+        only_ar2 = ~ar1_m & ar2_m & ~thr_m
+        only_thr = ~ar1_m & ~ar2_m & thr_m
+
+        # ICA effectiveness: how many AR1-flagged epochs are still bad after ICA?
+        n_ar1_bad = int(ar1_m.sum())
+        n_still_bad = int((ar1_m & ar2_m).sum())
+        n_rescued = n_ar1_bad - n_still_bad
+        rescue_rate = 100 * n_rescued / n_ar1_bad if n_ar1_bad > 0 else 0.0
+
+        # Pairwise kappas
+        kappa_ar1_ar2 = _cohen_kappa(ar1_m, ar2_m) if M > 0 else 0.0
+        kappa_ar1_thr = _cohen_kappa(ar1_m, thr_m) if M > 0 else 0.0
+        kappa_ar2_thr = _cohen_kappa(ar2_m, thr_m) if M > 0 else 0.0
+        agree_ar1_ar2 = 100 * np.mean(ar1_m == ar2_m)
+        agree_ar1_thr = 100 * np.mean(ar1_m == thr_m)
+        agree_ar2_thr = 100 * np.mean(ar2_m == thr_m)
+
+        three_way_html = f"""
+    <h3>Table 1: 3-Way Bad Epoch Comparison</h3>
     <table border="1" style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #f0f0f0;">
-        <th>Metric</th><th>First Pass (for ICA)</th><th>Second Pass (post-ICA detection)</th>
+        <th>Method</th><th>Stage</th><th>Input Epochs</th><th>Bad Detected</th><th>% Bad</th>
     </tr>
     <tr>
-        <td>Purpose</td>
-        <td>Exclude bad epochs for ICA fitting</td>
-        <td>Detect bad epochs for downstream filtering</td>
+        <td>AR Pass 1</td><td>Pre-ICA</td><td>{n_total_filt}</td>
+        <td>{int(n_bad_first)}</td><td>{100*n_bad_first/n_total_filt:.1f}%</td>
     </tr>
     <tr>
-        <td>Input epochs</td>
-        <td>{n_total}</td>
-        <td>{len(epochs_ica_only)}</td>
+        <td>AR Pass 2</td><td>Post-ICA</td><td>{M}</td>
+        <td>{int(ar2_m.sum())}</td><td>{100*ar2_m.sum()/M:.1f}%</td>
     </tr>
     <tr>
-        <td>Bad epochs detected</td>
-        <td>{n_bad_first} ({100*n_bad_first/n_total:.1f}%)</td>
-        <td>{n_bad_second} ({100*n_bad_second/len(epochs_ica_only):.1f}%)</td>
-    </tr>
-    <tr>
-        <td>Mode</td>
-        <td>Fit only</td>
-        <td>Fit only (no interpolation)</td>
+        <td>Threshold</td><td>Post-ICA</td><td>{M}</td>
+        <td>{int(thr_m.sum())}</td><td>{100*thr_m.sum()/M:.1f}%</td>
     </tr>
     </table>
 
-    <p><i><b>Note:</b> Second AR pass is fit-only. Bad epoch flags are saved in ARlog2.pkl
-    for use in downstream stats/ML to censor bad epochs from analysis.</i></p>
-
-    <h3>Threshold vs AutoReject Comparison (Post-ICA)</h3>
-    <p><i>Comparison of simple threshold-based rejection vs AutoReject on ICA-cleaned epochs.</i></p>
+    <h3>Table 2: ICA Effectiveness on Bad Epochs</h3>
     <table border="1" style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #f0f0f0;">
-        <th>Metric</th><th>Threshold</th><th>AutoReject</th>
+        <th>Metric</th><th>Count</th>
     </tr>
-    <tr>
-        <td>Method</td>
-        <td>Peak-to-peak amplitude</td>
-        <td>Cross-validation based</td>
-    </tr>
-    <tr>
-        <td>Parameters</td>
-        <td>reject={reject_thresh:.2e}, flat={flat_thresh:.2e}</td>
-        <td>Grid search (consensus, n_interpolate)</td>
-    </tr>
-    <tr>
-        <td>Bad epochs detected</td>
-        <td>{n_bad_threshold} ({threshold_stats['pct_bad']:.1f}%)</td>
-        <td>{n_bad_second} ({100*n_bad_second/len(epochs_ica_only):.1f}%)</td>
-    </tr>
+    <tr><td>Bad before ICA (AR1, mapped)</td><td>{n_ar1_bad}</td></tr>
+    <tr><td>Still bad after ICA (AR2)</td><td>{n_still_bad}</td></tr>
+    <tr style="background-color: #d4edda;"><td>Rescued by ICA</td><td>{n_rescued}</td></tr>
+    <tr style="background-color: #d4edda;"><td>Rescue rate</td><td>{rescue_rate:.1f}%</td></tr>
     </table>
 
-    <h4>Agreement Analysis</h4>
+    <h3>Table 3: 3-Way Agreement Analysis (on {M} post-ICA epochs)</h3>
     <table border="1" style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #f0f0f0;">
-        <th>Category</th><th>Count</th><th>Description</th>
-    </tr>
-    <tr style="background-color: #d4edda;">
-        <td>Agreement</td>
-        <td>{agreement:.1f}%</td>
-        <td>Epochs classified the same by both methods</td>
-    </tr>
-    <tr>
-        <td>Both methods reject</td>
-        <td>{np.sum(both_bad)}</td>
-        <td>Clearly bad epochs</td>
-    </tr>
-    <tr style="background-color: #fff3cd;">
-        <td>Only AutoReject rejects</td>
-        <td>{np.sum(only_ar_bad)}</td>
-        <td>Subtle artifacts (channel-specific)</td>
+        <th>Category</th><th>Count</th><th>%</th><th>Description</th>
     </tr>
     <tr style="background-color: #f8d7da;">
-        <td>Only Threshold rejects</td>
-        <td>{np.sum(only_thresh_bad)}</td>
-        <td>High amplitude but possibly salvageable</td>
+        <td>All 3 agree: bad</td><td>{int(all_bad.sum())}</td><td>{100*all_bad.sum()/M:.1f}%</td>
+        <td>Clearly bad epochs</td>
     </tr>
-    </table>"""
-    else:
-        ar2_details = f"""
-    <h3>AutoReject (First Pass Only)</h3>
-    <p><i>Second AutoReject pass was skipped. Run without --skip-second-ar to enable.</i></p>
-    <table border="1" style="border-collapse: collapse; width: 100%;">
-    <tr style="background-color: #f0f0f0;">
-        <th>Metric</th><th>First Pass (for ICA)</th>
+    <tr style="background-color: #d4edda;">
+        <td>All 3 agree: good</td><td>{int(all_good.sum())}</td><td>{100*all_good.sum()/M:.1f}%</td>
+        <td>Clean epochs</td>
     </tr>
     <tr>
-        <td>Input epochs</td>
-        <td>{n_total}</td>
+        <td>AR1 + AR2 only</td><td>{int(ar1_ar2_only.sum())}</td><td>{100*ar1_ar2_only.sum()/M:.1f}%</td>
+        <td>Bad before &amp; after ICA, within amplitude threshold</td>
     </tr>
     <tr>
-        <td>Bad epochs detected</td>
-        <td>{n_bad_first} ({100*n_bad_first/n_total:.1f}%)</td>
+        <td>AR1 + Threshold only</td><td>{int(ar1_thr_only.sum())}</td><td>{100*ar1_thr_only.sum()/M:.1f}%</td>
+        <td>Bad before ICA + high amplitude, but AR2 says ok</td>
     </tr>
     <tr>
-        <td>Output epochs</td>
-        <td>{n_good_first} (for ICA fitting)</td>
+        <td>AR2 + Threshold only</td><td>{int(ar2_thr_only.sum())}</td><td>{100*ar2_thr_only.sum()/M:.1f}%</td>
+        <td>Post-ICA artifacts (ICA may have introduced)</td>
+    </tr>
+    <tr style="background-color: #fff3cd;">
+        <td>Only AR1</td><td>{int(only_ar1.sum())}</td><td>{100*only_ar1.sum()/M:.1f}%</td>
+        <td>Fixed by ICA (most common scenario)</td>
+    </tr>
+    <tr>
+        <td>Only AR2</td><td>{int(only_ar2.sum())}</td><td>{100*only_ar2.sum()/M:.1f}%</td>
+        <td>Subtle post-ICA artifacts</td>
+    </tr>
+    <tr>
+        <td>Only Threshold</td><td>{int(only_thr.sum())}</td><td>{100*only_thr.sum()/M:.1f}%</td>
+        <td>High amplitude but AR says ok</td>
     </tr>
     </table>
 
-    <h3>Threshold-Based Epoch Detection (Post-ICA)</h3>
+    <h3>Table 4: Pairwise Agreement</h3>
     <table border="1" style="border-collapse: collapse; width: 100%;">
     <tr style="background-color: #f0f0f0;">
-        <th>Metric</th><th>Value</th>
+        <th>Pair</th><th>Agreement %</th><th>Cohen's Kappa</th>
     </tr>
-    <tr>
-        <td>Method</td>
-        <td>Peak-to-peak amplitude</td>
-    </tr>
-    <tr>
-        <td>Parameters</td>
-        <td>reject={reject_thresh:.2e}, flat={flat_thresh:.2e}</td>
-    </tr>
-    <tr>
-        <td>Bad epochs detected</td>
-        <td>{n_bad_threshold} ({threshold_stats['pct_bad']:.1f}%)</td>
-    </tr>
-    </table>"""
+    <tr><td>AR1 vs AR2</td><td>{agree_ar1_ar2:.1f}%</td><td>{kappa_ar1_ar2:.3f}</td></tr>
+    <tr><td>AR1 vs Threshold</td><td>{agree_ar1_thr:.1f}%</td><td>{kappa_ar1_thr:.3f}</td></tr>
+    <tr><td>AR2 vs Threshold</td><td>{agree_ar2_thr:.1f}%</td><td>{kappa_ar2_thr:.3f}</td></tr>
+    </table>
+    """
+    else:
+        three_way_html = """
+    <h3>3-Way Comparison</h3>
+    <p><i>3-way comparison not available (requires second AR pass and epoch alignment).</i></p>
+    """
 
     summary_text = f"""
     <h2>Preprocessing Summary</h2>
@@ -328,31 +453,30 @@ def generate_preprocessing_report(
         <th>Stage</th><th>Epochs</th><th>Change</th><th>Description</th>
     </tr>
     <tr>
-        <td><b>Original</b></td>
-        <td>{n_total}</td>
+        <td><b>Original (1 Hz filt)</b></td>
+        <td>{n_total_filt}</td>
         <td>-</td>
         <td>Total epochs before preprocessing</td>
     </tr>
     <tr style="background-color: #fff9e6;">
         <td><b>After AR Pass 1</b></td>
         <td>{n_good_first}</td>
-        <td>-{n_bad_first} ({100*n_bad_first/n_total:.1f}%)</td>
+        <td>-{int(n_bad_first)} ({100*n_bad_first/n_total_filt:.1f}%)</td>
         <td>Bad epochs removed for ICA fitting</td>
     </tr>
     <tr style="background-color: #e6f3ff;">
-        <td><b>After ICA</b></td>
+        <td><b>After reject_dict + ICA</b></td>
         <td>{len(epochs_ica_only)}</td>
-        <td>{len(epochs_ica_only) - n_good_first:+d}</td>
-        <td>Physiological artifacts (ECG, EOG) removed</td>
+        <td>-</td>
+        <td>Surviving epochs after amplitude rejection + ICA cleaning</td>
     </tr>
-    {ar2_row}
     <tr style="background-color: #d4edda;">
         <td><b>Output</b></td>
-        <td colspan="3"><b>{len(epochs_ica_only)} epochs saved</b> (all ICA-cleaned epochs; use ARlog2 to filter bad epochs in analysis)</td>
+        <td colspan="3"><b>{len(epochs_ica_only)} epochs saved</b> (use ARlog2 / threshold mask to filter in analysis)</td>
     </tr>
     </table>
 
-    {ar2_details}
+    {three_way_html}
 
     <h3>ICA Components Removed</h3>
     <ul>
@@ -378,9 +502,62 @@ def generate_preprocessing_report(
         noise_cov, info=preproc.info, title="Noise covariance matrix"
     )
 
-    # ICA
+    # ICA sources (timeseries)
     fig = ica.plot_sources(preproc, show=False)
     report.add_figure(fig, title="ICA sources")
+
+    # ICA component topographies
+    try:
+        figs = ica.plot_components(show=False)
+        if not isinstance(figs, list):
+            figs = [figs]
+        for i, fig_topo in enumerate(figs):
+            report.add_figure(fig_topo, title=f"ICA component topographies (page {i+1})")
+            plt.close(fig_topo)
+    except Exception as e:
+        logger.warning(f"Could not plot ICA component topographies: {e}")
+
+    # ICA properties for excluded components (ECG, EOG)
+    excluded_inds = list(set(ecg_inds + eog_inds))
+    if excluded_inds:
+        try:
+            figs_props = ica.plot_properties(epochs_ica_only, picks=excluded_inds, show=False)
+            if not isinstance(figs_props, list):
+                figs_props = [figs_props]
+            for idx, fig_prop in zip(excluded_inds, figs_props):
+                label = "ECG" if idx in ecg_inds else "EOG"
+                report.add_figure(fig_prop, title=f"ICA component {idx} properties ({label})")
+                plt.close(fig_prop)
+        except Exception as e:
+            logger.warning(f"Could not plot ICA properties for excluded components: {e}")
+
+    # PSD before vs after ICA overlay
+    try:
+        fig_psd_overlay, ax_psd = plt.subplots(figsize=(10, 5))
+        picks_mag = mne.pick_types(raw_filt.info, meg="mag")
+
+        # Pre-ICA PSD (from raw_filt which is the 1 Hz highpass filtered data)
+        psd_pre = epochs_filt.compute_psd(picks="mag")
+        psd_data_pre = psd_pre.get_data().mean(axis=(0, 1))  # average over epochs and channels
+        freqs_pre = psd_pre.freqs
+
+        # Post-ICA PSD
+        psd_post = epochs_ica_only.compute_psd(picks="mag")
+        psd_data_post = psd_post.get_data().mean(axis=(0, 1))
+        freqs_post = psd_post.freqs
+
+        ax_psd.semilogy(freqs_pre, psd_data_pre, color="blue", alpha=0.8, label="Pre-ICA")
+        ax_psd.semilogy(freqs_post, psd_data_post, color="red", alpha=0.8, label="Post-ICA")
+        ax_psd.set_xlabel("Frequency (Hz)")
+        ax_psd.set_ylabel("PSD (T²/Hz)")
+        ax_psd.set_title("Average PSD: Pre-ICA vs Post-ICA")
+        ax_psd.legend()
+        ax_psd.grid(True, alpha=0.3)
+        fig_psd_overlay.tight_layout()
+        report.add_figure(fig_psd_overlay, title="PSD Before vs After ICA")
+        plt.close(fig_psd_overlay)
+    except Exception as e:
+        logger.warning(f"Could not create PSD overlay figure: {e}")
 
     # Cleaned data - ICA only
     fig = preproc.plot(duration=20, start=plot_start, show=False)
@@ -510,6 +687,7 @@ def save_preprocessing_summary(
     eog_inds: list,
     n_epochs_ica_only: int,
     n_epochs_ica_ar: int,
+    ar1_flags_mapped: np.ndarray = None,
 ):
     """Save text-based preprocessing summary for easy parsing.
 
@@ -526,6 +704,7 @@ def save_preprocessing_summary(
         eog_inds: EOG component indices removed.
         n_epochs_ica_only: Number of epochs after ICA only.
         n_epochs_ica_ar: Number of epochs after ICA+AR.
+        ar1_flags_mapped: AR1 flags mapped to surviving epochs (optional).
     """
     n_bad_first = int(np.sum(reject_log_first.bad_epochs))
 
@@ -559,6 +738,63 @@ Threshold vs AutoReject Comparison
         ar2_output = "(Second AR pass skipped)"
         retention_flow = f"{n_total_epochs} → {n_total_epochs - n_bad_first} (-{n_bad_first}) → {n_epochs_ica_only}"
 
+    # 3-way comparison section
+    three_way_section = ""
+    if (ar1_flags_mapped is not None and reject_log_second is not None
+            and len(ar1_flags_mapped) == len(ar_bad)):
+        ar1_m = ar1_flags_mapped
+        ar2_m = ar_bad
+        thr_m = threshold_bad_mask
+        M = len(ar1_m)
+
+        n_ar1_bad = int(ar1_m.sum())
+        n_still_bad = int((ar1_m & ar2_m).sum())
+        n_rescued = n_ar1_bad - n_still_bad
+        rescue_rate = 100 * n_rescued / n_ar1_bad if n_ar1_bad > 0 else 0.0
+
+        all_bad = int((ar1_m & ar2_m & thr_m).sum())
+        all_good = int((~ar1_m & ~ar2_m & ~thr_m).sum())
+        only_ar1_ct = int((ar1_m & ~ar2_m & ~thr_m).sum())
+        only_ar2_ct = int((~ar1_m & ar2_m & ~thr_m).sum())
+        only_thr_ct = int((~ar1_m & ~ar2_m & thr_m).sum())
+
+        agree_ar1_ar2 = 100 * np.mean(ar1_m == ar2_m)
+        agree_ar1_thr = 100 * np.mean(ar1_m == thr_m)
+        agree_ar2_thr = 100 * np.mean(ar2_m == thr_m)
+
+        kappa_ar1_ar2 = _cohen_kappa(ar1_m, ar2_m) if M > 0 else 0.0
+        kappa_ar1_thr = _cohen_kappa(ar1_m, thr_m) if M > 0 else 0.0
+        kappa_ar2_thr = _cohen_kappa(ar2_m, thr_m) if M > 0 else 0.0
+
+        three_way_section = f"""
+3-Way Bad Epoch Comparison (on {M} post-ICA epochs)
+----------------------------------------------------
+  AR1 (pre-ICA, mapped):  {n_ar1_bad} bad ({100*n_ar1_bad/M:.1f}%)
+  AR2 (post-ICA):         {int(ar2_m.sum())} bad ({100*ar2_m.sum()/M:.1f}%)
+  Threshold (post-ICA):   {int(thr_m.sum())} bad ({100*thr_m.sum()/M:.1f}%)
+
+ICA Effectiveness
+-----------------
+  Bad before ICA (AR1):     {n_ar1_bad}
+  Still bad after ICA (AR2): {n_still_bad}
+  Rescued by ICA:           {n_rescued}
+  Rescue rate:              {rescue_rate:.1f}%
+
+Agreement Categories
+--------------------
+  All 3 agree bad:  {all_bad}
+  All 3 agree good: {all_good}
+  Only AR1 bad:     {only_ar1_ct} (fixed by ICA)
+  Only AR2 bad:     {only_ar2_ct}
+  Only Threshold:   {only_thr_ct}
+
+Pairwise Agreement
+------------------
+  AR1 vs AR2:       {agree_ar1_ar2:.1f}% (kappa={kappa_ar1_ar2:.3f})
+  AR1 vs Threshold: {agree_ar1_thr:.1f}% (kappa={kappa_ar1_thr:.3f})
+  AR2 vs Threshold: {agree_ar2_thr:.1f}% (kappa={kappa_ar2_thr:.3f})
+"""
+
     summary = f"""Preprocessing Summary
 ====================
 Subject: sub-{subject}
@@ -582,7 +818,7 @@ Threshold-Based Detection (post-ICA):
   - Bad epochs detected: {threshold_stats['n_bad']} ({threshold_stats['pct_bad']:.1f}%)
   - Reject threshold: {threshold_stats['reject_threshold']}
   - Flat threshold: {threshold_stats['flat_threshold']}
-{ar2_section}
+{ar2_section}{three_way_section}
 Output Files
 -----------
 Continuous (after ICA): derivatives/preprocessed/sub-{subject}/meg/*_proc-clean_meg.fif
@@ -800,6 +1036,15 @@ def preprocess_run(
     epochs_ica_only = ica.apply(epochs.copy())
     console.print(f"[green]✓ Created {len(epochs_ica_only)} ICA-cleaned epochs[/green]")
 
+    # Map AR1 flags to surviving epoch indices for 3-way comparison
+    # epochs uses reject_dict which may drop some of the N epochs_filt epochs
+    surviving_indices = [i for i, dl in enumerate(epochs.drop_log) if len(dl) == 0]
+    ar1_flags_mapped = reject_log_first.bad_epochs[np.array(surviving_indices)]
+    n_dropped = len(reject_log_first.bad_epochs) - len(surviving_indices)
+    if n_dropped > 0:
+        logger.info(f"Note: {n_dropped} epochs dropped by amplitude threshold before 3-way comparison")
+    console.print(f"[green]✓ Mapped AR1 flags: {int(ar1_flags_mapped.sum())} bad out of {len(ar1_flags_mapped)} surviving epochs[/green]")
+
     # Threshold-based bad epoch detection (for comparison with AutoReject)
     console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
     console.print(f"[bold cyan]THRESHOLD-BASED EPOCH DETECTION[/bold cyan]")
@@ -852,6 +1097,7 @@ def preprocess_run(
         raw,
         cleaned_raw,
         raw_filt,
+        epochs_filt,
         epochs,
         epochs_ica_only,
         epochs_ica_ar,
@@ -864,6 +1110,7 @@ def preprocess_run(
         eog_inds,
         noise_cov,
         picks,
+        ar1_flags_mapped=ar1_flags_mapped,
     )
 
     # Set annotations for cleaned raw
@@ -943,6 +1190,7 @@ def preprocess_run(
         eog_inds,
         len(epochs_ica_only),
         len(epochs_ica_ar),
+        ar1_flags_mapped=ar1_flags_mapped,
     )
     logger.info(f"✓ Summary: {summary_path}")
 
@@ -991,6 +1239,55 @@ def preprocess_run(
             "both_reject": int(np.sum(ar_bad & threshold_bad_mask)),
             "only_ar_rejects": int(np.sum(ar_bad & ~threshold_bad_mask)),
             "only_threshold_rejects": int(np.sum(threshold_bad_mask & ~ar_bad)),
+        }
+
+    # Add 3-way comparison to metadata
+    if (ar1_flags_mapped is not None and reject_log_second is not None
+            and len(ar1_flags_mapped) == len(reject_log_second.bad_epochs)):
+        ar1_m = ar1_flags_mapped
+        ar2_m = reject_log_second.bad_epochs
+        thr_m = threshold_bad_mask
+        M = len(ar1_m)
+
+        kappa_ar1_ar2 = float(_cohen_kappa(ar1_m, ar2_m)) if M > 0 else 0.0
+        kappa_ar1_thr = float(_cohen_kappa(ar1_m, thr_m)) if M > 0 else 0.0
+        kappa_ar2_thr = float(_cohen_kappa(ar2_m, thr_m)) if M > 0 else 0.0
+
+        n_ar1_bad = int(ar1_m.sum())
+        n_still_bad = int((ar1_m & ar2_m).sum())
+        n_rescued = n_ar1_bad - n_still_bad
+
+        params["three_way_comparison"] = {
+            "n_epochs_compared": M,
+            "ar1_mapped_bad": n_ar1_bad,
+            "ar2_bad": int(ar2_m.sum()),
+            "threshold_bad": int(thr_m.sum()),
+            "ica_effectiveness": {
+                "bad_before_ica": n_ar1_bad,
+                "still_bad_after_ica": n_still_bad,
+                "rescued_by_ica": n_rescued,
+                "rescue_rate_pct": float(100 * n_rescued / n_ar1_bad) if n_ar1_bad > 0 else 0.0,
+            },
+            "agreement_categories": {
+                "all_3_bad": int((ar1_m & ar2_m & thr_m).sum()),
+                "all_3_good": int((~ar1_m & ~ar2_m & ~thr_m).sum()),
+                "ar1_ar2_only": int((ar1_m & ar2_m & ~thr_m).sum()),
+                "ar1_thr_only": int((ar1_m & ~ar2_m & thr_m).sum()),
+                "ar2_thr_only": int((~ar1_m & ar2_m & thr_m).sum()),
+                "only_ar1": int((ar1_m & ~ar2_m & ~thr_m).sum()),
+                "only_ar2": int((~ar1_m & ar2_m & ~thr_m).sum()),
+                "only_threshold": int((~ar1_m & ~ar2_m & thr_m).sum()),
+            },
+            "pairwise_kappa": {
+                "ar1_vs_ar2": kappa_ar1_ar2,
+                "ar1_vs_threshold": kappa_ar1_thr,
+                "ar2_vs_threshold": kappa_ar2_thr,
+            },
+            "pairwise_agreement_pct": {
+                "ar1_vs_ar2": float(100 * np.mean(ar1_m == ar2_m)),
+                "ar1_vs_threshold": float(100 * np.mean(ar1_m == thr_m)),
+                "ar2_vs_threshold": float(100 * np.mean(ar2_m == thr_m)),
+            },
         }
 
     save_preprocessing_metadata(metadata_path, config, subject, run, params)
@@ -1053,6 +1350,12 @@ def main():
         action="store_true",
         default=False,
         help="Skip second AutoReject pass after ICA (default: run second AR pass for bad epoch detection)",
+    )
+    parser.add_argument(
+        "--skip-report",
+        action="store_true",
+        default=False,
+        help="Skip generating subject-level aggregate report after preprocessing",
     )
     parser.add_argument(
         "--log-level",
@@ -1135,6 +1438,18 @@ def main():
     console.print(f"\n[bold]Logs:[/bold] {log_file}")
     console.print(f"\n[dim]Read *_summary.txt files for detailed preprocessing metrics[/dim]")
     console.print(f"[dim]Use ARlog2.pkl in downstream analysis to filter out bad epochs post-ICA[/dim]")
+
+    # Generate subject-level aggregate report
+    if not args.skip_report:
+        try:
+            from code.preprocessing.aggregate_reports import generate_subject_report
+            console.print(f"\n[yellow]Generating subject-level report...[/yellow]")
+            report_path = generate_subject_report(
+                args.subject, derivatives_root, runs, config
+            )
+            console.print(f"[green]Subject report: {report_path}[/green]")
+        except Exception as e:
+            logger.warning(f"Could not generate subject-level report: {e}")
 
     logger.info("Preprocessing complete")
     return 0

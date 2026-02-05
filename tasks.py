@@ -465,6 +465,31 @@ def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
 
 
 @task
+def preprocess_report(c, subject=None, dataset=False):
+    """Generate preprocessing aggregate reports.
+
+    Examples:
+        invoke pipeline.preprocess-report --subject=04
+        invoke pipeline.preprocess-report --dataset
+        invoke pipeline.preprocess-report --subject=04 --dataset
+    """
+    if not subject and not dataset:
+        print("ERROR: At least one of --subject or --dataset is required")
+        return
+
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.preprocessing.aggregate_reports"]
+
+    if subject:
+        cmd.extend(["-s", subject])
+    if dataset:
+        cmd.append("--dataset")
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
                  skip_existing=True, slurm=False, dry_run=False):
     """Run source reconstruction (Stage 2).
@@ -1287,6 +1312,9 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
     print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
     print(f"Total jobs: {len(subjects) * len(run_list)}")
 
+    # Track per-subject job IDs for dependent report jobs
+    subject_job_ids = {subj: [] for subj in subjects}
+
     for subj in subjects:
         for run in run_list:
             job_name = f"preproc_sub-{subj}_run-{run}"
@@ -1312,16 +1340,75 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
             job_id = submit_slurm_job(script_path, dry_run=dry_run)
             if job_id:
                 job_ids.append(job_id)
+                subject_job_ids[subj].append(job_id)
 
-    if job_ids:
+    # Submit dependent report jobs (per-subject then dataset)
+    report_job_ids = []
+    report_resources = slurm_config.get("report", {"time": "00:15:00", "cpus": 2, "mem": "4G"})
+
+    for subj in subjects:
+        deps = subject_job_ids[subj]
+        if not deps and not dry_run:
+            continue
+        job_name = f"report_sub-{subj}"
+        context = {
+            "job_name": job_name,
+            "account": slurm_config["account"],
+            "partition": slurm_config.get("partition", ""),
+            "time": report_resources["time"],
+            "cpus": report_resources["cpus"],
+            "mem": report_resources["mem"],
+            "venv_path": str(venv_path),
+            "project_root": str(PROJECT_ROOT),
+            "log_dir": str(log_dir),
+            "subject": subj,
+            "dataset": False,
+            "timestamp": timestamp,
+        }
+        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+        render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
+        rjob_id = submit_slurm_job(script_path, dependencies=deps, dry_run=dry_run)
+        if rjob_id:
+            report_job_ids.append(rjob_id)
+
+    # Dataset-level report depends on all per-subject reports
+    if report_job_ids or dry_run:
+        job_name = f"report_dataset"
+        context = {
+            "job_name": job_name,
+            "account": slurm_config["account"],
+            "partition": slurm_config.get("partition", ""),
+            "time": report_resources["time"],
+            "cpus": report_resources["cpus"],
+            "mem": report_resources["mem"],
+            "venv_path": str(venv_path),
+            "project_root": str(PROJECT_ROOT),
+            "log_dir": str(log_dir),
+            "subject": None,
+            "dataset": True,
+            "timestamp": timestamp,
+        }
+        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+        render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
+        dataset_job_id = submit_slurm_job(
+            script_path, dependencies=report_job_ids, dry_run=dry_run
+        )
+        if dataset_job_id:
+            report_job_ids.append(dataset_job_id)
+
+    all_job_ids = job_ids + report_job_ids
+    if all_job_ids:
         manifest_path = log_dir / f"preprocessing_manifest_{timestamp}.json"
-        save_job_manifest(job_ids, manifest_path, metadata={
+        save_job_manifest(all_job_ids, manifest_path, metadata={
             "stage": "preprocessing",
             "timestamp": timestamp,
             "subjects": subjects,
             "runs": run_list,
+            "preprocessing_job_ids": job_ids,
+            "report_job_ids": report_job_ids,
         })
         print(f"\n✓ Submitted {len(job_ids)} preprocessing jobs")
+        print(f"✓ Submitted {len(report_job_ids)} report jobs (with dependencies)")
 
 
 def _source_recon_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True):
@@ -1680,6 +1767,7 @@ pipeline = Collection("pipeline")
 pipeline.add_task(validate_inputs, name="validate-inputs")
 pipeline.add_task(bids)
 pipeline.add_task(preprocess)
+pipeline.add_task(preprocess_report, name="preprocess-report")
 pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
 pipeline.add_collection(features)  # Nested: pipeline.features.*
