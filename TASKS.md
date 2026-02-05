@@ -439,12 +439,65 @@ Run paired t-tests on FOOOF parameters (IN vs OUT).
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--space` | string | sensor | Analysis space |
+| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
 | `--alpha` | float | 0.05 | Significance threshold |
+| `--n-permutations` | int | 1000 | Number of permutations (for tmax correction) |
 
 **Examples:**
 ```bash
 invoke analysis.stats.fooof
-invoke analysis.stats.fooof --alpha=0.01
+invoke analysis.stats.fooof --correction=tmax --n-permutations=10000
+invoke analysis.stats.fooof --correction=bonferroni
+```
+
+---
+
+### `invoke analysis.stats.psd`
+
+Run paired t-tests on raw PSD band power (IN vs OUT).
+
+**What it analyzes:**
+- Band power for each frequency band (delta, theta, alpha, lobeta, hibeta, gamma1, etc.)
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | sensor | Analysis space |
+| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--n-permutations` | int | 1000 | Number of permutations (for tmax correction) |
+| `--bands` | string | "delta theta alpha lobeta hibeta gamma1" | Space-separated frequency bands to analyze |
+
+**Examples:**
+```bash
+invoke analysis.stats.psd
+invoke analysis.stats.psd --correction=tmax --n-permutations=10000
+invoke analysis.stats.psd --bands="theta alpha"
+```
+
+---
+
+### `invoke analysis.stats.psd-corrected`
+
+Run paired t-tests on aperiodic-corrected PSD band power (IN vs OUT).
+
+**What it analyzes:**
+- Band power with 1/f aperiodic component removed (periodic component from FOOOF)
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | sensor | Analysis space |
+| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--n-permutations` | int | 1000 | Number of permutations (for tmax correction) |
+| `--bands` | string | "delta theta alpha lobeta hibeta gamma1" | Space-separated frequency bands to analyze |
+
+**Examples:**
+```bash
+invoke analysis.stats.psd-corrected
+invoke analysis.stats.psd-corrected --correction=tmax --n-permutations=10000
+invoke analysis.stats.psd-corrected --bands="theta alpha"
 ```
 
 ---
