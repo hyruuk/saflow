@@ -1,0 +1,31 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Preprocessing Aggregate Report
+# =============================================================================
+
+echo "Report Configuration:"
+{% if subject %}
+echo "  Subject:        {{ subject }}"
+{% endif %}
+{% if dataset %}
+echo "  Dataset report:  yes"
+{% endif %}
+echo ""
+
+# Run aggregate report generation
+python -m code.preprocessing.aggregate_reports \
+    {% if subject %}-s {{ subject }}{% endif %} \
+    {% if dataset %}--dataset{% endif %}
+
+REPORT_EXIT=$?
+
+if [ $REPORT_EXIT -eq 0 ]; then
+    echo "✓ Report generation completed successfully"
+else
+    echo "✗ Report generation failed with exit code $REPORT_EXIT"
+    exit $REPORT_EXIT
+fi
+
+{% endblock %}
