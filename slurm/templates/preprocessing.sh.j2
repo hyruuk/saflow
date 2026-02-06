@@ -14,12 +14,15 @@ echo "  Skip existing:  {{ skip_existing }}"
 echo ""
 
 # Run preprocessing
+# --skip-report: subject-level aggregate report is handled by a separate
+# dependent SLURM job (report_sub-XX) that runs after all runs complete.
 python -m code.preprocessing.run_preprocessing \
     --subject {{ subject }} \
     --runs {{ run }} \
     --bids-root {{ bids_root }} \
     --log-level {{ log_level }} \
-    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
+    {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %} \
+    --skip-report
 
 PREPROC_EXIT=$?
 
