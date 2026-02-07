@@ -1273,13 +1273,14 @@ def preprocess_run(
     add_bad_epoch_annotations(cleaned_raw, epochs_preproc, ar2_flags_full, "BAD_AR2")
 
     # Also add event annotations
-    cleaned_raw.set_annotations(
-        cleaned_raw.annotations + mne.annotations_from_events(
-            events_all,
-            sfreq=raw.info["sfreq"],
-            event_desc={v: k for k, v in event_id_all.items()},
-        )
+    event_annots = mne.annotations_from_events(
+        events_all,
+        sfreq=raw.info["sfreq"],
+        event_desc={v: k for k, v in event_id_all.items()},
     )
+    # Match orig_time so annotations can be concatenated
+    event_annots._orig_time = cleaned_raw.annotations.orig_time
+    cleaned_raw.set_annotations(cleaned_raw.annotations + event_annots)
 
     # ================================================================
     # GENERATE REPORT
