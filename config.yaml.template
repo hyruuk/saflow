@@ -329,8 +329,8 @@ computing:
     # Resource allocations per pipeline stage
     preprocessing:
       cpus: 12
-      mem: 32G
-      time: "12:00:00"
+      mem: 64G
+      time: "16:00:00"
 
     source_reconstruction:
       cpus: 1
