@@ -104,7 +104,7 @@ def parse_args() -> argparse.Namespace:
         "--processing",
         type=str,
         default="clean",
-        choices=["clean", "ica", "icaar"],
+        choices=["clean", "ica", "ar2interp"],
         help="Processing state of input data",
     )
 

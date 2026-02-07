@@ -50,8 +50,8 @@ def load_data(
         input_type: "continuous" or "epochs" (default: "continuous")
         processing: Processing state for sensor/source data:
             - "clean": ICA-cleaned continuous (for continuous)
-            - "ica": ICA-only epochs (for epochs)
-            - "icaar": ICA+AutoReject epochs (for epochs)
+            - "ica": ICA-only epochs (all epochs, for epochs)
+            - "ar2interp": AR2-interpolated epochs (bad channels interpolated, for epochs)
         config: Configuration dictionary (optional, loaded if None)
 
     Returns:
@@ -107,7 +107,7 @@ def _load_sensor_data(
     """Load sensor-level MEG data (channels).
 
     For continuous: loads ICA-cleaned continuous data (processing="clean")
-    For epochs: loads epoched data (processing="ica" or "icaar")
+    For epochs: loads epoched data (processing="ica" or "ar2interp")
     """
     # Derivatives are at data_root/derivatives, not bids_root/derivatives
     data_root = Path(config["paths"]["data_root"])
@@ -139,7 +139,7 @@ def _load_sensor_data(
 
     elif input_type == "epochs":
         # Load epoched data (ICA or ICA+AR)
-        # Files are stored as: sub-{subject}_task-gradCPT_run-{run}_proc-{ica|icaar}_meg.fif
+        # Files are stored as: sub-{subject}_task-gradCPT_run-{run}_proc-{ica|ar2interp}_meg.fif
         epochs_dir = derivatives_root / "epochs" / f"sub-{subject}" / "meg"
         task_name = config["bids"]["task_name"]
         epoch_file = epochs_dir / f"sub-{subject}_task-{task_name}_run-{run}_proc-{processing}_meg.fif"

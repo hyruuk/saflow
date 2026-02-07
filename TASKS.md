@@ -122,11 +122,12 @@ Run MEG preprocessing (Stage 1 of pipeline).
 1. Loads raw BIDS data
 2. Applies gradient compensation (grade 3)
 3. Applies bandpass filtering (0.1-200 Hz) and notch filtering (60 Hz)
-4. Creates epochs for all events
-5. Runs AutoReject to identify bad epochs for ICA
-6. Fits ICA and removes ECG/EOG artifacts
-7. Runs second AutoReject pass (fit only) for bad epoch detection
-8. Saves preprocessed data, epochs, reports, and metadata
+4. Creates epochs for stimulus events only (Freq+Rare, no Resp)
+5. Runs AutoReject (AR1) to identify bad epochs for ICA
+6. Fits ICA and removes ECG/EOG artifacts, applies to continuous raw
+7. Re-epochs from ICA-cleaned continuous (1:1 mapping with AR1)
+8. Runs AutoReject (AR2) with fit+transform (reject log + interpolation)
+9. Saves three outputs: continuous Raw + BAD annotations, ICA epochs, AR2-interpolated epochs
 
 **Arguments:**
 | Argument | Type | Default | Description |
@@ -137,7 +138,6 @@ Run MEG preprocessing (Stage 1 of pipeline).
 | `--log-level` | choice | INFO | DEBUG, INFO, WARNING, ERROR |
 | `--skip-existing` | flag | true | Skip if output files exist (default) |
 | `--crop` | float | none | Crop to first N seconds (for testing) |
-| `--skip-second-ar` | flag | false | Skip second AutoReject pass |
 | `--slurm` | flag | false | Submit jobs to SLURM cluster |
 | `--dry-run` | flag | false | Generate SLURM scripts without submitting |
 

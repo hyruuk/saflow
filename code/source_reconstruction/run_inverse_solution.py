@@ -85,9 +85,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--processing",
         type=str,
-        choices=["clean", "ica", "icaar"],
+        choices=["clean", "ica", "ar2interp"],
         default="clean",
-        help="Processing state: 'clean' (continuous ICA-cleaned), 'ica' (epochs ICA-only), or 'icaar' (epochs ICA+AR)",
+        help="Processing state: 'clean' (continuous ICA-cleaned), 'ica' (ICA epochs, all), or 'ar2interp' (AR2-interpolated epochs)",
     )
 
     parser.add_argument(
@@ -141,7 +141,7 @@ def process_single_run(
         derivatives_root: Derivatives root directory
         skip_existing: Skip if output exists
         input_type: "continuous" or "epochs"
-        processing: Processing state ("clean", "ica", or "icaar")
+        processing: Processing state ("clean", "ica", or "ar2interp")
 
     Returns:
         True if processing succeeded, False otherwise
