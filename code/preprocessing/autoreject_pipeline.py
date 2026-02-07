@@ -162,3 +162,75 @@ def run_autoreject_transform(
     )
 
     return epochs_clean, ar, reject_log
+
+
+def run_autoreject_both(
+    epochs: mne.Epochs,
+    n_interpolate: list = None,
+    consensus: list = None,
+    picks: str = "mag",
+    n_jobs: int = 1,
+    random_state: int = 42,
+) -> tuple:
+    """Run AutoReject: fit once, then return both reject_log and interpolated epochs.
+
+    This avoids double-fitting by calling fit() once, then both
+    get_reject_log() (for flags) and transform() (for interpolation).
+
+    Args:
+        epochs: Epoched MEG data (typically after ICA).
+        n_interpolate: Number of channels to interpolate (grid search).
+        consensus: Fraction of channels for rejection (grid search).
+        picks: Channel types to use.
+        n_jobs: Number of parallel jobs.
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        Tuple of (autoreject_object, reject_log, epochs_interpolated).
+    """
+    if n_interpolate is None:
+        n_interpolate = [1, 4, 32]
+
+    if consensus is None:
+        consensus = [0.1, 0.2, 0.3, 0.5]
+
+    logger.info("Running AutoReject (fit + reject_log + transform)")
+    logger.info(f"  n_interpolate: {n_interpolate}")
+    logger.info(f"  consensus: {consensus}")
+    logger.info(f"  n_jobs: {n_jobs}")
+
+    console.print("[yellow]\u23f3 AutoReject: Fitting model (fit + reject_log + transform)...[/yellow]")
+
+    ar = AutoReject(
+        n_interpolate=n_interpolate,
+        consensus=consensus,
+        picks=picks,
+        n_jobs=n_jobs,
+        random_state=random_state,
+        verbose="progressbar",
+    )
+
+    ar.fit(epochs)
+
+    # Get reject log (flags) without modifying epochs
+    reject_log = ar.get_reject_log(epochs)
+
+    # Get interpolated epochs via transform
+    epochs_interpolated = ar.transform(epochs)
+
+    console.print("[green]\u2713 AutoReject: fit + reject_log + transform complete[/green]")
+
+    n_bad = np.sum(reject_log.bad_epochs)
+    n_total = len(epochs)
+    pct_bad = 100 * n_bad / n_total
+
+    # Count interpolated channels
+    n_interpolated = np.sum(reject_log.labels == 2)  # 2 = interpolated
+    n_total_channels = reject_log.labels.size
+
+    logger.info(
+        f"AutoReject: {n_bad}/{n_total} bad epochs ({pct_bad:.1f}%), "
+        f"{n_interpolated}/{n_total_channels} channel-epochs interpolated"
+    )
+
+    return ar, reject_log, epochs_interpolated

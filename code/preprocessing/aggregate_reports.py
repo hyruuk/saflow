@@ -122,6 +122,10 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         threshold = p.get("threshold_detection", {})
         ica = p.get("ica", {})
         three_way = p.get("three_way_comparison", {})
+        event_counts = p.get("event_counts", {})
+        isi_stats = p.get("isi_statistics", {})
+        retention = p.get("retention", {})
+        pre_ar2 = p.get("pre_ar2_filter", {})
 
         ar1_pct = ar1.get("pct_bad")
         ar2_pct = ar2.get("pct_bad") if ar2 else None
@@ -138,6 +142,15 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         )
         pairwise_kappa = _safe_get(three_way, "pairwise_kappa")
 
+        # New fields: event counts, ISI, proper retention
+        n_freq = event_counts.get("Freq")
+        n_rare = event_counts.get("Rare")
+        n_resp = event_counts.get("Resp")
+        n_stimulus_epochs = _safe_get(retention, "n_total_stimulus_epochs", default=n_total)
+        proper_retention = _safe_get(retention, "retention_rate_pct")
+        isi_mean = _safe_get(isi_stats, "mean")
+        isi_std = _safe_get(isi_stats, "std")
+
         per_run.append({
             "run": run,
             "complete": True,
@@ -148,12 +161,20 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "threshold_pct_bad": threshold_pct,
             "threshold_n_bad": threshold.get("n_bad_epochs"),
             "n_total_epochs": n_total,
+            "n_stimulus_epochs": n_stimulus_epochs,
+            "n_freq": n_freq,
+            "n_rare": n_rare,
+            "n_resp": n_resp,
             "n_ecg_ics": n_ecg,
             "n_eog_ics": n_eog,
             "ecg_components": ecg_components,
             "eog_components": eog_components,
             "rescue_rate": rescue_rate,
             "pairwise_kappa": pairwise_kappa,
+            "retention_rate": proper_retention,
+            "isi_mean": isi_mean,
+            "isi_std": isi_std,
+            "pre_ar2_outliers": _safe_get(pre_ar2, "n_outliers"),
         })
 
     # Compute summary statistics from complete runs
@@ -170,16 +191,39 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "max": float(np.max(arr)),
         }
 
+    def _stats_cv(values):
+        """Stats with coefficient of variation."""
+        arr = np.array([v for v in values if v is not None], dtype=float)
+        if len(arr) == 0:
+            return {"mean": None, "std": None, "min": None, "max": None, "cv": None}
+        mean = float(np.mean(arr))
+        std = float(np.std(arr))
+        return {
+            "mean": mean,
+            "std": std,
+            "min": float(np.min(arr)),
+            "max": float(np.max(arr)),
+            "cv": float(std / mean) if mean > 0 else None,
+        }
+
     ar1_pcts = [r["ar1_pct_bad"] for r in complete_runs]
     ar2_pcts = [r["ar2_pct_bad"] for r in complete_runs]
     threshold_pcts = [r["threshold_pct_bad"] for r in complete_runs]
     rescue_rates = [r["rescue_rate"] for r in complete_runs]
     n_totals = [r["n_total_epochs"] for r in complete_runs]
+    isi_means = [r["isi_mean"] for r in complete_runs]
+    n_stimulus = [r["n_stimulus_epochs"] for r in complete_runs]
 
-    # Retention rate: 100 - ar1_pct_bad (epochs surviving first pass)
-    retention_rates = [
-        100.0 - v for v in ar1_pcts if v is not None
-    ]
+    # Retention rate: use proper retention from params if available, else fall back
+    proper_retentions = [r["retention_rate"] for r in complete_runs]
+    has_proper_retention = any(v is not None for v in proper_retentions)
+    if has_proper_retention:
+        retention_rates = proper_retentions
+    else:
+        # Fallback: 100 - ar1_pct_bad
+        retention_rates = [
+            100.0 - v for v in ar1_pcts if v is not None
+        ]
 
     summary = {
         "ar1_pct_bad": _stats(ar1_pcts),
@@ -187,6 +231,8 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         "threshold_pct_bad": _stats(threshold_pcts),
         "rescue_rate": _stats(rescue_rates),
         "retention_rate": _stats(retention_rates),
+        "isi_mean": _stats(isi_means),
+        "n_stimulus_epochs": _stats_cv(n_stimulus),
     }
 
     total_epochs = sum(v for v in n_totals if v is not None)
@@ -326,10 +372,32 @@ def aggregate_dataset_metrics(all_subject_params: dict) -> dict:
                 "reasons": reasons,
             })
 
+    # Epoch count consistency check: flag subjects with varying per-run counts
+    epoch_count_flags = []
+    for subject, metrics in per_subject.items():
+        complete_runs = [r for r in metrics["per_run"] if r.get("complete")]
+        stim_counts = [r.get("n_stimulus_epochs") for r in complete_runs
+                       if r.get("n_stimulus_epochs") is not None]
+        if len(stim_counts) >= 2:
+            unique_counts = set(stim_counts)
+            if len(unique_counts) > 1:
+                epoch_count_flags.append({
+                    "subject": subject,
+                    "metric": "epoch_count_inconsistency",
+                    "counts": stim_counts,
+                    "unique": sorted(unique_counts),
+                })
+                outlier_subjects.append({
+                    "subject": subject,
+                    "metric": "epoch_count_inconsistency",
+                    "reasons": [f"per-run epoch counts vary: {sorted(unique_counts)}"],
+                })
+
     return {
         "per_subject": per_subject,
         "dataset_stats": dataset_stats,
         "outlier_subjects": outlier_subjects,
+        "epoch_count_flags": epoch_count_flags,
         "n_subjects": len(per_subject),
         "n_subjects_complete": sum(
             1 for m in per_subject.values() if m["n_runs_complete"] > 0
@@ -528,20 +596,23 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     # Per-run metrics table
     html += """
     <h3>Per-Run Metrics</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 13px;">
+    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 12px;">
     <tr style="background-color: #f0f0f0;">
-        <th>Run</th><th>Total Epochs</th>
+        <th>Run</th><th>Stim Epochs</th>
+        <th>Freq</th><th>Rare</th><th>Resp</th>
+        <th>ISI Mean</th>
         <th>AR1 Bad</th><th>AR1 %</th>
         <th>AR2 Bad</th><th>AR2 %</th>
-        <th>Threshold Bad</th><th>Threshold %</th>
+        <th>Threshold %</th>
+        <th>Retention %</th>
         <th>ECG ICs</th><th>EOG ICs</th>
-        <th>Rescue Rate</th>
+        <th>Rescue %</th>
     </tr>
     """
     for r in per_run:
         if not r.get("complete"):
             html += f'<tr style="background-color: #fff3cd;"><td>{r["run"]}</td>'
-            html += '<td colspan="10"><i>Missing or incomplete</i></td></tr>'
+            html += '<td colspan="14"><i>Missing or incomplete</i></td></tr>'
             continue
 
         # Highlight runs with >30% bad
@@ -559,21 +630,42 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         if rescue != "-":
             rescue += "%"
 
+        retention = _fmt(r.get("retention_rate"), ".1f")
+        if retention != "-":
+            retention += "%"
+
+        isi_mean = _fmt(r.get("isi_mean"), ".3f")
+        if isi_mean != "-":
+            isi_mean += "s"
+
         html += f"""<tr{row_style}>
             <td>{r['run']}</td>
-            <td>{_fmt_int(r.get('n_total_epochs'))}</td>
+            <td>{_fmt_int(r.get('n_stimulus_epochs'))}</td>
+            <td>{_fmt_int(r.get('n_freq'))}</td>
+            <td>{_fmt_int(r.get('n_rare'))}</td>
+            <td>{_fmt_int(r.get('n_resp'))}</td>
+            <td>{isi_mean}</td>
             <td>{_fmt_int(r.get('ar1_n_bad'))}</td>
             <td>{_fmt(r.get('ar1_pct_bad'))}%</td>
             <td>{_fmt_int(r.get('ar2_n_bad'))}</td>
             <td>{_fmt(r.get('ar2_pct_bad'))}%</td>
-            <td>{_fmt_int(r.get('threshold_n_bad'))}</td>
             <td>{_fmt(r.get('threshold_pct_bad'))}%</td>
+            <td>{retention}</td>
             <td>{r.get('n_ecg_ics', '-')}</td>
             <td>{r.get('n_eog_ics', '-')}</td>
             <td>{rescue}</td>
         </tr>"""
 
     html += "</table>"
+
+    # ISI statistics section
+    isi_summary = summary.get("isi_mean", {})
+    if isi_summary.get("mean") is not None:
+        html += f"""
+        <h3>ISI Statistics (across runs)</h3>
+        <p>Mean ISI: {isi_summary['mean']:.3f}s (std={isi_summary.get('std', 0):.3f}s,
+        range: {isi_summary['min']:.3f}s - {isi_summary['max']:.3f}s)</p>
+        """
 
     # ICA summary table
     html += """
@@ -615,11 +707,21 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         ("Threshold Bad %", "threshold_pct_bad"),
         ("Retention Rate %", "retention_rate"),
         ("Rescue Rate %", "rescue_rate"),
+        ("ISI Mean (s)", "isi_mean"),
     ]:
-        s = summary[metric_key]
+        s = summary.get(metric_key, {})
         def _f(v):
             return f"{v:.1f}" if v is not None else "-"
-        html += f'<tr><td>{metric_name}</td><td>{_f(s["mean"])}</td><td>{_f(s["std"])}</td><td>{_f(s["min"])}</td><td>{_f(s["max"])}</td></tr>'
+        html += f'<tr><td>{metric_name}</td><td>{_f(s.get("mean"))}</td><td>{_f(s.get("std"))}</td><td>{_f(s.get("min"))}</td><td>{_f(s.get("max"))}</td></tr>'
+
+    # Stimulus epoch count with CV
+    stim_stats = summary.get("n_stimulus_epochs", {})
+    if stim_stats.get("mean") is not None:
+        cv = stim_stats.get("cv")
+        cv_str = f"{cv:.3f}" if cv is not None else "-"
+        html += f'<tr><td>Stimulus Epochs</td><td>{stim_stats["mean"]:.0f}</td><td>{stim_stats["std"]:.1f}</td><td>{stim_stats["min"]:.0f}</td><td>{stim_stats["max"]:.0f}</td></tr>'
+        html += f'<tr><td>Epoch Count CV</td><td colspan="4">{cv_str}</td></tr>'
+
     html += "</table>"
 
     # Links to per-run reports
@@ -725,9 +827,10 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
     # Per-subject summary table
     html += """
     <h3>Per-Subject Summary</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 12px;">
+    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px;">
     <tr style="background-color: #f0f0f0;">
         <th>Subject</th><th>Runs</th><th>Total Epochs</th>
+        <th>Stim Epochs</th><th>ISI Mean</th>
         <th>Mean AR1 %</th><th>Mean AR2 %</th>
         <th>Mean Threshold %</th><th>Mean Retention %</th>
         <th>Mean Rescue %</th><th>Outlier Runs</th>
@@ -750,12 +853,20 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         def _f(v):
             return f"{v:.1f}" if v is not None else "-"
 
+        def _f3(v):
+            return f"{v:.3f}" if v is not None else "-"
+
         n_outliers = len(metrics["outlier_runs"])
+
+        stim_mean = _safe_get(s, "n_stimulus_epochs", "mean")
+        isi_mean = _safe_get(s, "isi_mean", "mean")
 
         html += f"""<tr{row_style}>
             <td>sub-{subj}</td>
             <td>{metrics['n_runs_complete']}/{metrics['n_runs_total']}</td>
             <td>{metrics['total_epochs']}</td>
+            <td>{f'{stim_mean:.0f}' if stim_mean is not None else '-'}</td>
+            <td>{_f3(isi_mean)}s</td>
             <td>{_f(s['ar1_pct_bad']['mean'])}</td>
             <td>{_f(s['ar2_pct_bad']['mean'])}</td>
             <td>{_f(s['threshold_pct_bad']['mean'])}</td>
@@ -765,6 +876,14 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         </tr>"""
 
     html += "</table>"
+
+    # Epoch count consistency flags
+    epoch_flags = dataset_metrics.get("epoch_count_flags", [])
+    if epoch_flags:
+        html += "<h3>Epoch Count Consistency Warnings</h3><ul>"
+        for flag in epoch_flags:
+            html += f'<li style="color: #c62828;">sub-{flag["subject"]}: per-run counts vary: {flag["unique"]}</li>'
+        html += "</ul>"
 
     # Overall statistics
     html += "<h3>Overall Statistics</h3>"
