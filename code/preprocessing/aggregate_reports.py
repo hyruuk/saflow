@@ -910,11 +910,16 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
             if o.get("metric") == "absolute_threshold":
                 details = "; ".join(o.get("reasons", []))
             else:
+                def _fmt(v, fmt=".1f"):
+                    try:
+                        return f"{float(v):{fmt}}"
+                    except (TypeError, ValueError):
+                        return "-"
                 details = (
-                    f"value={o.get('value', ''):.1f}, "
-                    f"median={o.get('median', ''):.1f}, "
-                    f"MAD={o.get('mad', ''):.2f}, "
-                    f"deviation={o.get('deviation_mad', ''):.1f} MAD"
+                    f"value={_fmt(o.get('value'))}, "
+                    f"median={_fmt(o.get('median'))}, "
+                    f"MAD={_fmt(o.get('mad'), '.2f')}, "
+                    f"deviation={_fmt(o.get('deviation_mad'))} MAD"
                 )
             html += f'<tr style="background-color: #f8d7da;"><td>sub-{o["subject"]}</td><td>{o.get("metric", "")}</td><td>{details}</td></tr>'
         html += "</table>"
