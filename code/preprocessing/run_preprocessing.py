@@ -250,6 +250,8 @@ def generate_preprocessing_report(
     events_stim: np.ndarray = None,
     sfreq: float = None,
     pre_ar2_stats: dict = None,
+    ecg_scores: np.ndarray = None,
+    eog_scores: np.ndarray = None,
 ) -> mne.Report:
     """Generate HTML report for preprocessing with three-way comparison.
 
@@ -274,6 +276,8 @@ def generate_preprocessing_report(
         events_stim: Stimulus events array (for ISI figure).
         sfreq: Sampling frequency.
         pre_ar2_stats: Pre-AR2 filter statistics (or None).
+        ecg_scores: ECG correlation scores for all ICA components.
+        eog_scores: EOG correlation scores for all ICA components.
 
     Returns:
         MNE Report object.
@@ -609,6 +613,43 @@ def generate_preprocessing_report(
                 plt.close(fig_prop)
         except Exception as e:
             logger.warning(f"Could not plot ICA properties for excluded components: {e}")
+
+    # ICA score distribution bar charts
+    if ecg_scores is not None:
+        try:
+            fig_ecg_scores, ax_ecg = plt.subplots(figsize=(10, 4))
+            n_comps = len(ecg_scores)
+            colors = ['#d9534f' if i in ecg_inds else '#5bc0de' for i in range(n_comps)]
+            ax_ecg.bar(range(n_comps), np.abs(ecg_scores), color=colors, edgecolor='black', linewidth=0.5)
+            ax_ecg.set_xlabel("ICA Component")
+            ax_ecg.set_ylabel("|Score|")
+            ax_ecg.set_title(f"ECG Scores (CTPS) — excluded: {ecg_inds}")
+            ax_ecg.set_xticks(range(n_comps))
+            ax_ecg.set_xticklabels([f"IC{i}" for i in range(n_comps)], rotation=45, fontsize=8)
+            ax_ecg.grid(axis='y', alpha=0.3)
+            fig_ecg_scores.tight_layout()
+            report.add_figure(fig_ecg_scores, title="ECG component scores")
+            plt.close(fig_ecg_scores)
+        except Exception as e:
+            logger.warning(f"Could not plot ECG scores: {e}")
+
+    if eog_scores is not None:
+        try:
+            fig_eog_scores, ax_eog = plt.subplots(figsize=(10, 4))
+            n_comps = len(eog_scores)
+            colors = ['#d9534f' if i in eog_inds else '#5bc0de' for i in range(n_comps)]
+            ax_eog.bar(range(n_comps), np.abs(eog_scores), color=colors, edgecolor='black', linewidth=0.5)
+            ax_eog.set_xlabel("ICA Component")
+            ax_eog.set_ylabel("|Score|")
+            ax_eog.set_title(f"EOG Scores (correlation) — excluded: {eog_inds}")
+            ax_eog.set_xticks(range(n_comps))
+            ax_eog.set_xticklabels([f"IC{i}" for i in range(n_comps)], rotation=45, fontsize=8)
+            ax_eog.grid(axis='y', alpha=0.3)
+            fig_eog_scores.tight_layout()
+            report.add_figure(fig_eog_scores, title="EOG component scores")
+            plt.close(fig_eog_scores)
+        except Exception as e:
+            logger.warning(f"Could not plot EOG scores: {e}")
 
     # PSD before vs after ICA overlay
     try:
@@ -1154,12 +1195,14 @@ def preprocess_run(
     console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
     console.print(f"[bold cyan]ICA ARTIFACT REMOVAL[/bold cyan]")
     console.print(f"[bold cyan]{'='*60}[/bold cyan]")
-    cleaned_raw, _, ica, ecg_inds, eog_inds, ecg_scores, eog_scores = run_ica_pipeline(
+    cleaned_raw, _, ica, ecg_inds, eog_inds, ecg_scores, eog_scores, ecg_forced, eog_forced = run_ica_pipeline(
         preproc,
         epochs_filt[good_mask],
         noise_cov,
-        n_components=ica_cfg.get("n_components", 20),
+        n_components=ica_cfg.get("n_components", 0.99),
         random_state=ica_cfg.get("random_state", 42),
+        ecg_threshold=ica_cfg.get("ecg_threshold", 0.25),
+        eog_threshold=ica_cfg.get("eog_threshold", 2.5),
     )
 
     # ================================================================
@@ -1306,6 +1349,8 @@ def preprocess_run(
         events_stim=events_stim,
         sfreq=sfreq,
         pre_ar2_stats=pre_ar2_stats,
+        ecg_scores=ecg_scores,
+        eog_scores=eog_scores,
     )
 
     # ================================================================
@@ -1365,6 +1410,11 @@ def preprocess_run(
         pickle.dump(reject_log_second, f)
     logger.info(f"Saved second AutoReject log to {ar_log_second_path}")
 
+    # Save ICA object
+    ica_path = Path(str(paths["ica"].fpath) + "-ica.fif")
+    ica.save(ica_path, overwrite=True)
+    logger.info(f"Saved ICA object to {ica_path}")
+
     # Save HTML report
     logger.info("Saving HTML report...")
     report_path = Path(str(paths["report"].fpath) + ".html")
@@ -1408,15 +1458,16 @@ def preprocess_run(
         "event_counts": event_counts,
         "isi_statistics": isi_stats,
         "ica": {
-            "n_components": ica_cfg.get("n_components", 20),
+            "n_components_requested": ica_cfg.get("n_components", 0.99),
+            "n_components_actual": int(ica.n_components_),
             "ecg_components": ecg_inds,
             "eog_components": eog_inds,
             "ecg_scores": ecg_scores.tolist() if isinstance(ecg_scores, np.ndarray) else ecg_scores,
             "eog_scores": eog_scores.tolist() if isinstance(eog_scores, np.ndarray) else eog_scores,
-            "ecg_threshold": float(ica_cfg.get("ecg_threshold", 0.50)),
-            "eog_threshold": float(ica_cfg.get("eog_threshold", 4.0)),
-            "ecg_forced": bool(np.max(np.abs(ecg_scores)) < ica_cfg.get("ecg_threshold", 0.50)) if len(ecg_scores) > 0 else False,
-            "eog_forced": bool(np.max(np.abs(eog_scores)) < ica_cfg.get("eog_threshold", 4.0)) if len(eog_scores) > 0 else False,
+            "ecg_threshold": float(ica_cfg.get("ecg_threshold", 0.25)),
+            "eog_threshold": float(ica_cfg.get("eog_threshold", 2.5)),
+            "ecg_forced": ecg_forced,
+            "eog_forced": eog_forced,
         },
         "autoreject_first_pass": {
             "description": "First pass (fit only) for ICA",

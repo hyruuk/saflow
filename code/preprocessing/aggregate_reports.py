@@ -136,6 +136,7 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         eog_components = ica.get("eog_components", [])
         n_ecg = len(ecg_components) if isinstance(ecg_components, list) else 0
         n_eog = len(eog_components) if isinstance(eog_components, list) else 0
+        n_ica_components = _safe_get(ica, "n_components_actual")
 
         # ICA scores (available from future runs, None for old data)
         ecg_scores = _safe_get(ica, "ecg_scores")
@@ -183,6 +184,7 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "n_resp": n_resp,
             "n_ecg_ics": n_ecg,
             "n_eog_ics": n_eog,
+            "n_ica_components": n_ica_components,
             "ecg_components": ecg_components,
             "eog_components": eog_components,
             "ecg_scores": ecg_scores,
@@ -249,6 +251,8 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             100.0 - v for v in ar1_pcts if v is not None
         ]
 
+    n_ica_components = [r["n_ica_components"] for r in complete_runs]
+
     summary = {
         "ar1_pct_bad": _stats(ar1_pcts),
         "ar2_pct_bad": _stats(ar2_pcts),
@@ -257,6 +261,7 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         "retention_rate": _stats(retention_rates),
         "isi_mean": _stats(isi_means),
         "n_stimulus_epochs": _stats_cv(n_stimulus),
+        "n_ica_components": _stats(n_ica_components),
     }
 
     total_epochs = sum(v for v in n_totals if v is not None)
@@ -768,7 +773,7 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
 
         # Per-run report link (relative path from subject report dir)
         run_id = r["run"]
-        report_name = f"sub-{subject}_task-gradCPT_run-{run_id}_meg_desc-report.html"
+        report_name = f"sub-{subject}_task-gradCPT_run-{run_id}_desc-report_meg.html"
         report_abs_path = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg" / report_name
         report_rel = f"meg/{report_name}"
         if report_abs_path.exists():
@@ -812,7 +817,8 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     <div class="collapsible-content">
     <table border="1" class="sortable" style="border-collapse: collapse; width: 90%; font-size: 13px;">
     <tr style="background-color: #f0f0f0;">
-        <th>Run</th><th>ECG ICs</th><th>ECG Max Score</th><th>ECG Forced?</th>
+        <th>Run</th><th>N Components</th>
+        <th>ECG ICs</th><th>ECG Max Score</th><th>ECG Forced?</th>
         <th>EOG ICs</th><th>EOG Max Score</th><th>EOG Forced?</th>
     </tr>
     """
@@ -825,6 +831,8 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         eog_max = r.get("eog_max_score")
         ecg_max_str = f"{ecg_max:.3f}" if ecg_max is not None else "N/A"
         eog_max_str = f"{eog_max:.3f}" if eog_max is not None else "N/A"
+        n_comp = r.get("n_ica_components")
+        n_comp_str = str(int(n_comp)) if n_comp is not None else "N/A"
 
         # Color the max score based on forced status
         ecg_forced = r.get("ecg_forced")
@@ -838,6 +846,7 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
 
         html += f"""<tr>
             <td>{r['run']}</td>
+            <td>{n_comp_str}</td>
             <td>{ecg if ecg else 'None'}</td>
             <td>{ecg_max_str}</td>
             <td>{_ica_forced_badge(ecg_forced)}</td>
@@ -863,6 +872,7 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     html += '<table border="1" class="sortable" style="border-collapse: collapse; width: 80%; font-size: 13px;">'
     html += '<tr style="background-color: #f0f0f0;"><th>Metric</th><th>Mean</th><th>Std</th><th>Min</th><th>Max</th></tr>'
     for metric_name, metric_key in [
+        ("ICA Components", "n_ica_components"),
         ("AR1 Bad %", "ar1_pct_bad"),
         ("AR2 Bad %", "ar2_pct_bad"),
         ("Threshold Bad %", "threshold_pct_bad"),
@@ -886,6 +896,140 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     html += "</table></div>"
 
     return html
+
+
+def _create_ica_score_figures(metrics: dict, subject: str) -> list:
+    """Create ICA score distribution bar charts for each run from params.json data.
+
+    Args:
+        metrics: Output of aggregate_subject_metrics.
+        subject: Subject ID.
+
+    Returns:
+        List of (figure, title) tuples.
+    """
+    figures = []
+    for r in metrics["per_run"]:
+        if not r.get("complete"):
+            continue
+        run = r["run"]
+        ecg_scores = r.get("ecg_scores")
+        eog_scores = r.get("eog_scores")
+        if ecg_scores is None and eog_scores is None:
+            continue
+
+        ecg_inds = r.get("ecg_components", [])
+        eog_inds = r.get("eog_components", [])
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+
+        # ECG scores
+        if ecg_scores is not None:
+            n = len(ecg_scores)
+            abs_scores = [abs(s) for s in ecg_scores]
+            colors = ['#d9534f' if i in ecg_inds else '#5bc0de' for i in range(n)]
+            axes[0].bar(range(n), abs_scores, color=colors, edgecolor='black', linewidth=0.5)
+            axes[0].set_xlabel("ICA Component")
+            axes[0].set_ylabel("|Score|")
+            axes[0].set_title(f"ECG Scores — excluded: {ecg_inds}")
+            axes[0].set_xticks(range(n))
+            axes[0].set_xticklabels([f"{i}" for i in range(n)], fontsize=7)
+            axes[0].grid(axis='y', alpha=0.3)
+        else:
+            axes[0].text(0.5, 0.5, "No ECG scores\n(old data)", ha="center",
+                         va="center", transform=axes[0].transAxes, fontsize=11)
+            axes[0].set_title("ECG Scores")
+
+        # EOG scores
+        if eog_scores is not None:
+            n = len(eog_scores)
+            abs_scores = [abs(s) for s in eog_scores]
+            colors = ['#d9534f' if i in eog_inds else '#5bc0de' for i in range(n)]
+            axes[1].bar(range(n), abs_scores, color=colors, edgecolor='black', linewidth=0.5)
+            axes[1].set_xlabel("ICA Component")
+            axes[1].set_ylabel("|Score|")
+            axes[1].set_title(f"EOG Scores — excluded: {eog_inds}")
+            axes[1].set_xticks(range(n))
+            axes[1].set_xticklabels([f"{i}" for i in range(n)], fontsize=7)
+            axes[1].grid(axis='y', alpha=0.3)
+        else:
+            axes[1].text(0.5, 0.5, "No EOG scores\n(old data)", ha="center",
+                         va="center", transform=axes[1].transAxes, fontsize=11)
+            axes[1].set_title("EOG Scores")
+
+        fig.suptitle(f"Run {run}", fontweight="bold")
+        fig.tight_layout()
+        figures.append((fig, f"ICA Scores - Run {run}"))
+
+    return figures
+
+
+def _load_ica_and_plot_components(
+    subject: str, run: str, derivatives_root: Path, ecg_inds: list, eog_inds: list
+) -> list:
+    """Try to load saved ICA object and generate component property figures.
+
+    Args:
+        subject: Subject ID.
+        run: Run ID.
+        derivatives_root: Path to derivatives directory.
+        ecg_inds: ECG component indices.
+        eog_inds: EOG component indices.
+
+    Returns:
+        List of (figure, title) tuples, or empty list if ICA not available.
+    """
+    import mne
+    from mne.preprocessing import read_ica
+
+    # Try to find ICA file
+    ica_path = (
+        derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
+        / f"sub-{subject}_task-gradCPT_run-{run}_desc-ica_meg-ica.fif"
+    )
+    if not ica_path.exists():
+        return []
+
+    try:
+        ica = read_ica(ica_path)
+    except Exception as e:
+        logger.warning(f"Could not load ICA for sub-{subject} run-{run}: {e}")
+        return []
+
+    figures = []
+    excluded_inds = list(set(ecg_inds + eog_inds))
+    if not excluded_inds:
+        return []
+
+    # Component topographies
+    try:
+        figs = ica.plot_components(show=False)
+        if not isinstance(figs, list):
+            figs = [figs]
+        for i, fig_topo in enumerate(figs):
+            figures.append((fig_topo, f"Run {run} - ICA topographies (page {i+1})"))
+    except Exception as e:
+        logger.warning(f"Could not plot ICA topographies for run {run}: {e}")
+
+    # Component properties for excluded components (needs epochs)
+    # Try to load epochs
+    epoch_path = (
+        derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
+        / f"sub-{subject}_task-gradCPT_run-{run}_proc-ica_meg-epo.fif"
+    )
+    if epoch_path.exists():
+        try:
+            epochs = mne.read_epochs(epoch_path, verbose=False)
+            figs_props = ica.plot_properties(epochs, picks=excluded_inds, show=False)
+            if not isinstance(figs_props, list):
+                figs_props = [figs_props]
+            for idx, fig_prop in zip(excluded_inds, figs_props):
+                label = "ECG" if idx in ecg_inds else "EOG"
+                figures.append((fig_prop, f"Run {run} - IC{idx} properties ({label})"))
+        except Exception as e:
+            logger.warning(f"Could not plot ICA properties for run {run}: {e}")
+
+    return figures
 
 
 def generate_subject_report(
@@ -921,6 +1065,26 @@ def generate_subject_report(
     fig = _create_subject_epoch_bar_chart(metrics["per_run"], subject)
     report.add_figure(fig, title="Bad Epochs per Run")
     plt.close(fig)
+
+    # Add ICA score distribution figures (from params.json)
+    score_figures = _create_ica_score_figures(metrics, subject)
+    for fig, title in score_figures:
+        report.add_figure(fig, title=title)
+        plt.close(fig)
+
+    # Add ICA component property figures (from saved ICA objects, if available)
+    for r in metrics["per_run"]:
+        if not r.get("complete"):
+            continue
+        run = r["run"]
+        ecg_inds = r.get("ecg_components", [])
+        eog_inds = r.get("eog_components", [])
+        ica_figures = _load_ica_and_plot_components(
+            subject, run, derivatives_root, ecg_inds, eog_inds
+        )
+        for fig, title in ica_figures:
+            report.add_figure(fig, title=title)
+            plt.close(fig)
 
     # Output paths
     out_dir = derivatives_root / "preprocessed" / f"sub-{subject}"
@@ -986,7 +1150,7 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         <th>Mean AR1 %</th><th>Mean AR2 %</th>
         <th>Mean Threshold %</th><th>Mean Retention %</th>
         <th>Mean Rescue %</th>
-        <th>Mean ECG ICs</th><th>Mean EOG ICs</th><th>Forced ICA Runs</th>
+        <th>Mean ICA N</th><th>Mean ECG ICs</th><th>Mean EOG ICs</th><th>Forced ICA Runs</th>
         <th>Outlier Runs</th>
     </tr>
     """
@@ -1017,6 +1181,8 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
 
         # ICA aggregates across runs
         complete_runs = [r for r in metrics["per_run"] if r.get("complete")]
+        n_comps = [r.get("n_ica_components") for r in complete_runs if r.get("n_ica_components") is not None]
+        mean_n_comp = f"{np.mean(n_comps):.0f}" if n_comps else "N/A"
         ecg_ics = [r.get("n_ecg_ics", 0) for r in complete_runs if r.get("n_ecg_ics") is not None]
         eog_ics = [r.get("n_eog_ics", 0) for r in complete_runs if r.get("n_eog_ics") is not None]
         mean_ecg = f"{np.mean(ecg_ics):.1f}" if ecg_ics else "-"
@@ -1047,6 +1213,7 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
             <td>{_f(s['threshold_pct_bad']['mean'])}</td>
             <td>{retention_cell}</td>
             <td>{_f(s['rescue_rate']['mean'])}</td>
+            <td>{mean_n_comp}</td>
             <td>{mean_ecg}</td>
             <td>{mean_eog}</td>
             <td>{forced_str}</td>

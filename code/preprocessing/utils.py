@@ -99,6 +99,16 @@ def create_preprocessing_paths(
         root=str(preproc_dir),
     )
 
+    ica_bidspath = BIDSPath(
+        subject=subject,
+        task="gradCPT",
+        run=run,
+        datatype="meg",
+        suffix="meg",
+        description="ica",
+        root=str(preproc_dir),
+    )
+
     epoch_dir = derivatives_root / "epochs"
 
     # ICA only epochs
@@ -143,6 +153,7 @@ def create_preprocessing_paths(
         "ARlog_first": ARlog_first_bidspath,
         "ARlog_second": ARlog_second_bidspath,
         "report": report_bidspath,
+        "ica": ica_bidspath,
     }
 
 
