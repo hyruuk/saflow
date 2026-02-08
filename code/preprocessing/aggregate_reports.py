@@ -137,6 +137,22 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         n_ecg = len(ecg_components) if isinstance(ecg_components, list) else 0
         n_eog = len(eog_components) if isinstance(eog_components, list) else 0
 
+        # ICA scores (available from future runs, None for old data)
+        ecg_scores = _safe_get(ica, "ecg_scores")
+        eog_scores = _safe_get(ica, "eog_scores")
+        ecg_threshold = _safe_get(ica, "ecg_threshold")
+        eog_threshold = _safe_get(ica, "eog_threshold")
+        ecg_forced = _safe_get(ica, "ecg_forced")
+        eog_forced = _safe_get(ica, "eog_forced")
+
+        # Compute max scores if available
+        ecg_max_score = None
+        eog_max_score = None
+        if ecg_scores is not None and isinstance(ecg_scores, list) and len(ecg_scores) > 0:
+            ecg_max_score = float(max(abs(s) for s in ecg_scores))
+        if eog_scores is not None and isinstance(eog_scores, list) and len(eog_scores) > 0:
+            eog_max_score = float(max(abs(s) for s in eog_scores))
+
         rescue_rate = _safe_get(
             three_way, "ica_effectiveness", "rescue_rate_pct"
         )
@@ -169,6 +185,14 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "n_eog_ics": n_eog,
             "ecg_components": ecg_components,
             "eog_components": eog_components,
+            "ecg_scores": ecg_scores,
+            "eog_scores": eog_scores,
+            "ecg_max_score": ecg_max_score,
+            "eog_max_score": eog_max_score,
+            "ecg_threshold": ecg_threshold,
+            "eog_threshold": eog_threshold,
+            "ecg_forced": ecg_forced,
+            "eog_forced": eog_forced,
             "rescue_rate": rescue_rate,
             "pairwise_kappa": pairwise_kappa,
             "retention_rate": proper_retention,
@@ -568,6 +592,97 @@ def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
 # Report Generation
 # =============================================================================
 
+def _shared_css_js() -> str:
+    """Return shared CSS and JS for interactive reports."""
+    return """
+<style>
+    .sortable th { cursor: pointer; user-select: none; position: relative; }
+    .sortable th:hover { background-color: #e0e0e0; }
+    .sortable th::after { content: ' \\2195'; font-size: 10px; color: #999; }
+    .sortable th.sort-asc::after { content: ' \\2191'; color: #333; }
+    .sortable th.sort-desc::after { content: ' \\2193'; color: #333; }
+    .collapsible-header { cursor: pointer; user-select: none; }
+    .collapsible-header::before { content: '\\25BC '; font-size: 10px; }
+    .collapsible-header.collapsed::before { content: '\\25B6 '; }
+    .collapsible-content { overflow: hidden; transition: max-height 0.3s ease; }
+    .collapsible-content.collapsed { max-height: 0 !important; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
+             font-size: 11px; font-weight: bold; }
+    .badge-green { background-color: #d4edda; color: #155724; }
+    .badge-yellow { background-color: #fff3cd; color: #856404; }
+    .badge-red { background-color: #f8d7da; color: #721c24; }
+    .breadcrumb { margin-bottom: 15px; font-size: 14px; }
+    .breadcrumb a { color: #0066cc; text-decoration: none; }
+    .breadcrumb a:hover { text-decoration: underline; }
+    .forced-text { color: #856404; font-weight: bold; }
+    .above-thresh-text { color: #155724; }
+    table { border-collapse: collapse; }
+    td, th { padding: 4px 8px; }
+</style>
+<script>
+function makeSortable(table) {
+    var headers = table.querySelectorAll('th');
+    headers.forEach(function(header, index) {
+        header.addEventListener('click', function() {
+            var rows = Array.from(table.querySelectorAll('tbody tr'));
+            if (rows.length === 0) {
+                rows = Array.from(table.querySelectorAll('tr'));
+                rows.shift(); // remove header row
+            }
+            var ascending = !header.classList.contains('sort-asc');
+            headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+            header.classList.add(ascending ? 'sort-asc' : 'sort-desc');
+            rows.sort(function(a, b) {
+                var cellA = a.cells[index] ? a.cells[index].textContent.trim() : '';
+                var cellB = b.cells[index] ? b.cells[index].textContent.trim() : '';
+                var numA = parseFloat(cellA.replace('%', '').replace('s', ''));
+                var numB = parseFloat(cellB.replace('%', '').replace('s', ''));
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return ascending ? numA - numB : numB - numA;
+                }
+                return ascending ? cellA.localeCompare(cellB) : cellB.localeCompare(cellA);
+            });
+            var parent = rows[0].parentNode;
+            rows.forEach(function(row) { parent.appendChild(row); });
+        });
+    });
+}
+function makeCollapsible(header) {
+    header.addEventListener('click', function() {
+        this.classList.toggle('collapsed');
+        var content = this.nextElementSibling;
+        if (content) content.classList.toggle('collapsed');
+    });
+}
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('table.sortable').forEach(makeSortable);
+    document.querySelectorAll('.collapsible-header').forEach(makeCollapsible);
+});
+</script>
+"""
+
+
+def _retention_badge(rate) -> str:
+    """Return a colored badge for retention rate."""
+    if rate is None:
+        return "-"
+    if rate >= 85:
+        return f'<span class="badge badge-green">{rate:.1f}%</span>'
+    elif rate >= 60:
+        return f'<span class="badge badge-yellow">{rate:.1f}%</span>'
+    else:
+        return f'<span class="badge badge-red">{rate:.1f}%</span>'
+
+
+def _ica_forced_badge(forced) -> str:
+    """Return a colored indicator for forced ICA selection."""
+    if forced is None:
+        return "N/A"
+    if forced:
+        return '<span class="forced-text">Yes</span>'
+    return '<span class="above-thresh-text">No</span>'
+
+
 def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     """Build HTML content for subject-level report.
 
@@ -585,8 +700,18 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     n_complete = metrics["n_runs_complete"]
     n_total = metrics["n_runs_total"]
 
+    # Shared CSS/JS
+    html = _shared_css_js()
+
+    # Breadcrumb navigation
+    html += """
+    <div class="breadcrumb">
+        <a href="../group_preprocessing-summary.html">&larr; Dataset Report</a>
+    </div>
+    """
+
     # Overview section
-    html = f"""
+    html += f"""
     <h2>Subject Report: sub-{subject}</h2>
     <p><b>Timestamp:</b> {datetime.now().isoformat()}</p>
     <p><b>Runs:</b> {n_complete}/{n_total} complete</p>
@@ -595,8 +720,9 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
 
     # Per-run metrics table
     html += """
-    <h3>Per-Run Metrics</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 12px;">
+    <h3 class="collapsible-header">Per-Run Metrics</h3>
+    <div class="collapsible-content">
+    <table border="1" class="sortable" style="border-collapse: collapse; width: 100%; font-size: 12px;">
     <tr style="background-color: #f0f0f0;">
         <th>Run</th><th>Stim Epochs</th>
         <th>Freq</th><th>Rare</th><th>Resp</th>
@@ -607,12 +733,16 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         <th>Retention %</th>
         <th>ECG ICs</th><th>EOG ICs</th>
         <th>Rescue %</th>
+        <th>Report</th>
     </tr>
     """
+    # Build per-run report link lookup
+    derivatives_root = Path(config["paths"]["data_root"]) / config["paths"]["derivatives"]
+
     for r in per_run:
         if not r.get("complete"):
             html += f'<tr style="background-color: #fff3cd;"><td>{r["run"]}</td>'
-            html += '<td colspan="14"><i>Missing or incomplete</i></td></tr>'
+            html += '<td colspan="15"><i>Missing or incomplete</i></td></tr>'
             continue
 
         # Highlight runs with >30% bad
@@ -630,13 +760,21 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         if rescue != "-":
             rescue += "%"
 
-        retention = _fmt(r.get("retention_rate"), ".1f")
-        if retention != "-":
-            retention += "%"
+        retention_badge = _retention_badge(r.get("retention_rate"))
 
         isi_mean = _fmt(r.get("isi_mean"), ".3f")
         if isi_mean != "-":
             isi_mean += "s"
+
+        # Per-run report link (relative path from subject report dir)
+        run_id = r["run"]
+        report_name = f"sub-{subject}_task-gradCPT_run-{run_id}_meg_desc-report.html"
+        report_abs_path = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg" / report_name
+        report_rel = f"meg/{report_name}"
+        if report_abs_path.exists():
+            report_link = f'<a href="{report_rel}">View</a>'
+        else:
+            report_link = '<i>N/A</i>'
 
         html += f"""<tr{row_style}>
             <td>{r['run']}</td>
@@ -650,13 +788,14 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
             <td>{_fmt_int(r.get('ar2_n_bad'))}</td>
             <td>{_fmt(r.get('ar2_pct_bad'))}%</td>
             <td>{_fmt(r.get('threshold_pct_bad'))}%</td>
-            <td>{retention}</td>
+            <td>{retention_badge}</td>
             <td>{r.get('n_ecg_ics', '-')}</td>
             <td>{r.get('n_eog_ics', '-')}</td>
             <td>{rescue}</td>
+            <td>{report_link}</td>
         </tr>"""
 
-    html += "</table>"
+    html += "</table></div>"
 
     # ISI statistics section
     isi_summary = summary.get("isi_mean", {})
@@ -667,12 +806,14 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         range: {isi_summary['min']:.3f}s - {isi_summary['max']:.3f}s)</p>
         """
 
-    # ICA summary table
+    # Enhanced ICA summary table
     html += """
-    <h3>ICA Component Summary</h3>
-    <table border="1" style="border-collapse: collapse; width: 60%; font-size: 13px;">
+    <h3 class="collapsible-header">ICA Component Summary</h3>
+    <div class="collapsible-content">
+    <table border="1" class="sortable" style="border-collapse: collapse; width: 90%; font-size: 13px;">
     <tr style="background-color: #f0f0f0;">
-        <th>Run</th><th>ECG Indices</th><th>EOG Indices</th>
+        <th>Run</th><th>ECG ICs</th><th>ECG Max Score</th><th>ECG Forced?</th>
+        <th>EOG ICs</th><th>EOG Max Score</th><th>EOG Forced?</th>
     </tr>
     """
     for r in per_run:
@@ -680,26 +821,46 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
             continue
         ecg = r.get("ecg_components", [])
         eog = r.get("eog_components", [])
+        ecg_max = r.get("ecg_max_score")
+        eog_max = r.get("eog_max_score")
+        ecg_max_str = f"{ecg_max:.3f}" if ecg_max is not None else "N/A"
+        eog_max_str = f"{eog_max:.3f}" if eog_max is not None else "N/A"
+
+        # Color the max score based on forced status
+        ecg_forced = r.get("ecg_forced")
+        eog_forced = r.get("eog_forced")
+        if ecg_forced is not None:
+            ecg_score_class = "forced-text" if ecg_forced else "above-thresh-text"
+            ecg_max_str = f'<span class="{ecg_score_class}">{ecg_max_str}</span>'
+        if eog_forced is not None:
+            eog_score_class = "forced-text" if eog_forced else "above-thresh-text"
+            eog_max_str = f'<span class="{eog_score_class}">{eog_max_str}</span>'
+
         html += f"""<tr>
             <td>{r['run']}</td>
             <td>{ecg if ecg else 'None'}</td>
+            <td>{ecg_max_str}</td>
+            <td>{_ica_forced_badge(ecg_forced)}</td>
             <td>{eog if eog else 'None'}</td>
+            <td>{eog_max_str}</td>
+            <td>{_ica_forced_badge(eog_forced)}</td>
         </tr>"""
-    html += "</table>"
+    html += "</table></div>"
 
     # Outlier flags
     if outlier_runs:
-        html += "<h3>Outlier Flags</h3><ul>"
+        html += '<h3 class="collapsible-header">Outlier Flags</h3><div class="collapsible-content"><ul>'
         for o in outlier_runs:
             reasons_str = "; ".join(o["reasons"])
             html += f'<li style="color: #c62828;"><b>Run {o["run"]}:</b> {reasons_str}</li>'
-        html += "</ul>"
+        html += "</ul></div>"
     else:
-        html += '<h3>Outlier Flags</h3><p style="color: green;">No outlier runs detected.</p>'
+        html += '<h3 class="collapsible-header">Outlier Flags</h3><div class="collapsible-content"><p style="color: green;">No outlier runs detected.</p></div>'
 
     # Summary statistics
-    html += "<h3>Summary Statistics</h3>"
-    html += '<table border="1" style="border-collapse: collapse; width: 80%; font-size: 13px;">'
+    html += '<h3 class="collapsible-header">Summary Statistics</h3>'
+    html += '<div class="collapsible-content">'
+    html += '<table border="1" class="sortable" style="border-collapse: collapse; width: 80%; font-size: 13px;">'
     html += '<tr style="background-color: #f0f0f0;"><th>Metric</th><th>Mean</th><th>Std</th><th>Min</th><th>Max</th></tr>'
     for metric_name, metric_key in [
         ("AR1 Bad %", "ar1_pct_bad"),
@@ -722,20 +883,7 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         html += f'<tr><td>Stimulus Epochs</td><td>{stim_stats["mean"]:.0f}</td><td>{stim_stats["std"]:.1f}</td><td>{stim_stats["min"]:.0f}</td><td>{stim_stats["max"]:.0f}</td></tr>'
         html += f'<tr><td>Epoch Count CV</td><td colspan="4">{cv_str}</td></tr>'
 
-    html += "</table>"
-
-    # Links to per-run reports
-    derivatives_root = Path(config["paths"]["data_root"]) / config["paths"]["derivatives"]
-    html += "<h3>Per-Run Reports</h3><ul>"
-    for r in per_run:
-        run_id = r["run"]
-        report_name = f"sub-{subject}_task-gradCPT_run-{run_id}_proc-clean_report_meg.html"
-        report_path = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg" / report_name
-        if report_path.exists():
-            html += f'<li><a href="{report_path}">Run {run_id} report</a></li>'
-        else:
-            html += f'<li>Run {run_id}: <i>report not found</i></li>'
-    html += "</ul>"
+    html += "</table></div>"
 
     return html
 
@@ -817,8 +965,11 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
     n_subjects = dataset_metrics["n_subjects"]
     n_complete = dataset_metrics["n_subjects_complete"]
 
+    # Shared CSS/JS
+    html = _shared_css_js()
+
     # Overview
-    html = f"""
+    html += f"""
     <h2>Dataset Preprocessing Report</h2>
     <p><b>Timestamp:</b> {datetime.now().isoformat()}</p>
     <p><b>Subjects:</b> {n_complete}/{n_subjects} with data</p>
@@ -826,14 +977,17 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
 
     # Per-subject summary table
     html += """
-    <h3>Per-Subject Summary</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px;">
+    <h3 class="collapsible-header">Per-Subject Summary</h3>
+    <div class="collapsible-content">
+    <table border="1" class="sortable" style="border-collapse: collapse; width: 100%; font-size: 11px;">
     <tr style="background-color: #f0f0f0;">
         <th>Subject</th><th>Runs</th><th>Total Epochs</th>
         <th>Stim Epochs</th><th>ISI Mean</th>
         <th>Mean AR1 %</th><th>Mean AR2 %</th>
         <th>Mean Threshold %</th><th>Mean Retention %</th>
-        <th>Mean Rescue %</th><th>Outlier Runs</th>
+        <th>Mean Rescue %</th>
+        <th>Mean ECG ICs</th><th>Mean EOG ICs</th><th>Forced ICA Runs</th>
+        <th>Outlier Runs</th>
     </tr>
     """
 
@@ -861,8 +1015,29 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         stim_mean = _safe_get(s, "n_stimulus_epochs", "mean")
         isi_mean = _safe_get(s, "isi_mean", "mean")
 
+        # ICA aggregates across runs
+        complete_runs = [r for r in metrics["per_run"] if r.get("complete")]
+        ecg_ics = [r.get("n_ecg_ics", 0) for r in complete_runs if r.get("n_ecg_ics") is not None]
+        eog_ics = [r.get("n_eog_ics", 0) for r in complete_runs if r.get("n_eog_ics") is not None]
+        mean_ecg = f"{np.mean(ecg_ics):.1f}" if ecg_ics else "-"
+        mean_eog = f"{np.mean(eog_ics):.1f}" if eog_ics else "-"
+
+        # Count runs with forced ICA selection
+        forced_runs = [r for r in complete_runs if r.get("ecg_forced") or r.get("eog_forced")]
+        has_forced_data = any(r.get("ecg_forced") is not None or r.get("eog_forced") is not None for r in complete_runs)
+        forced_str = str(len(forced_runs)) if has_forced_data else "N/A"
+        if has_forced_data and len(forced_runs) > 0:
+            forced_str = f'<span class="badge badge-yellow">{len(forced_runs)}</span>'
+
+        # Retention badge
+        retention_val = s['retention_rate']['mean']
+        retention_cell = _retention_badge(retention_val) if retention_val is not None else "-"
+
+        # Subject link (relative to dataset report location)
+        subject_link = f'<a href="sub-{subj}/sub-{subj}_preprocessing-summary.html">sub-{subj}</a>'
+
         html += f"""<tr{row_style}>
-            <td>sub-{subj}</td>
+            <td>{subject_link}</td>
             <td>{metrics['n_runs_complete']}/{metrics['n_runs_total']}</td>
             <td>{metrics['total_epochs']}</td>
             <td>{f'{stim_mean:.0f}' if stim_mean is not None else '-'}</td>
@@ -870,24 +1045,28 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
             <td>{_f(s['ar1_pct_bad']['mean'])}</td>
             <td>{_f(s['ar2_pct_bad']['mean'])}</td>
             <td>{_f(s['threshold_pct_bad']['mean'])}</td>
-            <td>{_f(s['retention_rate']['mean'])}</td>
+            <td>{retention_cell}</td>
             <td>{_f(s['rescue_rate']['mean'])}</td>
+            <td>{mean_ecg}</td>
+            <td>{mean_eog}</td>
+            <td>{forced_str}</td>
             <td>{'<b style="color:red;">' + str(n_outliers) + '</b>' if n_outliers > 0 else '0'}</td>
         </tr>"""
 
-    html += "</table>"
+    html += "</table></div>"
 
     # Epoch count consistency flags
     epoch_flags = dataset_metrics.get("epoch_count_flags", [])
     if epoch_flags:
-        html += "<h3>Epoch Count Consistency Warnings</h3><ul>"
+        html += '<h3 class="collapsible-header">Epoch Count Consistency Warnings</h3><div class="collapsible-content"><ul>'
         for flag in epoch_flags:
             html += f'<li style="color: #c62828;">sub-{flag["subject"]}: per-run counts vary: {flag["unique"]}</li>'
-        html += "</ul>"
+        html += "</ul></div>"
 
     # Overall statistics
-    html += "<h3>Overall Statistics</h3>"
-    html += '<table border="1" style="border-collapse: collapse; width: 80%; font-size: 13px;">'
+    html += '<h3 class="collapsible-header">Overall Statistics</h3>'
+    html += '<div class="collapsible-content">'
+    html += '<table border="1" class="sortable" style="border-collapse: collapse; width: 80%; font-size: 13px;">'
     html += '<tr style="background-color: #f0f0f0;"><th>Metric</th><th>Mean</th><th>Std</th><th>Min</th><th>Max</th><th>Median</th></tr>'
     for metric_name, metric_key in [
         ("Mean AR1 Bad %", "mean_ar1_pct_bad"),
@@ -899,12 +1078,13 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         def _f(v):
             return f"{v:.1f}" if v is not None else "-"
         html += f'<tr><td>{metric_name}</td><td>{_f(s["mean"])}</td><td>{_f(s["std"])}</td><td>{_f(s["min"])}</td><td>{_f(s["max"])}</td><td>{_f(s["median"])}</td></tr>'
-    html += "</table>"
+    html += "</table></div>"
 
     # Outlier summary
     if outlier_subjects:
-        html += "<h3>Outlier Subjects</h3>"
-        html += '<table border="1" style="border-collapse: collapse; width: 100%; font-size: 12px;">'
+        html += '<h3 class="collapsible-header">Outlier Subjects</h3>'
+        html += '<div class="collapsible-content">'
+        html += '<table border="1" class="sortable" style="border-collapse: collapse; width: 100%; font-size: 12px;">'
         html += '<tr style="background-color: #f0f0f0;"><th>Subject</th><th>Metric</th><th>Details</th></tr>'
         for o in outlier_subjects:
             if o.get("metric") == "absolute_threshold":
@@ -922,9 +1102,9 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
                     f"deviation={_fmt(o.get('deviation_mad'))} MAD"
                 )
             html += f'<tr style="background-color: #f8d7da;"><td>sub-{o["subject"]}</td><td>{o.get("metric", "")}</td><td>{details}</td></tr>'
-        html += "</table>"
+        html += "</table></div>"
     else:
-        html += '<h3>Outlier Subjects</h3><p style="color: green;">No outlier subjects detected.</p>'
+        html += '<h3 class="collapsible-header">Outlier Subjects</h3><div class="collapsible-content"><p style="color: green;">No outlier subjects detected.</p></div>'
 
     return html
 

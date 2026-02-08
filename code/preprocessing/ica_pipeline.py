@@ -180,7 +180,7 @@ def run_ica_pipeline(
     random_state: int = 42,
     ecg_threshold: float = 0.50,
     eog_threshold: float = 4.0,
-) -> Tuple[mne.io.Raw, mne.Epochs, ICA, List[int], List[int]]:
+) -> Tuple[mne.io.Raw, mne.Epochs, ICA, List[int], List[int], np.ndarray, np.ndarray]:
     """Run complete ICA pipeline for artifact removal.
 
     Args:
@@ -193,10 +193,11 @@ def run_ica_pipeline(
         eog_threshold: EOG detection threshold.
 
     Returns:
-        Tuple of (cleaned_raw, cleaned_epochs, ica, ecg_inds, eog_inds).
+        Tuple of (cleaned_raw, cleaned_epochs, ica, ecg_inds, eog_inds,
+        ecg_scores, eog_scores).
 
     Examples:
-        >>> cleaned_raw, cleaned_epochs, ica, ecg_inds, eog_inds = run_ica_pipeline(
+        >>> cleaned_raw, cleaned_epochs, ica, ecg_inds, eog_inds, ecg_scores, eog_scores = run_ica_pipeline(
         ...     raw, epochs, noise_cov
         ... )
     """
@@ -222,4 +223,4 @@ def run_ica_pipeline(
     cleaned_raw, cleaned_epochs = apply_ica(ica, raw, epochs)
 
     logger.info("ICA pipeline complete")
-    return cleaned_raw, cleaned_epochs, ica, ecg_inds, eog_inds
+    return cleaned_raw, cleaned_epochs, ica, ecg_inds, eog_inds, ecg_scores, eog_scores

@@ -1154,7 +1154,7 @@ def preprocess_run(
     console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
     console.print(f"[bold cyan]ICA ARTIFACT REMOVAL[/bold cyan]")
     console.print(f"[bold cyan]{'='*60}[/bold cyan]")
-    cleaned_raw, _, ica, ecg_inds, eog_inds = run_ica_pipeline(
+    cleaned_raw, _, ica, ecg_inds, eog_inds, ecg_scores, eog_scores = run_ica_pipeline(
         preproc,
         epochs_filt[good_mask],
         noise_cov,
@@ -1411,6 +1411,12 @@ def preprocess_run(
             "n_components": ica_cfg.get("n_components", 20),
             "ecg_components": ecg_inds,
             "eog_components": eog_inds,
+            "ecg_scores": ecg_scores.tolist() if isinstance(ecg_scores, np.ndarray) else ecg_scores,
+            "eog_scores": eog_scores.tolist() if isinstance(eog_scores, np.ndarray) else eog_scores,
+            "ecg_threshold": float(ica_cfg.get("ecg_threshold", 0.50)),
+            "eog_threshold": float(ica_cfg.get("eog_threshold", 4.0)),
+            "ecg_forced": bool(np.max(np.abs(ecg_scores)) < ica_cfg.get("ecg_threshold", 0.50)) if len(ecg_scores) > 0 else False,
+            "eog_forced": bool(np.max(np.abs(eog_scores)) < ica_cfg.get("eog_threshold", 4.0)) if len(eog_scores) > 0 else False,
         },
         "autoreject_first_pass": {
             "description": "First pass (fit only) for ICA",
