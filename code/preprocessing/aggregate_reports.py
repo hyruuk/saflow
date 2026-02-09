@@ -416,11 +416,6 @@ def aggregate_dataset_metrics(all_subject_params: dict) -> dict:
                     "counts": stim_counts,
                     "unique": sorted(unique_counts),
                 })
-                outlier_subjects.append({
-                    "subject": subject,
-                    "metric": "epoch_count_inconsistency",
-                    "reasons": [f"per-run epoch counts vary: {sorted(unique_counts)}"],
-                })
 
     return {
         "per_subject": per_subject,
@@ -844,8 +839,17 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
             eog_score_class = "forced-text" if eog_forced else "above-thresh-text"
             eog_max_str = f'<span class="{eog_score_class}">{eog_max_str}</span>'
 
+        # Link run label to per-run report
+        run_id = r["run"]
+        run_report_name = f"sub-{subject}_task-gradCPT_run-{run_id}_desc-report_meg.html"
+        run_report_abs = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg" / run_report_name
+        if run_report_abs.exists():
+            run_label = f'<a href="meg/{run_report_name}">{run_id}</a>'
+        else:
+            run_label = run_id
+
         html += f"""<tr>
-            <td>{r['run']}</td>
+            <td>{run_label}</td>
             <td>{n_comp_str}</td>
             <td>{ecg if ecg else 'None'}</td>
             <td>{ecg_max_str}</td>
@@ -921,7 +925,9 @@ def _create_ica_score_figures(metrics: dict, subject: str) -> list:
         ecg_inds = r.get("ecg_components", [])
         eog_inds = r.get("eog_components", [])
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+        n_max = max(len(ecg_scores or []), len(eog_scores or []), 1)
+        fig_w = max(14, n_max * 0.35 * 2)
+        fig, axes = plt.subplots(1, 2, figsize=(fig_w, 4))
 
         # ECG scores
         if ecg_scores is not None:
@@ -1221,14 +1227,6 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         </tr>"""
 
     html += "</table></div>"
-
-    # Epoch count consistency flags
-    epoch_flags = dataset_metrics.get("epoch_count_flags", [])
-    if epoch_flags:
-        html += '<h3 class="collapsible-header">Epoch Count Consistency Warnings</h3><div class="collapsible-content"><ul>'
-        for flag in epoch_flags:
-            html += f'<li style="color: #c62828;">sub-{flag["subject"]}: per-run counts vary: {flag["unique"]}</li>'
-        html += "</ul></div>"
 
     # Overall statistics
     html += '<h3 class="collapsible-header">Overall Statistics</h3>'

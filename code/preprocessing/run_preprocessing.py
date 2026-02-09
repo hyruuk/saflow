@@ -600,25 +600,38 @@ def generate_preprocessing_report(
     except Exception as e:
         logger.warning(f"Could not plot ICA component topographies: {e}")
 
-    # ICA properties for excluded components (ECG, EOG)
-    excluded_inds = list(set(ecg_inds + eog_inds))
-    if excluded_inds:
+    # ICA properties for excluded components, plotted against artifact-specific epochs
+    ecg_ch = "ECG"   # renamed from EEG059 earlier in pipeline
+    eog_ch = "vEOG"  # renamed from EEG057 earlier in pipeline
+    if ecg_inds:
         try:
-            figs_props = ica.plot_properties(epochs_preproc, picks=excluded_inds, show=False)
-            if not isinstance(figs_props, list):
-                figs_props = [figs_props]
-            for idx, fig_prop in zip(excluded_inds, figs_props):
-                label = "ECG" if idx in ecg_inds else "EOG"
-                report.add_figure(fig_prop, title=f"ICA component {idx} properties ({label})")
+            ecg_epochs = mne.preprocessing.create_ecg_epochs(raw, ch_name=ecg_ch, verbose=False)
+            figs_ecg_props = ica.plot_properties(ecg_epochs, picks=ecg_inds, image_args={"sigma": 1.0}, show=False)
+            if not isinstance(figs_ecg_props, list):
+                figs_ecg_props = [figs_ecg_props]
+            for idx, fig_prop in zip(ecg_inds, figs_ecg_props):
+                report.add_figure(fig_prop, title=f"ECG — IC{idx} properties")
                 plt.close(fig_prop)
         except Exception as e:
-            logger.warning(f"Could not plot ICA properties for excluded components: {e}")
+            logger.warning(f"Could not plot ECG component properties: {e}")
+    if eog_inds:
+        try:
+            eog_epochs = mne.preprocessing.create_eog_epochs(raw, ch_name=eog_ch, verbose=False)
+            figs_eog_props = ica.plot_properties(eog_epochs, picks=eog_inds, image_args={"sigma": 1.0}, show=False)
+            if not isinstance(figs_eog_props, list):
+                figs_eog_props = [figs_eog_props]
+            for idx, fig_prop in zip(eog_inds, figs_eog_props):
+                report.add_figure(fig_prop, title=f"EOG — IC{idx} properties")
+                plt.close(fig_prop)
+        except Exception as e:
+            logger.warning(f"Could not plot EOG component properties: {e}")
 
-    # ICA score distribution bar charts
+    # ICA score distribution bar charts (width scales with number of components)
     if ecg_scores is not None:
         try:
-            fig_ecg_scores, ax_ecg = plt.subplots(figsize=(10, 4))
             n_comps = len(ecg_scores)
+            fig_w = max(10, n_comps * 0.35)
+            fig_ecg_scores, ax_ecg = plt.subplots(figsize=(fig_w, 4))
             colors = ['#d9534f' if i in ecg_inds else '#5bc0de' for i in range(n_comps)]
             ax_ecg.bar(range(n_comps), np.abs(ecg_scores), color=colors, edgecolor='black', linewidth=0.5)
             ax_ecg.set_xlabel("ICA Component")
@@ -635,8 +648,9 @@ def generate_preprocessing_report(
 
     if eog_scores is not None:
         try:
-            fig_eog_scores, ax_eog = plt.subplots(figsize=(10, 4))
             n_comps = len(eog_scores)
+            fig_w = max(10, n_comps * 0.35)
+            fig_eog_scores, ax_eog = plt.subplots(figsize=(fig_w, 4))
             colors = ['#d9534f' if i in eog_inds else '#5bc0de' for i in range(n_comps)]
             ax_eog.bar(range(n_comps), np.abs(eog_scores), color=colors, edgecolor='black', linewidth=0.5)
             ax_eog.set_xlabel("ICA Component")
@@ -1201,7 +1215,7 @@ def preprocess_run(
         noise_cov,
         n_components=ica_cfg.get("n_components", 0.99),
         random_state=ica_cfg.get("random_state", 42),
-        ecg_threshold=ica_cfg.get("ecg_threshold", 0.25),
+        ecg_threshold=ica_cfg.get("ecg_threshold", 0.20),
         eog_threshold=ica_cfg.get("eog_threshold", 2.5),
     )
 
@@ -1464,7 +1478,7 @@ def preprocess_run(
             "eog_components": eog_inds,
             "ecg_scores": ecg_scores.tolist() if isinstance(ecg_scores, np.ndarray) else ecg_scores,
             "eog_scores": eog_scores.tolist() if isinstance(eog_scores, np.ndarray) else eog_scores,
-            "ecg_threshold": float(ica_cfg.get("ecg_threshold", 0.25)),
+            "ecg_threshold": float(ica_cfg.get("ecg_threshold", 0.20)),
             "eog_threshold": float(ica_cfg.get("eog_threshold", 2.5)),
             "ecg_forced": ecg_forced,
             "eog_forced": eog_forced,

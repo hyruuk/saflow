@@ -58,7 +58,7 @@ def find_ecg_components(
     ica: ICA,
     raw: mne.io.Raw,
     ecg_channel: str = "ECG",
-    threshold: float = 0.25,
+    threshold: float = 0.20,
 ) -> Tuple[List[int], np.ndarray, bool]:
     """Identify ICA components related to cardiac artifacts.
 
@@ -76,7 +76,7 @@ def find_ecg_components(
         force-selected. Scores are from the CTPS method.
 
     Examples:
-        >>> ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, threshold=0.25)
+        >>> ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, threshold=0.20)
     """
     logger.info(f"Detecting ECG components (threshold={threshold})")
     console.print(f"[yellow]⏳ ICA: Detecting ECG components (CTPS + correlation)...[/yellow]")
@@ -207,7 +207,7 @@ def run_ica_pipeline(
     noise_cov: mne.Covariance,
     n_components=0.99,
     random_state: int = 42,
-    ecg_threshold: float = 0.25,
+    ecg_threshold: float = 0.20,
     eog_threshold: float = 2.5,
 ) -> Tuple[mne.io.Raw, mne.Epochs, ICA, List[int], List[int], np.ndarray, np.ndarray, bool, bool]:
     """Run complete ICA pipeline for artifact removal.
