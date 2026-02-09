@@ -1336,13 +1336,13 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
                 subject_job_ids[subj].append(job_id)
 
     # Submit dependent report jobs (per-subject then dataset)
+    # Report jobs run even if preprocessing was skipped (skip-existing),
+    # since reports should be regenerated with any code/config changes.
     report_job_ids = []
     report_resources = slurm_config.get("report", {"time": "00:15:00", "cpus": 2, "mem": "4G"})
 
     for subj in subjects:
-        deps = subject_job_ids[subj]
-        if not deps and not dry_run:
-            continue
+        deps = subject_job_ids[subj]  # empty if preprocessing was skipped
         job_name = f"report_sub-{subj}"
         context = {
             "job_name": job_name,
@@ -1360,34 +1360,35 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
         }
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
         render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
-        rjob_id = submit_slurm_job(script_path, dependencies=deps, dry_run=dry_run)
+        rjob_id = submit_slurm_job(
+            script_path, dependencies=deps if deps else None, dry_run=dry_run
+        )
         if rjob_id:
             report_job_ids.append(rjob_id)
 
     # Dataset-level report depends on all per-subject reports
-    if report_job_ids or dry_run:
-        job_name = f"report_dataset"
-        context = {
-            "job_name": job_name,
-            "account": slurm_config["account"],
-            "partition": slurm_config.get("partition", ""),
-            "time": report_resources["time"],
-            "cpus": report_resources["cpus"],
-            "mem": report_resources["mem"],
-            "venv_path": str(venv_path),
-            "project_root": str(PROJECT_ROOT),
-            "log_dir": str(log_dir),
-            "subject": None,
-            "dataset": True,
-            "timestamp": timestamp,
-        }
-        script_path = script_dir / f"{job_name}_{timestamp}.sh"
-        render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
-        dataset_job_id = submit_slurm_job(
-            script_path, dependencies=report_job_ids, dry_run=dry_run
-        )
-        if dataset_job_id:
-            report_job_ids.append(dataset_job_id)
+    job_name = "report_dataset"
+    context = {
+        "job_name": job_name,
+        "account": slurm_config["account"],
+        "partition": slurm_config.get("partition", ""),
+        "time": report_resources["time"],
+        "cpus": report_resources["cpus"],
+        "mem": report_resources["mem"],
+        "venv_path": str(venv_path),
+        "project_root": str(PROJECT_ROOT),
+        "log_dir": str(log_dir),
+        "subject": None,
+        "dataset": True,
+        "timestamp": timestamp,
+    }
+    script_path = script_dir / f"{job_name}_{timestamp}.sh"
+    render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
+    dataset_job_id = submit_slurm_job(
+        script_path, dependencies=report_job_ids if report_job_ids else None, dry_run=dry_run
+    )
+    if dataset_job_id:
+        report_job_ids.append(dataset_job_id)
 
     all_job_ids = job_ids + report_job_ids
     if all_job_ids:
