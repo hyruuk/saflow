@@ -97,10 +97,40 @@ preprocessing:
     notch:
       - 60.0
 
+  # Channel mapping for CTF MEG system
+  # Maps CTF channel names to MNE channel types
+  channels:
+    # ECG and EOG channels (recorded on EEG channels in CTF)
+    ecg_channel: EEG059      # ECG channel name
+    veog_channel: EEG057     # Vertical EOG channel name
+    heog_channel: EEG058     # Horizontal EOG channel name
+
   ica:
     method: fastica
-    n_components: 20  # null = automatic
+    n_components: 0.99  # float 0-1 = explained variance threshold (0.99 = retain 99%)
     random_state: 0
+    ecg_ctps_threshold: 0.20   # CTPS method threshold (phase-based, specific)
+    ecg_corr_threshold: 0.80   # Correlation method threshold (amplitude-based, needs higher value)
+    eog_threshold: 2.5         # z-score threshold for EOG detection
+
+  # Event types to include in epoching (exclude Resp triggers)
+  epoch_events:
+    include:
+      - Freq
+      - Rare
+
+  # Threshold-based rejection settings
+  threshold_rejection:
+    mode: "data_driven"         # "fixed" or "data_driven"
+    mad_multiplier: 4.0         # threshold = median_ptp + N * MAD
+    flat_mad_multiplier: 4.0    # flat threshold = median_ptp - N * MAD
+    reject: {mag: 4000e-15}     # kept for fixed mode fallback
+    flat: {mag: 1e-15}
+
+  # Pre-AR2 extreme outlier filter
+  pre_ar2_filter:
+    enabled: true
+    ptp_multiplier: 10          # drop epochs > 10x median PTP before AR2
 
   autoreject:
     n_interpolate:
@@ -112,6 +142,7 @@ preprocessing:
       - 0.2
       - 0.3
       - 0.5
+    second_pass_mode: "both"    # "fit_only", "transform", or "both"
 
 # =============================================================================
 # Source Reconstruction Configuration

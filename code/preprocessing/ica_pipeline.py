@@ -58,17 +58,23 @@ def find_ecg_components(
     ica: ICA,
     raw: mne.io.Raw,
     ecg_channel: str = "ECG",
-    threshold: float = 0.20,
+    ctps_threshold: float = 0.20,
+    corr_threshold: float = 0.80,
 ) -> Tuple[List[int], np.ndarray, bool]:
     """Identify ICA components related to cardiac artifacts.
 
     Uses union of CTPS and correlation methods for more robust detection.
+    Separate thresholds because the two methods have different score scales:
+    CTPS scores are bounded [0,1] with few components scoring high, while
+    correlation scores (Pearson r) are also bounded [-1,1] but many components
+    can show moderate ECG correlation since the cardiac field is widespread.
 
     Args:
         ica: Fitted ICA object.
         raw: Continuous MEG data.
         ecg_channel: Name of ECG channel.
-        threshold: Threshold for both CTPS and correlation methods.
+        ctps_threshold: CTPS method threshold (default 0.20).
+        corr_threshold: Correlation method threshold (default 0.80).
 
     Returns:
         Tuple of (component_indices, scores, forced) where forced is True
@@ -76,22 +82,22 @@ def find_ecg_components(
         force-selected. Scores are from the CTPS method.
 
     Examples:
-        >>> ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, threshold=0.20)
+        >>> ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, ctps_threshold=0.20)
     """
-    logger.info(f"Detecting ECG components (threshold={threshold})")
-    console.print(f"[yellow]⏳ ICA: Detecting ECG components (CTPS + correlation)...[/yellow]")
+    logger.info(f"Detecting ECG components (CTPS={ctps_threshold}, corr={corr_threshold})")
+    console.print(f"[yellow]⏳ ICA: Detecting ECG components (CTPS={ctps_threshold}, corr={corr_threshold})...[/yellow]")
 
     # Create ECG epochs
     ecg_epochs = create_ecg_epochs(raw, ch_name=ecg_channel, verbose=False)
 
-    # Method 1: CTPS
+    # Method 1: CTPS (phase-based, specific to cardiac periodicity)
     ecg_inds_ctps, ecg_scores = ica.find_bads_ecg(
-        ecg_epochs, ch_name=ecg_channel, method="ctps", threshold=threshold, verbose=False
+        ecg_epochs, ch_name=ecg_channel, method="ctps", threshold=ctps_threshold, verbose=False
     )
 
-    # Method 2: Correlation
+    # Method 2: Correlation (amplitude-based, needs higher threshold)
     ecg_inds_corr, _ = ica.find_bads_ecg(
-        ecg_epochs, ch_name=ecg_channel, method="correlation", threshold=threshold, verbose=False
+        ecg_epochs, ch_name=ecg_channel, method="correlation", threshold=corr_threshold, verbose=False
     )
 
     # Union of both methods
@@ -207,7 +213,8 @@ def run_ica_pipeline(
     noise_cov: mne.Covariance,
     n_components=0.99,
     random_state: int = 42,
-    ecg_threshold: float = 0.20,
+    ecg_ctps_threshold: float = 0.20,
+    ecg_corr_threshold: float = 0.80,
     eog_threshold: float = 2.5,
 ) -> Tuple[mne.io.Raw, mne.Epochs, ICA, List[int], List[int], np.ndarray, np.ndarray, bool, bool]:
     """Run complete ICA pipeline for artifact removal.
@@ -219,7 +226,8 @@ def run_ica_pipeline(
         n_components: Number of ICA components (int), or float 0-1 for
             explained variance threshold.
         random_state: Random seed.
-        ecg_threshold: ECG detection threshold (CTPS + correlation union).
+        ecg_ctps_threshold: CTPS threshold for ECG detection.
+        ecg_corr_threshold: Correlation threshold for ECG detection.
         eog_threshold: EOG z-score detection threshold.
 
     Returns:
@@ -239,7 +247,9 @@ def run_ica_pipeline(
     ica = fit_ica(epochs, n_components, random_state, noise_cov)
 
     # Detect ECG components
-    ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, threshold=ecg_threshold)
+    ecg_inds, ecg_scores, ecg_forced = find_ecg_components(
+        ica, raw, ctps_threshold=ecg_ctps_threshold, corr_threshold=ecg_corr_threshold
+    )
 
     # Detect EOG components
     eog_inds, eog_scores, eog_forced = find_eog_components(ica, raw, threshold=eog_threshold)

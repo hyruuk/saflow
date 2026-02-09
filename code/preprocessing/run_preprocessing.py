@@ -1215,7 +1215,8 @@ def preprocess_run(
         noise_cov,
         n_components=ica_cfg.get("n_components", 0.99),
         random_state=ica_cfg.get("random_state", 42),
-        ecg_threshold=ica_cfg.get("ecg_threshold", 0.20),
+        ecg_ctps_threshold=ica_cfg.get("ecg_ctps_threshold", 0.20),
+        ecg_corr_threshold=ica_cfg.get("ecg_corr_threshold", 0.80),
         eog_threshold=ica_cfg.get("eog_threshold", 2.5),
     )
 
@@ -1478,7 +1479,8 @@ def preprocess_run(
             "eog_components": eog_inds,
             "ecg_scores": ecg_scores.tolist() if isinstance(ecg_scores, np.ndarray) else ecg_scores,
             "eog_scores": eog_scores.tolist() if isinstance(eog_scores, np.ndarray) else eog_scores,
-            "ecg_threshold": float(ica_cfg.get("ecg_threshold", 0.20)),
+            "ecg_ctps_threshold": float(ica_cfg.get("ecg_ctps_threshold", 0.20)),
+            "ecg_corr_threshold": float(ica_cfg.get("ecg_corr_threshold", 0.80)),
             "eog_threshold": float(ica_cfg.get("eog_threshold", 2.5)),
             "ecg_forced": ecg_forced,
             "eog_forced": eog_forced,
