@@ -683,6 +683,53 @@ def _ica_forced_badge(forced) -> str:
     return '<span class="above-thresh-text">No</span>'
 
 
+def _inject_nav_bar(html_path: Path, links: list) -> None:
+    """Inject a sticky navigation bar into an MNE Report HTML file.
+
+    The bar is inserted immediately after the <body> opening tag so it is
+    always visible regardless of which tab/section the user has selected.
+
+    Args:
+        html_path: Path to the saved HTML file to patch in-place.
+        links: List of (label, href) tuples rendered left-to-right.
+    """
+    import re
+
+    try:
+        content = html_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.warning(f"Cannot read {html_path} for nav-bar injection: {exc}")
+        return
+
+    link_parts = " &nbsp;|&nbsp; ".join(
+        f'<a href="{href}" style="color:#5dade2;text-decoration:none;">{label}</a>'
+        for label, href in links
+    )
+    nav_html = (
+        '\n<div style="position:sticky;top:0;z-index:10000;background:#1a252f;'
+        'color:#ecf0f1;padding:6px 16px;font-size:13px;'
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        'display:flex;align-items:center;gap:12px;border-bottom:2px solid #2980b9;">'
+        f'{link_parts}'
+        '</div>\n'
+    )
+
+    modified = re.sub(
+        r'(<body[^>]*>)',
+        lambda m: m.group(1) + nav_html,
+        content,
+        count=1,
+    )
+    if modified == content:
+        logger.warning(f"Nav-bar injection: no <body> tag found in {html_path}")
+        return
+
+    try:
+        html_path.write_text(modified, encoding="utf-8")
+    except Exception as exc:
+        logger.warning(f"Cannot write nav bar to {html_path}: {exc}")
+
+
 def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
     """Build HTML content for subject-level report.
 
@@ -1102,6 +1149,11 @@ def generate_subject_report(
     report.save(html_path, open_browser=False, overwrite=True)
     logger.info(f"Subject report saved: {html_path}")
 
+    # Inject sticky nav bar so the link to the dataset report is always visible
+    _inject_nav_bar(html_path, [
+        ("← Dataset Report", "../group_preprocessing-summary.html"),
+    ])
+
     # Save JSON summary
     json_data = {
         "subject": subject,
@@ -1317,6 +1369,11 @@ def generate_dataset_report(
 
     report.save(html_path, open_browser=False, overwrite=True)
     logger.info(f"Dataset report saved: {html_path}")
+
+    # Inject identity bar (top-level report — links go down into subjects via table)
+    _inject_nav_bar(html_path, [
+        ("saflow · Dataset Preprocessing Report", "#"),
+    ])
 
     # Save JSON summary
     # Simplify per_subject for JSON (remove nested per_run details)

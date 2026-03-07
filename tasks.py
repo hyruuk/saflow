@@ -452,11 +452,15 @@ def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
     if slurm:
         _preprocess_slurm(c, subject, runs, bids_root, log_level, skip_existing, dry_run)
     else:
-        if not subject:
-            print("ERROR: --subject is required for local execution")
-            print("Use --slurm to process all subjects in parallel on HPC")
-            return
-        _preprocess_local(c, subject, runs, bids_root, log_level, skip_existing, crop)
+        from code.utils.config import load_config
+        config = load_config()
+        subjects = [subject] if subject else config["bids"]["subjects"]
+        print(f"Processing {len(subjects)} subject(s): {', '.join(subjects)}\n")
+        for subj in subjects:
+            print(f"\n{'='*40}")
+            print(f"Subject: {subj}")
+            print(f"{'='*40}")
+            _preprocess_local(c, subj, runs, bids_root, log_level, skip_existing, crop)
 
 
 @task
@@ -468,20 +472,26 @@ def preprocess_report(c, subject=None, dataset=False):
         invoke pipeline.preprocess-report --dataset
         invoke pipeline.preprocess-report --subject=04 --dataset
     """
+    from code.utils.config import load_config
+    config = load_config()
+
+    # Default: all subjects + dataset report
     if not subject and not dataset:
-        print("ERROR: At least one of --subject or --dataset is required")
-        return
+        subjects = config["bids"]["subjects"]
+        dataset = True
+    else:
+        subjects = [subject] if subject else []
 
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.preprocessing.aggregate_reports"]
+    for subj in subjects:
+        cmd = [python_exe, "-m", "code.preprocessing.aggregate_reports", "-s", subj]
+        print(f"\nRunning: {' '.join(cmd)}\n")
+        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
 
-    if subject:
-        cmd.extend(["-s", subject])
     if dataset:
-        cmd.append("--dataset")
-
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+        cmd = [python_exe, "-m", "code.preprocessing.aggregate_reports", "--dataset"]
+        print(f"\nRunning: {' '.join(cmd)}\n")
+        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
@@ -604,13 +614,13 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
         _features_slurm(c, "fooof", subject, runs, space, skip_existing=skip_existing, dry_run=dry_run)
         return
 
-    if not subject:
-        print("ERROR: --subject is required for local execution")
-        print("Use --slurm to process all subjects in parallel on HPC")
-        return
-
-    _features_local(c, "fooof", subject, runs, space, skip_existing=skip_existing)
-    print(f"\n✓ FOOOF extraction complete for sub-{subject}")
+    from code.utils.config import load_config
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    print(f"Processing {len(subjects)} subject(s)\n")
+    for subj in subjects:
+        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing)
+    print(f"\n✓ FOOOF extraction complete")
 
 
 @task
@@ -634,13 +644,13 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
         _features_slurm(c, "psd", subject, runs, space, skip_existing=skip_existing, dry_run=dry_run)
         return
 
-    if not subject:
-        print("ERROR: --subject is required for local execution")
-        print("Use --slurm to process all subjects in parallel on HPC")
-        return
-
-    _features_local(c, "psd", subject, runs, space, skip_existing=skip_existing)
-    print(f"\n✓ PSD extraction complete for sub-{subject}")
+    from code.utils.config import load_config
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    print(f"Processing {len(subjects)} subject(s)\n")
+    for subj in subjects:
+        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing)
+    print(f"\n✓ PSD extraction complete")
 
 
 @task
@@ -667,14 +677,14 @@ def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc 
                         complexity_types=complexity_type, dry_run=dry_run)
         return
 
-    if not subject:
-        print("ERROR: --subject is required for local execution")
-        print("Use --slurm to process all subjects in parallel on HPC")
-        return
-
-    _features_local(c, "complexity", subject, runs, space, skip_existing=not overwrite,
-                    complexity_types=complexity_type)
-    print(f"\n✓ Complexity extraction complete for sub-{subject}")
+    from code.utils.config import load_config
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    print(f"Processing {len(subjects)} subject(s)\n")
+    for subj in subjects:
+        _features_local(c, "complexity", subj, runs, space, skip_existing=not overwrite,
+                        complexity_types=complexity_type)
+    print(f"\n✓ Complexity extraction complete")
 
 
 @task
@@ -696,22 +706,20 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
         _features_slurm(c, "all", subject, runs, space, skip_existing=not overwrite, dry_run=dry_run)
         return
 
-    if not subject:
-        print("ERROR: --subject is required for local execution")
-        print("Use --slurm to process all subjects in parallel on HPC")
-        return
-
-    # Convert overwrite to skip_existing for fooof/psd tasks
+    from code.utils.config import load_config
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
     skip_existing = not overwrite
+    print(f"Processing {len(subjects)} subject(s)\n")
 
-    print("\n[1/3] Extracting PSD features...")
-    _features_local(c, "psd", subject, runs, space, skip_existing=skip_existing)
-
-    print("\n[2/3] Extracting FOOOF features...")
-    _features_local(c, "fooof", subject, runs, space, skip_existing=skip_existing)
-
-    print("\n[3/3] Extracting Complexity features...")
-    _features_local(c, "complexity", subject, runs, space, skip_existing=skip_existing)
+    for subj in subjects:
+        print(f"\n{'='*40}\nSubject: {subj}\n{'='*40}")
+        print("\n[1/3] Extracting PSD features...")
+        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing)
+        print("\n[2/3] Extracting FOOOF features...")
+        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing)
+        print("\n[3/3] Extracting Complexity features...")
+        _features_local(c, "complexity", subj, runs, space, skip_existing=skip_existing)
 
     print("\n" + "=" * 80)
     print("✓ All feature extraction complete!")

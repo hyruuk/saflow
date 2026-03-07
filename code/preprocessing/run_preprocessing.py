@@ -1436,6 +1436,18 @@ def preprocess_run(
     report.save(report_path, open_browser=False, overwrite=True)
     logger.info(f"\u2713 Report: {report_path}")
 
+    # Inject sticky nav bar so run report links up to subject and dataset reports
+    try:
+        from code.preprocessing.aggregate_reports import _inject_nav_bar
+        subject_report_rel = f"../sub-{subject}_preprocessing-summary.html"
+        dataset_report_rel = "../../group_preprocessing-summary.html"
+        _inject_nav_bar(report_path, [
+            (f"← Subject Report: sub-{subject}", subject_report_rel),
+            ("← Dataset Report", dataset_report_rel),
+        ])
+    except Exception as _nav_exc:
+        logger.warning(f"Could not inject nav bar into run report: {_nav_exc}")
+
     # Save text summary
     logger.info("Saving text summary...")
     summary_path = Path(str(paths["report"].fpath) + "_summary.txt")
@@ -1714,17 +1726,39 @@ def main():
     console.print(f"\n[bold]Logs:[/bold] {log_file}")
     console.print(f"\n[dim]Use ARlog2.pkl or BAD_AR2 annotations to filter bad epochs downstream[/dim]")
 
-    # Generate subject-level aggregate report
+    # Generate subject-level aggregate report.
+    # Always use all configured task_runs so the report shows the full picture
+    # (runs not yet preprocessed are marked as missing), regardless of which
+    # runs were processed in this invocation.
     if not args.skip_report:
+        all_task_runs = config["bids"]["task_runs"]
         try:
-            from code.preprocessing.aggregate_reports import generate_subject_report
-            console.print(f"\n[yellow]Generating subject-level report...[/yellow]")
-            report_path = generate_subject_report(
-                args.subject, derivatives_root, runs, config
+            from code.preprocessing.aggregate_reports import (
+                generate_subject_report,
+                generate_dataset_report,
             )
-            console.print(f"[green]Subject report: {report_path}[/green]")
+            console.print(f"\n[yellow]Generating subject-level report...[/yellow]")
+            subject_report_path = generate_subject_report(
+                args.subject, derivatives_root, all_task_runs, config
+            )
+            console.print(f"[green]Subject report: {subject_report_path}[/green]")
         except Exception as e:
             logger.warning(f"Could not generate subject-level report: {e}")
+
+        # Regenerate dataset report (progressive: includes all subjects done so far).
+        # This ensures the dataset report is always up-to-date after each run and
+        # is the trigger for requirement "last subject triggers dataset report".
+        try:
+            console.print(f"[yellow]Updating dataset-level report...[/yellow]")
+            dataset_report_path = generate_dataset_report(
+                derivatives_root,
+                config["bids"]["subjects"],
+                all_task_runs,
+                config,
+            )
+            console.print(f"[green]Dataset report: {dataset_report_path}[/green]")
+        except Exception as e:
+            logger.warning(f"Could not generate dataset-level report: {e}")
 
     logger.info("Preprocessing complete")
     return 0
