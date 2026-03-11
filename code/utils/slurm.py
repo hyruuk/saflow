@@ -76,6 +76,7 @@ def submit_slurm_job(
     script_path: Path,
     job_name: Optional[str] = None,
     dependencies: Optional[List[str]] = None,
+    dep_type: str = "afterok",
     dry_run: bool = False,
 ) -> Optional[str]:
     """Submit a SLURM job script using sbatch.
@@ -84,6 +85,9 @@ def submit_slurm_job(
         script_path: Path to SLURM script file
         job_name: Optional job name (overrides script's #SBATCH --job-name)
         dependencies: Optional list of job IDs this job depends on
+        dep_type: SLURM dependency type. Use "afterok" (default) to start only
+            if all dependencies succeed, or "afterany" to start regardless of
+            dependency exit status (useful for reporting/aggregation jobs).
         dry_run: If True, print command without submitting
 
     Returns:
@@ -103,8 +107,7 @@ def submit_slurm_job(
         cmd.extend(["--job-name", job_name])
 
     if dependencies:
-        # Format: --dependency=afterok:jobid1:jobid2
-        dep_str = f"afterok:{':'.join(dependencies)}"
+        dep_str = f"{dep_type}:{':'.join(dependencies)}"
         cmd.extend(["--dependency", dep_str])
 
     cmd.append(str(script_path))

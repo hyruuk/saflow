@@ -1370,7 +1370,10 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
         render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
         rjob_id = submit_slurm_job(
-            script_path, dependencies=deps if deps else None, dry_run=dry_run
+            script_path,
+            dependencies=deps if deps else None,
+            dep_type="afterany",  # run even if some preprocessing runs failed
+            dry_run=dry_run,
         )
         if rjob_id:
             report_job_ids.append(rjob_id)
