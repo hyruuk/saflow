@@ -1108,7 +1108,7 @@ def generate_subject_report(
     metrics = aggregate_subject_metrics(run_params)
 
     # Generate HTML report using mne.Report
-    report = mne.Report(title=f"Preprocessing Summary - sub-{subject}", verbose=False)
+    report = mne.Report(title=f"Preprocessing Summary - sub-{subject}", image_format="png", verbose=False)
 
     # Add HTML overview
     html_content = _build_subject_html(subject, metrics, config)
