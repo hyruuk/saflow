@@ -600,6 +600,32 @@ def generate_preprocessing_report(
     except Exception as e:
         logger.warning(f"Could not plot ICA component topographies: {e}")
 
+    # Cumulative PCA variance explained — helps choose n_components threshold
+    try:
+        ev = ica.pca_explained_variance_
+        cumvar = np.cumsum(ev) / ev.sum() * 100  # % of retained PCA variance
+        n_comps_range = np.arange(1, len(ev) + 1)
+        fig_cumvar, ax_cv = plt.subplots(figsize=(10, 5))
+        ax_cv.plot(n_comps_range, cumvar, color="#1f77b4", linewidth=2)
+        ax_cv.axvline(ica.n_components_, color="black", linestyle="-", linewidth=1.5,
+                      label=f"ICA cutoff ({ica.n_components_} components)")
+        for pct, col in [(80, "#2ca02c"), (90, "#ff7f0e"), (95, "#9467bd"), (99, "#d62728")]:
+            # Find first component index that meets this threshold
+            idx = np.searchsorted(cumvar, pct)
+            if idx < len(n_comps_range):
+                ax_cv.axhline(pct, color=col, linestyle="--", linewidth=1,
+                              label=f"{pct}% → {n_comps_range[idx]} comps")
+        ax_cv.set_xlabel("Number of PCA Components")
+        ax_cv.set_ylabel("Cumulative Explained Variance (%)")
+        ax_cv.set_title("Cumulative PCA Variance Explained")
+        ax_cv.legend(fontsize=9)
+        ax_cv.grid(True, alpha=0.3)
+        fig_cumvar.tight_layout()
+        report.add_figure(fig_cumvar, title="ICA: Cumulative variance explained")
+        plt.close(fig_cumvar)
+    except Exception as e:
+        logger.warning(f"Could not plot cumulative variance: {e}")
+
     # ICA properties for excluded components, plotted against artifact-specific epochs
     ecg_ch = "ECG"   # renamed from EEG059 earlier in pipeline
     eog_ch = "vEOG"  # renamed from EEG057 earlier in pipeline
@@ -1496,6 +1522,7 @@ def preprocess_run(
             "eog_threshold": float(ica_cfg.get("eog_threshold", 2.5)),
             "ecg_forced": ecg_forced,
             "eog_forced": eog_forced,
+            "pca_explained_variance": ica.pca_explained_variance_.tolist(),
         },
         "autoreject_first_pass": {
             "description": "First pass (fit only) for ICA",

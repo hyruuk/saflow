@@ -6,9 +6,8 @@ and generates:
 2. Dataset-level reports: quality summary across all subjects
 
 Usage:
-    python -m code.preprocessing.aggregate_reports -s 04           # subject report
-    python -m code.preprocessing.aggregate_reports --dataset        # dataset report
-    python -m code.preprocessing.aggregate_reports -s 04 --dataset  # both
+    python -m code.preprocessing.aggregate_reports -s 04   # single subject report
+    python -m code.preprocessing.aggregate_reports --dataset  # all subject reports + dataset report
 """
 
 import argparse
@@ -22,6 +21,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import numpy as np
+
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    _PLOTLY_AVAILABLE = True
+except ImportError:
+    _PLOTLY_AVAILABLE = False
 
 from code.utils.config import load_config
 
@@ -485,24 +491,156 @@ def _create_subject_epoch_bar_chart(run_metrics: list, subject: str) -> plt.Figu
     return fig
 
 
-def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
-    """4-panel figure with histograms across subjects.
+def _create_dataset_distribution_html(dataset_metrics: dict) -> str:
+    """4-panel interactive Plotly figure with distributions across subjects.
 
     Panels:
-    - Histogram: AR1 bad epoch rates across subjects
+    - Histogram: AR1 bad epoch rates across subjects (hover shows subject IDs)
     - Histogram: retention rates across subjects
     - Histogram: ICA rescue rates (if available)
-    - Scatter: AR1 bad % vs AR2 bad % per subject
+    - Scatter: AR1 bad % vs AR2 bad % per subject (hover shows subject ID)
 
     Args:
         dataset_metrics: Output of aggregate_dataset_metrics.
 
     Returns:
-        Matplotlib figure.
+        HTML string with embedded Plotly figure, or empty string if Plotly unavailable.
     """
+    if not _PLOTLY_AVAILABLE:
+        return ""
+
     per_subject = dataset_metrics["per_subject"]
 
-    # Collect per-subject mean values
+    subjects = []
+    ar1_means = []
+    ar2_means = []
+    retention_means = []
+    rescue_means = []
+
+    for subj, metrics in per_subject.items():
+        s = metrics["summary"]
+        subjects.append(subj)
+        ar1_means.append(s["ar1_pct_bad"]["mean"])
+        ar2_means.append(s["ar2_pct_bad"]["mean"])
+        retention_means.append(s["retention_rate"]["mean"])
+        rescue_means.append(s["rescue_rate"]["mean"])
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            "AR1 Bad Epoch Rates Across Subjects",
+            "Retention Rates Across Subjects",
+            "ICA Rescue Rates Across Subjects",
+            "AR1 vs AR2 Bad Epoch Rate Per Subject",
+        ),
+    )
+
+    # Helper: build custom histogram bins with per-bin subject lists for hover
+    def _hist_with_hover(values, labels, nbins, color, row, col, name):
+        valid = [(v, l) for v, l in zip(values, labels) if v is not None]
+        if not valid:
+            return
+        vals, labs = zip(*valid)
+        vals = list(vals)
+        labs = list(labs)
+        lo, hi = min(vals), max(vals)
+        if lo == hi:
+            edges = [lo - 0.5, hi + 0.5]
+        else:
+            step = (hi - lo) / nbins
+            edges = [lo + i * step for i in range(nbins + 1)]
+        bin_counts = []
+        bin_subjects = []
+        bin_centers = []
+        for i in range(len(edges) - 1):
+            lo_e, hi_e = edges[i], edges[i + 1]
+            in_bin = [l for v, l in zip(vals, labs) if lo_e <= v < hi_e or (i == len(edges) - 2 and v == hi_e)]
+            bin_counts.append(len(in_bin))
+            bin_subjects.append("<br>".join(f"sub-{l}" for l in in_bin) if in_bin else "")
+            bin_centers.append((lo_e + hi_e) / 2)
+        fig.add_trace(
+            go.Bar(
+                x=bin_centers,
+                y=bin_counts,
+                name=name,
+                marker_color=color,
+                marker_line_color="black",
+                marker_line_width=0.8,
+                opacity=0.75,
+                width=edges[1] - edges[0],
+                customdata=bin_subjects,
+                hovertemplate="<b>%{y} subjects</b><br>%{customdata}<extra></extra>",
+            ),
+            row=row, col=col,
+        )
+
+    nbins_ar1 = min(15, max(5, len([v for v in ar1_means if v is not None]) // 2))
+    nbins_ret = min(15, max(5, len([v for v in retention_means if v is not None]) // 2))
+    nbins_rsc = min(15, max(5, len([v for v in rescue_means if v is not None]) // 2))
+
+    _hist_with_hover(ar1_means, subjects, nbins_ar1, "#1f77b4", 1, 1, "AR1 bad rate")
+    _hist_with_hover(retention_means, subjects, nbins_ret, "#2ca02c", 1, 2, "Retention rate")
+    _hist_with_hover(rescue_means, subjects, nbins_rsc, "#9467bd", 2, 1, "ICA rescue rate")
+
+    # Threshold lines
+    fig.add_vline(x=30, line_dash="dash", line_color="red", row=1, col=1,
+                  annotation_text="30%", annotation_position="top right")
+    fig.add_vline(x=60, line_dash="dash", line_color="red", row=1, col=2,
+                  annotation_text="60%", annotation_position="top left")
+
+    # Scatter: AR1 vs AR2
+    scatter_data = [(a1, a2, s) for a1, a2, s in zip(ar1_means, ar2_means, subjects)
+                    if a1 is not None and a2 is not None]
+    if scatter_data:
+        sx, sy, sl = zip(*scatter_data)
+        lim_max = max(max(sx), max(sy)) * 1.1
+        fig.add_trace(
+            go.Scatter(
+                x=list(sx), y=list(sy),
+                mode="markers",
+                marker=dict(color="#ff7f0e", size=9, line=dict(color="black", width=1)),
+                text=[f"sub-{s}" for s in sl],
+                hovertemplate="<b>%{text}</b><br>AR1: %{x:.1f}%<br>AR2: %{y:.1f}%<extra></extra>",
+                name="subjects",
+            ),
+            row=2, col=2,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[0, lim_max], y=[0, lim_max],
+                mode="lines",
+                line=dict(color="black", dash="dash", width=1),
+                opacity=0.3,
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=2, col=2,
+        )
+
+    fig.update_xaxes(title_text="Mean AR1 Bad Epoch Rate (%)", row=1, col=1)
+    fig.update_xaxes(title_text="Mean Retention Rate (%)", row=1, col=2)
+    fig.update_xaxes(title_text="Mean ICA Rescue Rate (%)", row=2, col=1)
+    fig.update_xaxes(title_text="Mean AR1 Bad %", row=2, col=2)
+    fig.update_yaxes(title_text="Number of Subjects", row=1, col=1)
+    fig.update_yaxes(title_text="Number of Subjects", row=1, col=2)
+    fig.update_yaxes(title_text="Number of Subjects", row=2, col=1)
+    fig.update_yaxes(title_text="Mean AR2 Bad %", row=2, col=2)
+
+    fig.update_layout(
+        title_text="Dataset-Level Preprocessing Quality",
+        title_font_size=16,
+        height=800,
+        showlegend=False,
+        template="plotly_white",
+    )
+
+    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+
+
+def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
+    """4-panel matplotlib figure (fallback when Plotly unavailable)."""
+    per_subject = dataset_metrics["per_subject"]
+
     subjects = []
     ar1_means = []
     ar2_means = []
@@ -519,7 +657,6 @@ def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
-    # Panel 1: AR1 bad epoch rate distribution
     ax = axes[0, 0]
     valid_ar1 = [v for v in ar1_means if v is not None]
     if valid_ar1:
@@ -531,7 +668,6 @@ def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
     ax.set_ylabel("Number of Subjects")
     ax.set_title("AR1 Bad Epoch Rates Across Subjects")
 
-    # Panel 2: Retention rate distribution
     ax = axes[0, 1]
     valid_ret = [v for v in retention_means if v is not None]
     if valid_ret:
@@ -543,7 +679,6 @@ def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
     ax.set_ylabel("Number of Subjects")
     ax.set_title("Retention Rates Across Subjects")
 
-    # Panel 3: ICA rescue rate distribution
     ax = axes[1, 0]
     valid_rescue = [v for v in rescue_means if v is not None]
     if valid_rescue:
@@ -556,7 +691,6 @@ def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
     ax.set_ylabel("Number of Subjects")
     ax.set_title("ICA Rescue Rates Across Subjects")
 
-    # Panel 4: AR1 vs AR2 scatter
     ax = axes[1, 1]
     scatter_ar1 = []
     scatter_ar2 = []
@@ -570,10 +704,8 @@ def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
     if scatter_ar1:
         ax.scatter(scatter_ar1, scatter_ar2, c="#ff7f0e", edgecolors="black",
                    alpha=0.7, s=50)
-        # Add diagonal reference line
         lim_max = max(max(scatter_ar1), max(scatter_ar2)) * 1.1
         ax.plot([0, lim_max], [0, lim_max], "k--", alpha=0.3, label="x=y")
-        # Label outlier points
         for x, y, label in zip(scatter_ar1, scatter_ar2, scatter_labels):
             if x > 30 or y > 30:
                 ax.annotate(f"sub-{label}", (x, y), fontsize=8,
@@ -1355,10 +1487,14 @@ def generate_dataset_report(
     html_content = _build_dataset_html(dataset_metrics)
     report.add_html(html_content, title="Overview")
 
-    # Add distribution figure
-    fig = _create_dataset_distribution_figure(dataset_metrics)
-    report.add_figure(fig, title="Distribution Plots")
-    plt.close(fig)
+    # Add distribution figure (interactive Plotly when available, else matplotlib)
+    if _PLOTLY_AVAILABLE:
+        plotly_html = _create_dataset_distribution_html(dataset_metrics)
+        report.add_html(plotly_html, title="Distribution Plots")
+    else:
+        fig = _create_dataset_distribution_figure(dataset_metrics)
+        report.add_figure(fig, title="Distribution Plots")
+        plt.close(fig)
 
     # Output paths
     out_dir = derivatives_root / "preprocessed"
@@ -1454,6 +1590,16 @@ def main():
         print(f"Subject report: {report_path}")
 
     if args.dataset:
+        print(f"Generating subject-level reports for {len(subjects)} subjects...")
+        for subj in subjects:
+            try:
+                subj_report_path = generate_subject_report(
+                    subj, derivatives_root, task_runs, config
+                )
+                print(f"  sub-{subj}: {subj_report_path}")
+            except Exception as exc:
+                print(f"  sub-{subj}: SKIPPED ({exc})")
+
         print(f"Generating dataset-level report for {len(subjects)} subjects...")
         report_path = generate_dataset_report(
             derivatives_root, subjects, task_runs, config
