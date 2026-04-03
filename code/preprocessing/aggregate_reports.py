@@ -11,9 +11,11 @@ Usage:
 """
 
 import argparse
+import base64
 import json
 import logging
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib
@@ -151,6 +153,7 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
         eog_threshold = _safe_get(ica, "eog_threshold")
         ecg_forced = _safe_get(ica, "ecg_forced")
         eog_forced = _safe_get(ica, "eog_forced")
+        pca_explained_variance = _safe_get(ica, "pca_explained_variance")
 
         # Compute max scores if available
         ecg_max_score = None
@@ -201,6 +204,7 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "eog_threshold": eog_threshold,
             "ecg_forced": ecg_forced,
             "eog_forced": eog_forced,
+            "pca_explained_variance": pca_explained_variance,
             "rescue_rate": rescue_rate,
             "pairwise_kappa": pairwise_kappa,
             "retention_rate": proper_retention,
@@ -1149,6 +1153,252 @@ def _create_ica_score_figures(metrics: dict, subject: str) -> list:
     return figures
 
 
+def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
+    """Interactive Plotly (or static matplotlib) cumulative PCA variance plot.
+
+    Shows one line per run, x = component index, y = cumulative explained
+    variance (%).  Falls back to a matplotlib PNG embedded as base64 when
+    Plotly is not available.
+
+    Args:
+        metrics: Output of aggregate_subject_metrics.
+        subject: Subject ID.
+
+    Returns:
+        HTML string ready for report.add_html().
+    """
+    runs_data = []
+    for r in metrics["per_run"]:
+        if not r.get("complete"):
+            continue
+        pev = r.get("pca_explained_variance")
+        if pev and isinstance(pev, list) and len(pev) > 0:
+            runs_data.append((r["run"], pev))
+
+    if not runs_data:
+        return "<p><i>No PCA explained-variance data available (requires reprocessed runs).</i></p>"
+
+    if _PLOTLY_AVAILABLE:
+        fig = go.Figure()
+        colors = [
+            "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
+        ]
+        for i, (run, pev) in enumerate(runs_data):
+            cumvar = list(np.cumsum(pev) * 100) if max(pev) <= 1.0 else list(np.cumsum(pev))
+            n_components_used = len([r for r in metrics["per_run"]
+                                     if r.get("run") == run and r.get("complete")])
+            n_ica_actual = next(
+                (r.get("n_ica_components") for r in metrics["per_run"] if r.get("run") == run),
+                None,
+            )
+            hover = [
+                f"Run {run}<br>Component {j}<br>Cumulative: {v:.1f}%"
+                for j, v in enumerate(cumvar)
+            ]
+            # Marker to show where ICA cuts off
+            marker_x = None
+            marker_y = None
+            if n_ica_actual is not None and n_ica_actual <= len(cumvar):
+                marker_x = n_ica_actual - 1
+                marker_y = cumvar[n_ica_actual - 1]
+
+            color = colors[i % len(colors)]
+            fig.add_trace(go.Scatter(
+                x=list(range(len(cumvar))),
+                y=cumvar,
+                mode="lines",
+                name=f"run-{run}",
+                line=dict(color=color, width=2),
+                text=hover,
+                hoverinfo="text",
+            ))
+            if marker_x is not None:
+                fig.add_trace(go.Scatter(
+                    x=[marker_x],
+                    y=[marker_y],
+                    mode="markers",
+                    marker=dict(color=color, size=10, symbol="diamond",
+                                line=dict(color="black", width=1)),
+                    name=f"run-{run} ICA cutoff",
+                    hovertemplate=f"Run {run} ICA cutoff<br>Component {marker_x}<br>{marker_y:.1f}% variance<extra></extra>",
+                    showlegend=True,
+                ))
+
+        fig.update_layout(
+            title=f"Cumulative PCA Explained Variance — sub-{subject}",
+            xaxis_title="PCA Component Index",
+            yaxis_title="Cumulative Explained Variance (%)",
+            template="plotly_white",
+            height=450,
+            hovermode="closest",
+        )
+        fig.add_hline(y=90, line_dash="dash", line_color="gray",
+                      annotation_text="90%", annotation_position="top left")
+        fig.add_hline(y=99, line_dash="dot", line_color="gray",
+                      annotation_text="99%", annotation_position="top left")
+        return fig.to_html(include_plotlyjs="cdn", full_html=False)
+
+    # --- Matplotlib fallback ---
+    n_runs = len(runs_data)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for run, pev in runs_data:
+        cumvar = np.cumsum(pev) * 100 if max(pev) <= 1.0 else np.cumsum(pev)
+        ax.plot(range(len(cumvar)), cumvar, label=f"run-{run}", linewidth=1.8)
+        n_ica_actual = next(
+            (r.get("n_ica_components") for r in metrics["per_run"] if r.get("run") == run),
+            None,
+        )
+        if n_ica_actual is not None and n_ica_actual <= len(cumvar):
+            ax.plot(n_ica_actual - 1, cumvar[n_ica_actual - 1], "D", markersize=7)
+    ax.axhline(90, color="gray", linestyle="--", linewidth=1, alpha=0.7)
+    ax.axhline(99, color="gray", linestyle=":", linewidth=1, alpha=0.7)
+    ax.set_xlabel("PCA Component Index")
+    ax.set_ylabel("Cumulative Explained Variance (%)")
+    ax.set_title(f"Cumulative PCA Explained Variance — sub-{subject}")
+    ax.legend(fontsize=9)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=90, bbox_inches="tight")
+    buf.seek(0)
+    b64 = base64.b64encode(buf.read()).decode("utf-8")
+    plt.close(fig)
+    return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;"/>'
+
+
+def _create_ica_topography_slider_html(
+    ica, run: str, ecg_inds: list, eog_inds: list
+) -> str:
+    """Generate an HTML snippet with a JS slider to browse ICA topographies.
+
+    Each ICA component is rendered individually as a PNG and embedded as
+    base64.  Navigation is handled by a range slider + prev/next buttons.
+    ECG and EOG components are highlighted with coloured badges.
+
+    Args:
+        ica: Fitted MNE ICA object.
+        run: Run ID string (used to namespace JS variables).
+        ecg_inds: List of ECG component indices.
+        eog_inds: List of EOG component indices.
+
+    Returns:
+        HTML string.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+
+    n_components = ica.n_components_
+    safe_run = run.replace("-", "_")
+
+    images = []
+    for comp_idx in range(n_components):
+        try:
+            figs = ica.plot_components(picks=[comp_idx], show=False)
+            if not isinstance(figs, list):
+                figs = [figs]
+            fig = figs[0]
+            buf = BytesIO()
+            fig.savefig(buf, format="png", dpi=80, bbox_inches="tight")
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("utf-8")
+            plt.close(fig)
+        except Exception:
+            b64 = ""
+
+        if comp_idx in ecg_inds and comp_idx in eog_inds:
+            comp_type = "ECG+EOG"
+            badge_color = "#d62728"
+        elif comp_idx in ecg_inds:
+            comp_type = "ECG"
+            badge_color = "#e377c2"
+        elif comp_idx in eog_inds:
+            comp_type = "EOG"
+            badge_color = "#ff7f0e"
+        else:
+            comp_type = "kept"
+            badge_color = "#2ca02c"
+
+        images.append({
+            "b64": b64,
+            "type": comp_type,
+            "color": badge_color,
+            "idx": comp_idx,
+        })
+
+    if not images:
+        return "<p><i>No ICA topographies to display.</i></p>"
+
+    # Build JS data array (only src + metadata, no big inline object)
+    js_images = json.dumps([
+        {"src": f"data:image/png;base64,{img['b64']}",
+         "type": img["type"],
+         "color": img["color"],
+         "idx": img["idx"]}
+        for img in images
+    ])
+
+    html = f"""
+<div id="ica-slider-{safe_run}" style="text-align:center; font-family: sans-serif; padding: 10px;">
+  <div style="margin-bottom:8px;">
+    <span id="topo-label-{safe_run}" style="font-weight:bold; font-size:15px;"></span>
+    &nbsp;
+    <span id="topo-badge-{safe_run}"
+          style="display:inline-block; padding:2px 10px; border-radius:10px;
+                 font-size:12px; font-weight:bold; color:white; background:#2ca02c;"></span>
+  </div>
+  <div style="margin-bottom:6px;">
+    <button onclick="prevICA_{safe_run}()"
+            style="padding:4px 12px; margin-right:8px; cursor:pointer;">&#8592; Prev</button>
+    <input type="range" id="slider-{safe_run}" min="0" max="{len(images)-1}" value="0"
+           style="width:300px; vertical-align:middle;"
+           oninput="gotoICA_{safe_run}(parseInt(this.value))">
+    <button onclick="nextICA_{safe_run}()"
+            style="padding:4px 12px; margin-left:8px; cursor:pointer;">Next &#8594;</button>
+  </div>
+  <div>
+    <img id="topo-img-{safe_run}" src="" style="max-width:480px; border:1px solid #ccc; border-radius:4px;"/>
+  </div>
+</div>
+<script>
+(function() {{
+  var _data_{safe_run} = {js_images};
+  var _cur_{safe_run} = 0;
+
+  function _render_{safe_run}(idx) {{
+    _cur_{safe_run} = idx;
+    var d = _data_{safe_run}[idx];
+    document.getElementById('topo-img-{safe_run}').src = d.src;
+    document.getElementById('topo-label-{safe_run}').textContent =
+      'IC' + d.idx + '  (' + (idx+1) + ' / ' + _data_{safe_run}.length + ')';
+    var badge = document.getElementById('topo-badge-{safe_run}');
+    badge.textContent = d.type;
+    badge.style.background = d.color;
+    document.getElementById('slider-{safe_run}').value = idx;
+  }}
+
+  window.gotoICA_{safe_run} = function(idx) {{ _render_{safe_run}(idx); }};
+  window.prevICA_{safe_run} = function() {{
+    if (_cur_{safe_run} > 0) _render_{safe_run}(_cur_{safe_run} - 1);
+  }};
+  window.nextICA_{safe_run} = function() {{
+    if (_cur_{safe_run} < _data_{safe_run}.length - 1) _render_{safe_run}(_cur_{safe_run} + 1);
+  }};
+
+  // Keyboard navigation when hovering the container
+  document.getElementById('ica-slider-{safe_run}').addEventListener('keydown', function(e) {{
+    if (e.key === 'ArrowLeft') {{ window.prevICA_{safe_run}(); e.preventDefault(); }}
+    if (e.key === 'ArrowRight') {{ window.nextICA_{safe_run}(); e.preventDefault(); }}
+  }});
+  document.getElementById('ica-slider-{safe_run}').setAttribute('tabindex', '0');
+
+  // Init
+  _render_{safe_run}(0);
+}})();
+</script>
+"""
+    return html
+
+
 def _load_ica_and_plot_components(
     subject: str, run: str, derivatives_root: Path, ecg_inds: list, eog_inds: list
 ) -> list:
@@ -1181,28 +1431,23 @@ def _load_ica_and_plot_components(
         logger.warning(f"Could not load ICA for sub-{subject} run-{run}: {e}")
         return []
 
-    figures = []
-    excluded_inds = list(set(ecg_inds + eog_inds))
-    if not excluded_inds:
-        return []
+    # Returns list of (html_str, title) tuples (html=None means use figure instead)
+    results = []
 
-    # Component topographies
+    # Interactive topography slider (one per run)
     try:
-        figs = ica.plot_components(show=False)
-        if not isinstance(figs, list):
-            figs = [figs]
-        for i, fig_topo in enumerate(figs):
-            figures.append((fig_topo, f"Run {run} - ICA topographies (page {i+1})"))
+        slider_html = _create_ica_topography_slider_html(ica, run, ecg_inds, eog_inds)
+        results.append((slider_html, f"Run {run} - ICA topographies (slider)"))
     except Exception as e:
-        logger.warning(f"Could not plot ICA topographies for run {run}: {e}")
+        logger.warning(f"Could not create ICA topography slider for run {run}: {e}")
 
     # Component properties for excluded components (needs epochs)
-    # Try to load epochs
+    excluded_inds = list(set(ecg_inds + eog_inds))
     epoch_path = (
         derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
         / f"sub-{subject}_task-gradCPT_run-{run}_proc-ica_meg-epo.fif"
     )
-    if epoch_path.exists():
+    if epoch_path.exists() and excluded_inds:
         try:
             epochs = mne.read_epochs(epoch_path, verbose=False)
             figs_props = ica.plot_properties(epochs, picks=excluded_inds, show=False)
@@ -1210,11 +1455,11 @@ def _load_ica_and_plot_components(
                 figs_props = [figs_props]
             for idx, fig_prop in zip(excluded_inds, figs_props):
                 label = "ECG" if idx in ecg_inds else "EOG"
-                figures.append((fig_prop, f"Run {run} - IC{idx} properties ({label})"))
+                results.append((fig_prop, f"Run {run} - IC{idx} properties ({label})"))
         except Exception as e:
             logger.warning(f"Could not plot ICA properties for run {run}: {e}")
 
-    return figures
+    return results
 
 
 def generate_subject_report(
@@ -1257,19 +1502,28 @@ def generate_subject_report(
         report.add_figure(fig, title=title)
         plt.close(fig)
 
-    # Add ICA component property figures (from saved ICA objects, if available)
+    # Add cumulative PCA explained variance plot (from params.json, no ICA load needed)
+    cumvar_html = _create_cumulative_variance_html(metrics, subject)
+    report.add_html(cumvar_html, title="PCA Cumulative Variance")
+
+    # Add ICA topography slider + component property figures (from saved ICA objects)
     for r in metrics["per_run"]:
         if not r.get("complete"):
             continue
         run = r["run"]
         ecg_inds = r.get("ecg_components", [])
         eog_inds = r.get("eog_components", [])
-        ica_figures = _load_ica_and_plot_components(
+        ica_results = _load_ica_and_plot_components(
             subject, run, derivatives_root, ecg_inds, eog_inds
         )
-        for fig, title in ica_figures:
-            report.add_figure(fig, title=title)
-            plt.close(fig)
+        for item, title in ica_results:
+            if isinstance(item, str):
+                # HTML string (e.g. interactive topography slider)
+                report.add_html(item, title=title)
+            else:
+                # Matplotlib figure
+                report.add_figure(item, title=title)
+                plt.close(item)
 
     # Output paths
     out_dir = derivatives_root / "preprocessed" / f"sub-{subject}"
