@@ -59,33 +59,32 @@ def find_ecg_components(
     raw: mne.io.Raw,
     ecg_channel: str = "ECG",
     ctps_threshold: float = 0.20,
-    corr_threshold: float = 0.80,
+    corr_threshold: float = 0.50,
 ) -> Tuple[List[int], np.ndarray, bool]:
     """Identify ICA components related to cardiac artifacts.
 
-    Uses union of CTPS and correlation methods for more robust detection.
-    Separate thresholds because the two methods have different score scales:
-    CTPS scores are bounded [0,1] with few components scoring high, while
-    correlation scores (Pearson r) are also bounded [-1,1] but many components
-    can show moderate ECG correlation since the cardiac field is widespread.
+    Uses intersection of CTPS and correlation: a component is flagged only
+    when *both* methods agree.  This avoids the false positives that arise
+    from CTPS alone (heartbeat-evoked brain responses, entrained rhythms) while
+    still using CTPS as a gate to prevent over-flagging from correlation.
 
     Args:
         ica: Fitted ICA object.
         raw: Continuous MEG data.
         ecg_channel: Name of ECG channel.
         ctps_threshold: CTPS method threshold (default 0.20).
-        corr_threshold: Correlation method threshold (default 0.80).
+        corr_threshold: Pearson correlation threshold (default 0.50).
 
     Returns:
         Tuple of (component_indices, scores, forced) where forced is True
-        if no component exceeded the threshold and the best one was
-        force-selected. Scores are from the CTPS method.
+        if no component exceeded both thresholds and the best correlation
+        component was force-selected. Scores are from the CTPS method.
 
     Examples:
-        >>> ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, ctps_threshold=0.20)
+        >>> ecg_inds, ecg_scores, ecg_forced = find_ecg_components(ica, raw, corr_threshold=0.50)
     """
-    logger.info(f"Detecting ECG components (CTPS={ctps_threshold}, corr={corr_threshold})")
-    console.print(f"[yellow]⏳ ICA: Detecting ECG components (CTPS={ctps_threshold}, corr={corr_threshold})...[/yellow]")
+    logger.info(f"Detecting ECG components (CTPS={ctps_threshold}, corr={corr_threshold}, intersection)")
+    console.print(f"[yellow]⏳ ICA: Detecting ECG components (CTPS={ctps_threshold} AND corr={corr_threshold})...[/yellow]")
 
     # Create ECG epochs
     ecg_epochs = create_ecg_epochs(raw, ch_name=ecg_channel, verbose=False)
@@ -95,32 +94,31 @@ def find_ecg_components(
         ecg_epochs, ch_name=ecg_channel, method="ctps", threshold=ctps_threshold, verbose=False
     )
 
-    # Method 2: Correlation (amplitude-based, needs higher threshold)
+    # Method 2: Correlation (amplitude-based)
     ecg_inds_corr, _ = ica.find_bads_ecg(
         ecg_epochs, ch_name=ecg_channel, method="correlation", threshold=corr_threshold, verbose=False
     )
 
-    # Union of both methods
-    ecg_inds = sorted(set(ecg_inds_ctps) | set(ecg_inds_corr))
+    # Intersection: only flag when both methods agree
+    ecg_inds = sorted(set(ecg_inds_ctps) & set(ecg_inds_corr))
 
-    if ecg_inds_ctps:
-        logger.info(f"CTPS detected: {ecg_inds_ctps}")
-    if ecg_inds_corr:
-        logger.info(f"Correlation detected: {ecg_inds_corr}")
+    logger.info(f"CTPS detected: {ecg_inds_ctps}, correlation detected: {ecg_inds_corr}, intersection: {ecg_inds}")
 
-    # If no components detected by either method, use the one with highest CTPS score
+    # If intersection is empty, fall back to force-selecting the component with
+    # the highest correlation score (not CTPS alone, which is noisier)
     forced = False
     if not ecg_inds:
         forced = True
-        max_idx = int(np.argmax(np.abs(ecg_scores)))
-        ecg_inds = [max_idx]
-        console.print(f"[yellow]⚠ No ECG components above threshold, using highest score: IC{max_idx}[/yellow]")
-        logger.warning(
-            f"No ECG components above threshold, using highest score: IC{max_idx}"
+        ecg_inds_corr_any, corr_scores = ica.find_bads_ecg(
+            ecg_epochs, ch_name=ecg_channel, method="correlation", threshold=0.0, verbose=False
         )
+        max_idx = int(np.argmax(np.abs(corr_scores)))
+        ecg_inds = [max_idx]
+        console.print(f"[yellow]⚠ No ECG components above both thresholds, force-selecting highest correlation: IC{max_idx}[/yellow]")
+        logger.warning(f"No ECG components in intersection, force-selecting IC{max_idx} (highest correlation)")
     else:
         console.print(f"[green]✓ Detected {len(ecg_inds)} ECG components: {ecg_inds} (CTPS: {ecg_inds_ctps}, corr: {ecg_inds_corr})[/green]")
-        logger.info(f"Detected {len(ecg_inds)} ECG components (union): {ecg_inds}")
+        logger.info(f"Detected {len(ecg_inds)} ECG components (intersection): {ecg_inds}")
 
     return ecg_inds, ecg_scores, forced
 

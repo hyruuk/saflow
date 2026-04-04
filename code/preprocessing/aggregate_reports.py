@@ -638,7 +638,7 @@ def _create_dataset_distribution_html(dataset_metrics: dict) -> str:
         template="plotly_white",
     )
 
-    return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    return fig.to_html(include_plotlyjs=True, full_html=False)
 
 
 def _create_dataset_distribution_figure(dataset_metrics: dict) -> plt.Figure:
@@ -1178,15 +1178,25 @@ def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
     if not runs_data:
         return "<p><i>No PCA explained-variance data available (requires reprocessed runs).</i></p>"
 
+    def _to_cumvar_pct(pev):
+        """Cumulative % of total retained PCA variance, regardless of units.
+
+        pca_explained_variance_ stores raw eigenvalues (not ratios), so we
+        always normalise by the total before cumsum-ing.
+        """
+        arr = np.array(pev, dtype=float)
+        total = arr.sum()
+        if total == 0:
+            return [0.0] * len(arr)
+        return list(np.cumsum(arr) / total * 100)
+
     if _PLOTLY_AVAILABLE:
         fig = go.Figure()
         colors = [
             "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
         ]
         for i, (run, pev) in enumerate(runs_data):
-            cumvar = list(np.cumsum(pev) * 100) if max(pev) <= 1.0 else list(np.cumsum(pev))
-            n_components_used = len([r for r in metrics["per_run"]
-                                     if r.get("run") == run and r.get("complete")])
+            cumvar = _to_cumvar_pct(pev)
             n_ica_actual = next(
                 (r.get("n_ica_components") for r in metrics["per_run"] if r.get("run") == run),
                 None,
@@ -1228,6 +1238,7 @@ def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
             title=f"Cumulative PCA Explained Variance — sub-{subject}",
             xaxis_title="PCA Component Index",
             yaxis_title="Cumulative Explained Variance (%)",
+            yaxis_range=[0, 101],
             template="plotly_white",
             height=450,
             hovermode="closest",
@@ -1236,13 +1247,12 @@ def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
                       annotation_text="90%", annotation_position="top left")
         fig.add_hline(y=99, line_dash="dot", line_color="gray",
                       annotation_text="99%", annotation_position="top left")
-        return fig.to_html(include_plotlyjs="cdn", full_html=False)
+        return fig.to_html(include_plotlyjs=True, full_html=False)
 
     # --- Matplotlib fallback ---
-    n_runs = len(runs_data)
     fig, ax = plt.subplots(figsize=(10, 5))
     for run, pev in runs_data:
-        cumvar = np.cumsum(pev) * 100 if max(pev) <= 1.0 else np.cumsum(pev)
+        cumvar = np.array(_to_cumvar_pct(pev))
         ax.plot(range(len(cumvar)), cumvar, label=f"run-{run}", linewidth=1.8)
         n_ica_actual = next(
             (r.get("n_ica_components") for r in metrics["per_run"] if r.get("run") == run),
@@ -1252,6 +1262,7 @@ def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
             ax.plot(n_ica_actual - 1, cumvar[n_ica_actual - 1], "D", markersize=7)
     ax.axhline(90, color="gray", linestyle="--", linewidth=1, alpha=0.7)
     ax.axhline(99, color="gray", linestyle=":", linewidth=1, alpha=0.7)
+    ax.set_ylim(0, 101)
     ax.set_xlabel("PCA Component Index")
     ax.set_ylabel("Cumulative Explained Variance (%)")
     ax.set_title(f"Cumulative PCA Explained Variance — sub-{subject}")
