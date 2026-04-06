@@ -1731,6 +1731,9 @@ def generate_dataset_report(
 ) -> Path:
     """Generate dataset-level HTML report + JSON summary.
 
+    Written as a standalone HTML file (not mne.Report) so that Plotly figures
+    are visible on load and not buried in hidden Bootstrap tabs.
+
     Args:
         derivatives_root: Path to derivatives directory.
         subjects: List of subject IDs.
@@ -1740,26 +1743,48 @@ def generate_dataset_report(
     Returns:
         Path to the generated HTML report.
     """
-    import mne
-
     all_params = collect_all_subject_params(derivatives_root, subjects, task_runs)
     dataset_metrics = aggregate_dataset_metrics(all_params)
 
-    # Generate HTML report
-    report = mne.Report(title="Dataset Preprocessing Summary", verbose=False)
-
-    # Add HTML overview
-    html_content = _build_dataset_html(dataset_metrics)
-    report.add_html(html_content, title="Overview")
-
-    # Add distribution figure (interactive Plotly when available, else matplotlib)
+    # Build distribution figure HTML
     if _PLOTLY_AVAILABLE:
-        plotly_html = _create_dataset_distribution_html(dataset_metrics)
-        report.add_html(plotly_html, title="Distribution Plots")
+        dist_html = _create_dataset_distribution_html(dataset_metrics)
     else:
         fig = _create_dataset_distribution_figure(dataset_metrics)
-        report.add_figure(fig, title="Distribution Plots")
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=90, bbox_inches="tight")
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode("utf-8")
         plt.close(fig)
+        dist_html = f'<img src="data:image/png;base64,{b64}" style="max-width:100%;"/>'
+
+    overview_html = _build_dataset_html(dataset_metrics)
+
+    full_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Dataset Preprocessing Summary</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           margin: 0; padding: 20px; background: #f8f9fa; color: #212529; }}
+    .container {{ max-width: 1400px; margin: 0 auto; background: white;
+                 padding: 24px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }}
+    h2 {{ color: #1a252f; }}
+    h3 {{ color: #2c3e50; margin-top: 24px; }}
+    hr {{ border: none; border-top: 1px solid #dee2e6; margin: 24px 0; }}
+  </style>
+  {_shared_css_js()}
+</head>
+<body>
+<div class="container">
+{overview_html}
+<hr/>
+<h3>Distribution Plots</h3>
+{dist_html}
+</div>
+</body>
+</html>"""
 
     # Output paths
     out_dir = derivatives_root / "preprocessed"
@@ -1768,13 +1793,8 @@ def generate_dataset_report(
     html_path = out_dir / "group_preprocessing-summary.html"
     json_path = out_dir / "group_preprocessing-summary.json"
 
-    report.save(html_path, open_browser=False, overwrite=True)
+    html_path.write_text(full_html, encoding="utf-8")
     logger.info(f"Dataset report saved: {html_path}")
-
-    # Inject identity bar (top-level report — links go down into subjects via table)
-    _inject_nav_bar(html_path, [
-        ("saflow · Dataset Preprocessing Report", "#"),
-    ])
 
     # Save JSON summary
     # Simplify per_subject for JSON (remove nested per_run details)
