@@ -632,23 +632,39 @@ def generate_preprocessing_report(
     if ecg_inds:
         try:
             ecg_epochs = mne.preprocessing.create_ecg_epochs(raw, ch_name=ecg_ch, verbose=False)
-            figs_ecg_props = ica.plot_properties(ecg_epochs, picks=ecg_inds, image_args={"sigma": 1.0}, show=False)
-            if not isinstance(figs_ecg_props, list):
-                figs_ecg_props = [figs_ecg_props]
-            for idx, fig_prop in zip(ecg_inds, figs_ecg_props):
-                report.add_figure(fig_prop, title=f"ECG — IC{idx} properties")
-                plt.close(fig_prop)
+            # Compute per-component 99th-percentile of |activation| so the colorscale
+            # is not dominated by a handful of extreme epochs.
+            ecg_sources = ica.get_sources(ecg_epochs).get_data()  # (n_epochs, n_comps, n_times)
+            for idx in ecg_inds:
+                vabs = float(np.percentile(np.abs(ecg_sources[:, idx, :]), 99))
+                vabs = vabs if vabs > 0 else 1.0
+                figs = ica.plot_properties(
+                    ecg_epochs, picks=[idx],
+                    image_args={"sigma": 1.0, "vmin": -vabs, "vmax": vabs},
+                    show=False,
+                )
+                if not isinstance(figs, list):
+                    figs = [figs]
+                report.add_figure(figs[0], title=f"ECG — IC{idx} properties")
+                plt.close(figs[0])
         except Exception as e:
             logger.warning(f"Could not plot ECG component properties: {e}")
     if eog_inds:
         try:
             eog_epochs = mne.preprocessing.create_eog_epochs(raw, ch_name=eog_ch, verbose=False)
-            figs_eog_props = ica.plot_properties(eog_epochs, picks=eog_inds, image_args={"sigma": 1.0}, show=False)
-            if not isinstance(figs_eog_props, list):
-                figs_eog_props = [figs_eog_props]
-            for idx, fig_prop in zip(eog_inds, figs_eog_props):
-                report.add_figure(fig_prop, title=f"EOG — IC{idx} properties")
-                plt.close(fig_prop)
+            eog_sources = ica.get_sources(eog_epochs).get_data()
+            for idx in eog_inds:
+                vabs = float(np.percentile(np.abs(eog_sources[:, idx, :]), 99))
+                vabs = vabs if vabs > 0 else 1.0
+                figs = ica.plot_properties(
+                    eog_epochs, picks=[idx],
+                    image_args={"sigma": 1.0, "vmin": -vabs, "vmax": vabs},
+                    show=False,
+                )
+                if not isinstance(figs, list):
+                    figs = [figs]
+                report.add_figure(figs[0], title=f"EOG — IC{idx} properties")
+                plt.close(figs[0])
         except Exception as e:
             logger.warning(f"Could not plot EOG component properties: {e}")
 

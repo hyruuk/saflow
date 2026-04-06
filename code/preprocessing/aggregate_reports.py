@@ -443,56 +443,75 @@ def aggregate_dataset_metrics(all_subject_params: dict) -> dict:
 # Figure Generation
 # =============================================================================
 
-def _create_subject_epoch_bar_chart(run_metrics: list, subject: str) -> plt.Figure:
-    """Grouped bar chart: bad epoch counts per run, grouped by method.
+def _create_epoch_bar_html(metrics: dict, subject: str, include_plotlyjs: bool = True) -> str:
+    """Interactive Plotly grouped bar chart: bad epoch counts per run.
+
+    Falls back to a base64-embedded matplotlib PNG if Plotly is unavailable.
 
     Args:
-        run_metrics: List of per-run metric dicts from aggregate_subject_metrics.
-        subject: Subject ID for title.
+        metrics: Output of aggregate_subject_metrics.
+        subject: Subject ID.
+        include_plotlyjs: Whether to embed the Plotly JS library inline.
 
     Returns:
-        Matplotlib figure.
+        HTML string.
     """
-    complete_runs = [r for r in run_metrics if r.get("complete")]
+    complete_runs = [r for r in metrics["per_run"] if r.get("complete")]
     if not complete_runs:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.text(0.5, 0.5, "No complete runs", ha="center", va="center",
-                transform=ax.transAxes, fontsize=14)
-        return fig
+        return "<p><i>No complete runs.</i></p>"
 
-    runs = [r["run"] for r in complete_runs]
-    ar1_bad = [r.get("ar1_n_bad", 0) or 0 for r in complete_runs]
-    ar2_bad = [r.get("ar2_n_bad", 0) or 0 for r in complete_runs]
-    threshold_bad = [r.get("threshold_n_bad", 0) or 0 for r in complete_runs]
+    runs = [f"run-{r['run']}" for r in complete_runs]
+    ar1_bad = [r.get("ar1_n_bad") or 0 for r in complete_runs]
+    ar2_bad = [r.get("ar2_n_bad") or 0 for r in complete_runs]
+    thr_bad  = [r.get("threshold_n_bad") or 0 for r in complete_runs]
 
+    if _PLOTLY_AVAILABLE:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=runs, y=ar1_bad, name="AR1 (pre-ICA)", marker_color="#1f77b4",
+            text=ar1_bad, textposition="outside",
+        ))
+        fig.add_trace(go.Bar(
+            x=runs, y=ar2_bad, name="AR2 (post-ICA)", marker_color="#ff7f0e",
+            text=ar2_bad, textposition="outside",
+        ))
+        fig.add_trace(go.Bar(
+            x=runs, y=thr_bad, name="Threshold", marker_color="#2ca02c",
+            text=thr_bad, textposition="outside",
+        ))
+        fig.update_layout(
+            barmode="group",
+            title=f"Bad Epochs per Run — sub-{subject}",
+            xaxis_title="Run", yaxis_title="Bad Epoch Count",
+            template="plotly_white", height=350,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        return fig.to_html(include_plotlyjs=include_plotlyjs, full_html=False)
+
+    # Matplotlib fallback
     x = np.arange(len(runs))
     width = 0.25
-
     fig, ax = plt.subplots(figsize=(max(8, len(runs) * 1.5), 5))
-    bars1 = ax.bar(x - width, ar1_bad, width, label="AR1 (pre-ICA)", color="#1f77b4")
-    bars2 = ax.bar(x, ar2_bad, width, label="AR2 (post-ICA)", color="#ff7f0e")
-    bars3 = ax.bar(x + width, threshold_bad, width, label="Threshold", color="#2ca02c")
-
-    ax.set_xlabel("Run")
-    ax.set_ylabel("Bad Epoch Count")
-    ax.set_title(f"Bad Epochs per Run - sub-{subject}")
-    ax.set_xticks(x)
-    ax.set_xticklabels([f"run-{r}" for r in runs])
-    ax.legend()
-    ax.grid(axis="y", alpha=0.3)
-
-    # Add value labels on bars
-    for bars in [bars1, bars2, bars3]:
+    for offset, vals, label, color in [
+        (-width, ar1_bad, "AR1 (pre-ICA)", "#1f77b4"),
+        (0,      ar2_bad, "AR2 (post-ICA)", "#ff7f0e"),
+        (width,  thr_bad,  "Threshold",      "#2ca02c"),
+    ]:
+        bars = ax.bar(x + offset, vals, width, label=label, color=color)
         for bar in bars:
-            height = bar.get_height()
-            if height > 0:
-                ax.annotate(f"{int(height)}",
-                            xy=(bar.get_x() + bar.get_width() / 2, height),
+            h = bar.get_height()
+            if h > 0:
+                ax.annotate(str(int(h)),
+                            xy=(bar.get_x() + bar.get_width() / 2, h),
                             xytext=(0, 3), textcoords="offset points",
                             ha="center", va="bottom", fontsize=8)
-
+    ax.set_xlabel("Run"); ax.set_ylabel("Bad Epoch Count")
+    ax.set_title(f"Bad Epochs per Run — sub-{subject}")
+    ax.set_xticks(x); ax.set_xticklabels(runs); ax.legend(); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
-    return fig
+    buf = BytesIO(); fig.savefig(buf, format="png", dpi=90, bbox_inches="tight")
+    buf.seek(0); b64 = base64.b64encode(buf.read()).decode(); plt.close(fig)
+    return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;"/>'
 
 
 def _create_dataset_distribution_html(dataset_metrics: dict) -> str:
@@ -1082,78 +1101,134 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
 
     html += "</table></div>"
 
+    # ---- Interactive charts (always visible — embedded inline) ----
+    html += "<h3>Bad Epochs per Run</h3>"
+    html += _create_epoch_bar_html(metrics, subject, include_plotlyjs=True)
+
+    html += "<h3>ICA Scores (y-axis 0–1)</h3>"
+    html += _create_ica_score_html(metrics, subject, include_plotlyjs=False)
+
+    html += "<h3>PCA Cumulative Explained Variance</h3>"
+    html += _create_cumulative_variance_html(metrics, subject, include_plotlyjs=False)
+
     return html
 
 
-def _create_ica_score_figures(metrics: dict, subject: str) -> list:
-    """Create ICA score distribution bar charts for each run from params.json data.
+def _create_ica_score_html(metrics: dict, subject: str, include_plotlyjs: bool = False) -> str:
+    """Interactive Plotly ICA score bar charts (all runs, y-axis fixed 0–1).
+
+    One row of subplots per run, two columns (ECG | EOG). Excluded components
+    shown in red so they stand out immediately. Falls back to base64 PNG if
+    Plotly is unavailable.
 
     Args:
         metrics: Output of aggregate_subject_metrics.
         subject: Subject ID.
+        include_plotlyjs: Whether to embed the Plotly JS library inline.
 
     Returns:
-        List of (figure, title) tuples.
+        HTML string.
     """
-    figures = []
-    for r in metrics["per_run"]:
-        if not r.get("complete"):
-            continue
-        run = r["run"]
-        ecg_scores = r.get("ecg_scores")
-        eog_scores = r.get("eog_scores")
-        if ecg_scores is None and eog_scores is None:
-            continue
+    run_data = [
+        r for r in metrics["per_run"]
+        if r.get("complete") and (r.get("ecg_scores") or r.get("eog_scores"))
+    ]
+    if not run_data:
+        return "<p><i>No ICA score data available.</i></p>"
 
-        ecg_inds = r.get("ecg_components", [])
-        eog_inds = r.get("eog_components", [])
+    n_runs = len(run_data)
 
-        n_max = max(len(ecg_scores or []), len(eog_scores or []), 1)
-        fig_w = max(14, n_max * 0.35 * 2)
-        fig, axes = plt.subplots(1, 2, figsize=(fig_w, 4))
+    if _PLOTLY_AVAILABLE:
+        titles = []
+        for r in run_data:
+            titles += [f"Run {r['run']} — ECG", f"Run {r['run']} — EOG"]
 
-        # ECG scores
-        if ecg_scores is not None:
-            n = len(ecg_scores)
-            abs_scores = [abs(s) for s in ecg_scores]
-            colors = ['#d9534f' if i in ecg_inds else '#5bc0de' for i in range(n)]
-            axes[0].bar(range(n), abs_scores, color=colors, edgecolor='black', linewidth=0.5)
-            axes[0].set_xlabel("ICA Component")
-            axes[0].set_ylabel("|Score|")
-            axes[0].set_title(f"ECG Scores — excluded: {ecg_inds}")
-            axes[0].set_xticks(range(n))
-            axes[0].set_xticklabels([f"{i}" for i in range(n)], fontsize=7)
-            axes[0].grid(axis='y', alpha=0.3)
-        else:
-            axes[0].text(0.5, 0.5, "No ECG scores\n(old data)", ha="center",
-                         va="center", transform=axes[0].transAxes, fontsize=11)
-            axes[0].set_title("ECG Scores")
+        fig = make_subplots(rows=n_runs, cols=2, subplot_titles=titles,
+                            vertical_spacing=0.08 / max(n_runs, 1))
 
-        # EOG scores
-        if eog_scores is not None:
-            n = len(eog_scores)
-            abs_scores = [abs(s) for s in eog_scores]
-            colors = ['#d9534f' if i in eog_inds else '#5bc0de' for i in range(n)]
-            axes[1].bar(range(n), abs_scores, color=colors, edgecolor='black', linewidth=0.5)
-            axes[1].set_xlabel("ICA Component")
-            axes[1].set_ylabel("|Score|")
-            axes[1].set_title(f"EOG Scores — excluded: {eog_inds}")
-            axes[1].set_xticks(range(n))
-            axes[1].set_xticklabels([f"{i}" for i in range(n)], fontsize=7)
-            axes[1].grid(axis='y', alpha=0.3)
-        else:
-            axes[1].text(0.5, 0.5, "No EOG scores\n(old data)", ha="center",
-                         va="center", transform=axes[1].transAxes, fontsize=11)
-            axes[1].set_title("EOG Scores")
+        for row_i, r in enumerate(run_data, start=1):
+            ecg_scores = r.get("ecg_scores") or []
+            eog_scores = r.get("eog_scores") or []
+            ecg_inds   = set(r.get("ecg_components", []))
+            eog_inds   = set(r.get("eog_components", []))
+            ecg_thresh = r.get("ecg_threshold")
+            eog_thresh = r.get("eog_threshold")
 
-        fig.suptitle(f"Run {run}", fontweight="bold")
-        fig.tight_layout()
-        figures.append((fig, f"ICA Scores - Run {run}"))
+            # ECG column
+            if ecg_scores:
+                n = len(ecg_scores)
+                abs_s = [abs(s) for s in ecg_scores]
+                colors = ["#d9534f" if i in ecg_inds else "#5bc0de" for i in range(n)]
+                fig.add_trace(go.Bar(
+                    x=list(range(n)), y=abs_s,
+                    marker_color=colors, marker_line_color="black",
+                    marker_line_width=0.5, showlegend=False,
+                    hovertemplate="IC%{x}<br>|score|=%{y:.3f}<extra>ECG</extra>",
+                ), row=row_i, col=1)
+                if ecg_thresh is not None:
+                    fig.add_hline(y=ecg_thresh, line_dash="dash", line_color="red",
+                                  line_width=1, row=row_i, col=1)
 
-    return figures
+            # EOG column
+            if eog_scores:
+                n = len(eog_scores)
+                abs_s = [abs(s) for s in eog_scores]
+                colors = ["#d9534f" if i in eog_inds else "#5bc0de" for i in range(n)]
+                fig.add_trace(go.Bar(
+                    x=list(range(n)), y=abs_s,
+                    marker_color=colors, marker_line_color="black",
+                    marker_line_width=0.5, showlegend=False,
+                    hovertemplate="IC%{x}<br>|score|=%{y:.3f}<extra>EOG</extra>",
+                ), row=row_i, col=2)
+                if eog_thresh is not None:
+                    fig.add_hline(y=eog_thresh, line_dash="dash", line_color="red",
+                                  line_width=1, row=row_i, col=2)
+
+        # Fix y-axis to [0, 1] for all subplots so runs are comparable
+        for i in range(1, n_runs + 1):
+            fig.update_yaxes(range=[0, 1], row=i, col=1)
+            fig.update_yaxes(range=[0, 1], row=i, col=2)
+
+        fig.update_layout(
+            title=f"ICA Scores — sub-{subject}  (red = excluded, dashed = threshold)",
+            height=320 * n_runs,
+            template="plotly_white",
+        )
+        return fig.to_html(include_plotlyjs=include_plotlyjs, full_html=False)
+
+    # Matplotlib fallback — one figure per run, embedded as base64
+    html = ""
+    for r in run_data:
+        ecg_scores = r.get("ecg_scores") or []
+        eog_scores = r.get("eog_scores") or []
+        ecg_inds   = r.get("ecg_components", [])
+        eog_inds   = r.get("eog_components", [])
+        n_max = max(len(ecg_scores), len(eog_scores), 1)
+        fig, axes = plt.subplots(1, 2, figsize=(max(14, n_max * 0.4), 4))
+        for ax, scores, inds, label in [
+            (axes[0], ecg_scores, ecg_inds, "ECG"),
+            (axes[1], eog_scores, eog_inds, "EOG"),
+        ]:
+            if scores:
+                n = len(scores)
+                colors = ["#d9534f" if i in inds else "#5bc0de" for i in range(n)]
+                ax.bar(range(n), [abs(s) for s in scores], color=colors,
+                       edgecolor="black", linewidth=0.5)
+                ax.set_ylim(0, 1)
+            else:
+                ax.text(0.5, 0.5, f"No {label} scores", ha="center", va="center",
+                        transform=ax.transAxes)
+            ax.set_title(f"{label} — excluded: {inds}")
+            ax.set_xlabel("ICA Component"); ax.set_ylabel("|Score|")
+            ax.grid(axis="y", alpha=0.3)
+        fig.suptitle(f"Run {r['run']}", fontweight="bold"); fig.tight_layout()
+        buf = BytesIO(); fig.savefig(buf, format="png", dpi=90, bbox_inches="tight")
+        buf.seek(0); b64 = base64.b64encode(buf.read()).decode(); plt.close(fig)
+        html += f'<img src="data:image/png;base64,{b64}" style="max-width:100%;display:block;margin:8px 0;"/>'
+    return html
 
 
-def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
+def _create_cumulative_variance_html(metrics: dict, subject: str, include_plotlyjs: bool = True) -> str:
     """Interactive Plotly (or static matplotlib) cumulative PCA variance plot.
 
     Shows one line per run, x = component index, y = cumulative explained
@@ -1247,7 +1322,7 @@ def _create_cumulative_variance_html(metrics: dict, subject: str) -> str:
                       annotation_text="90%", annotation_position="top left")
         fig.add_hline(y=99, line_dash="dot", line_color="gray",
                       annotation_text="99%", annotation_position="top left")
-        return fig.to_html(include_plotlyjs=True, full_html=False)
+        return fig.to_html(include_plotlyjs=include_plotlyjs, full_html=False)
 
     # --- Matplotlib fallback ---
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -1452,23 +1527,12 @@ def _load_ica_and_plot_components(
     except Exception as e:
         logger.warning(f"Could not create ICA topography slider for run {run}: {e}")
 
-    # Component properties for excluded components (needs epochs)
-    excluded_inds = list(set(ecg_inds + eog_inds))
-    epoch_path = (
-        derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
-        / f"sub-{subject}_task-gradCPT_run-{run}_proc-ica_meg-epo.fif"
-    )
-    if epoch_path.exists() and excluded_inds:
-        try:
-            epochs = mne.read_epochs(epoch_path, verbose=False)
-            figs_props = ica.plot_properties(epochs, picks=excluded_inds, show=False)
-            if not isinstance(figs_props, list):
-                figs_props = [figs_props]
-            for idx, fig_prop in zip(excluded_inds, figs_props):
-                label = "ECG" if idx in ecg_inds else "EOG"
-                results.append((fig_prop, f"Run {run} - IC{idx} properties ({label})"))
-        except Exception as e:
-            logger.warning(f"Could not plot ICA properties for run {run}: {e}")
+    # Note: plot_properties is intentionally NOT called here.
+    # The per-run report (run_preprocessing.py) already does this correctly using
+    # create_ecg/eog_epochs(raw) — the original uncleaned raw — so the artifact
+    # component activation is intact. Any epoch file available here would be
+    # post-ICA (cleaned), making the excluded component's activation near-zero
+    # and the ERP curve invisible. Refer to the per-run report for IC properties.
 
     return results
 
@@ -1498,24 +1562,10 @@ def generate_subject_report(
     # Generate HTML report using mne.Report
     report = mne.Report(title=f"Preprocessing Summary - sub-{subject}", image_format="png", verbose=False)
 
-    # Add HTML overview
+    # Add HTML overview — epoch bar, ICA scores, and PCA variance are now
+    # embedded inline here so they are always visible (no hidden-tab issue).
     html_content = _build_subject_html(subject, metrics, config)
     report.add_html(html_content, title="Overview")
-
-    # Add bar chart figure
-    fig = _create_subject_epoch_bar_chart(metrics["per_run"], subject)
-    report.add_figure(fig, title="Bad Epochs per Run")
-    plt.close(fig)
-
-    # Add ICA score distribution figures (from params.json)
-    score_figures = _create_ica_score_figures(metrics, subject)
-    for fig, title in score_figures:
-        report.add_figure(fig, title=title)
-        plt.close(fig)
-
-    # Add cumulative PCA explained variance plot (from params.json, no ICA load needed)
-    cumvar_html = _create_cumulative_variance_html(metrics, subject)
-    report.add_html(cumvar_html, title="PCA Cumulative Variance")
 
     # Add ICA topography slider + component property figures (from saved ICA objects)
     for r in metrics["per_run"]:
