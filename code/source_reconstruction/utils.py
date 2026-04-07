@@ -106,7 +106,9 @@ def create_output_paths(
         run=run,
         datatype="meg",
         processing="forward",
+        extension=".fif",
         root=derivatives_root / "fwd",
+        check=False,
     )
     fwd_bidspath.mkdir(exist_ok=True)
 

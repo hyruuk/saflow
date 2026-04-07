@@ -188,7 +188,7 @@ def process_single_run(
     mri_available = utils.check_mri_availability(subject, fs_subjects_dir)
 
     # Step 1: Coregistration (uses preprocessed file for sensor info)
-    trans_fpath = Path(str(filepaths["trans"].fpath) + ".fif")
+    trans_fpath = Path(str(filepaths["trans"].fpath))
     if not trans_fpath.exists():
         logger.info("[1/7] Computing coregistration...")
         try:
@@ -226,7 +226,7 @@ def process_single_run(
         return False
 
     # Step 4: Forward solution
-    fwd_fpath = Path(str(filepaths["fwd"].fpath) + ".fif")
+    fwd_fpath = Path(str(filepaths["fwd"].fpath))
     if not fwd_fpath.exists():
         logger.info("[4/7] Computing forward solution...")
         try:
