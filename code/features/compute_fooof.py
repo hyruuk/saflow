@@ -136,27 +136,23 @@ def fit_fooof_single(
     }
 
     # Get corrected (flattened) PSD - aperiodic component removed
-    # This is the residual after removing the 1/f component
+    # The aperiodic model is fit on freq_range only, but we extrapolate it
+    # across the full spectrum so that corrected PSDs cover all frequencies
+    # (including gamma bands above the fitting range).
     if fm.has_model:
-        # _spectrum_flat is the flattened spectrum (periodic only)
-        # We need to get the full-length corrected spectrum
-        # FOOOF only fits within freq_range, so we need to handle this carefully
+        # Extrapolate the aperiodic fit to the full frequency range
+        # FOOOF aperiodic model (fixed): L = b - log10(F^exp)
+        #   where b = offset, exp = exponent
+        offset = fm.aperiodic_params_[0]
+        exponent = fm.aperiodic_params_[1]
 
-        # Get the frequency mask for the fit range
-        freq_mask = (freq_bins >= freq_range[0]) & (freq_bins <= freq_range[1])
+        # Guard against freq_bins containing 0 Hz
+        safe_freqs = np.where(freq_bins > 0, freq_bins, np.nan)
+        aperiodic_full = offset - np.log10(safe_freqs ** exponent)
 
-        # Initialize corrected PSD with NaN outside fit range
-        corrected_psd = np.full_like(psd, np.nan)
-
-        # Get the flattened spectrum from FOOOF (only for fit range)
-        if hasattr(fm, '_spectrum_flat') and fm._spectrum_flat is not None:
-            corrected_psd[freq_mask] = fm._spectrum_flat
-        else:
-            # Fallback: compute manually
-            # corrected = log(psd) - aperiodic_fit
-            log_psd = np.log10(psd[freq_mask])
-            aperiodic_fit = fm._ap_fit if hasattr(fm, '_ap_fit') else np.zeros_like(log_psd)
-            corrected_psd[freq_mask] = log_psd - aperiodic_fit
+        # Corrected PSD = log10(PSD) - aperiodic fit (in log space)
+        log_psd = np.log10(np.where(psd > 0, psd, np.nan))
+        corrected_psd = log_psd - aperiodic_full
     else:
         corrected_psd = np.full_like(psd, np.nan)
 
