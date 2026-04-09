@@ -105,14 +105,16 @@ def simple_contrast(
     for cond in np.unique(y_avg):
         X_avg_by_cond.append(np.nanmean(X_avg[y_avg == cond], axis=0))
 
-    # Compute normalized contrast (A - B)/B
-    X_contrast = (X_avg_by_cond[0] - X_avg_by_cond[1]) / X_avg_by_cond[1]
+    # Compute normalized contrast: OUT - IN (positive = OUT > IN)
+    # condA (y==0) = IN, condB (y==1) = OUT
+    X_contrast = (X_avg_by_cond[1] - X_avg_by_cond[0]) / np.abs(X_avg_by_cond[0])
 
     # Split conditions for t-test
-    X_condA = X_avg[y_avg == 0]
-    X_condB = X_avg[y_avg == 1]
+    X_condA = X_avg[y_avg == 0]  # IN
+    X_condB = X_avg[y_avg == 1]  # OUT
 
     # Compute t-test for each feature
+    # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
     tvals = []
     pvals = []
     for feature_idx in range(n_features):
@@ -162,14 +164,16 @@ def subject_contrast(
     for cond in np.unique(y):
         X_avg_by_cond.append(np.nanmean(X[y == cond], axis=0))
 
-    # Compute normalized contrast (A - B)/B
-    X_contrast = (X_avg_by_cond[0] - X_avg_by_cond[1]) / X_avg_by_cond[1]
+    # Compute normalized contrast: OUT - IN (positive = OUT > IN)
+    # condA (y==0) = IN, condB (y==1) = OUT
+    X_contrast = (X_avg_by_cond[1] - X_avg_by_cond[0]) / np.abs(X_avg_by_cond[0])
 
     # Split conditions for paired t-test
-    X_condA = X[y == 0]
-    X_condB = X[y == 1]
+    X_condA = X[y == 0]  # IN
+    X_condB = X[y == 1]  # OUT
 
     # Compute paired t-test for each feature
+    # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
     tvals = []
     pvals = []
     for feature_idx in range(n_features):

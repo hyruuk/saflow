@@ -1,6 +1,7 @@
 """Visualization utilities for saflow.
 
 This module provides utilities for:
+- Colormap resolution from config (feature type -> cmap preset)
 - Topographic plotting (grid topoplots)
 - MEG/EEG data visualization
 - Statistical result visualization
@@ -9,13 +10,80 @@ All functions use matplotlib and MNE visualization tools.
 """
 
 import logging
-from typing import List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ColormapPreset:
+    """Colormap configuration for a given visualization."""
+    cmap: str
+    diverging: bool
+    label_pos: str = ""
+    label_neg: str = ""
+    label: str = ""
+
+    @property
+    def cbar_label(self) -> str:
+        """Colorbar label string."""
+        if self.diverging:
+            return f"{self.label_neg} ← → {self.label_pos}"
+        return self.label
+
+
+def resolve_colormap(feature_type: str, config: dict, override: Optional[str] = None) -> ColormapPreset:
+    """Resolve the colormap preset for a given feature type.
+
+    Looks up the feature type in config['visualization']['feature_colormap'],
+    then fetches the corresponding preset from config['visualization']['colormaps'].
+
+    Matching order: exact match > prefix match > default.
+
+    Args:
+        feature_type: Feature name (e.g., "psd_alpha", "fooof_exponent", "accuracy").
+        config: Full config dictionary (from config.yaml).
+        override: If set, use this cmap name instead of the config preset.
+            The preset metadata (diverging, labels) is still used.
+
+    Returns:
+        ColormapPreset with cmap name, type, and labels.
+    """
+    viz_config = config.get("visualization", {})
+    presets = viz_config.get("colormaps", {})
+    feature_map = viz_config.get("feature_colormap", {})
+    default_name = viz_config.get("default_colormap", "contrast")
+
+    # Find matching preset name: exact match first, then prefix
+    preset_name = None
+    if feature_type in feature_map:
+        preset_name = feature_map[feature_type]
+    else:
+        for pattern, name in feature_map.items():
+            if pattern.endswith("_") and feature_type.startswith(pattern):
+                preset_name = name
+                break
+
+    if preset_name is None:
+        preset_name = default_name
+
+    # Build the preset
+    preset_def = presets.get(preset_name, {})
+    cmap = override if override else preset_def.get("cmap", "RdBu_r")
+    is_diverging = preset_def.get("type", "diverging") == "diverging"
+
+    return ColormapPreset(
+        cmap=cmap,
+        diverging=is_diverging,
+        label_pos=preset_def.get("label_pos", ""),
+        label_neg=preset_def.get("label_neg", ""),
+        label=preset_def.get("label", ""),
+    )
 
 
 def grid_topoplot(

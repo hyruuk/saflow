@@ -499,8 +499,7 @@ def main():
         "--space",
         type=str,
         default="sensor",
-        choices=["sensor", "source", "atlas"],
-        help="Analysis space",
+        help="Analysis space: 'sensor', 'source', or an atlas name (e.g., 'schaefer_400', 'aparc.a2009s')",
     )
     parser.add_argument(
         "--n-permutations",

@@ -1001,228 +1001,47 @@ def classify(c, features, clf="lda", cv="logo", space="sensor",
 
 @task
 def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
-              cmap="RdBu", show=False, save=True):
-    """Visualize saved statistical results as topographic maps.
+              cmap=None, show=False, save=True):
+    """Visualize saved statistical results as topographic or surface maps.
 
-    Creates a panel of topomaps showing contrast, t-values, and effect sizes.
-    All maps share the same colormap and a single colorbar.
+    For sensor space: creates a panel of topomaps (t-values).
+    For source/atlas spaces: creates inflated brain surface maps (t-values).
+
+    Colormap is resolved from config.yaml visualization section based on
+    feature type. Use --cmap to override.
+
+    Convention (for contrast colormaps):
+        Red  = OUT > IN (positive t-values)
+        Blue = IN > OUT (negative t-values)
 
     Args:
         feature_type: Feature to visualize (e.g., fooof_exponent, psd_alpha)
-        space: Analysis space (sensor, source, atlas)
+        space: Analysis space ('sensor', 'source', or atlas name like 'schaefer_400')
         alpha: Significance threshold for marking
-        cmap: Colormap for all maps (default: RdBu_r)
+        cmap: Override colormap (default: from config.yaml)
         show: Display the figure interactively
         save: Save the figure to reports/figures/
 
     Examples:
         invoke viz.stats --feature-type=fooof_exponent --show
-        invoke viz.stats --feature-type=psd_alpha --cmap=viridis
-        invoke viz.stats --feature-type=psd_corrected_theta --save
+        invoke viz.stats --feature-type=psd_alpha --space=schaefer_400
+        invoke viz.stats --feature-type=psd --space=aparc.a2009s --save
+        invoke viz.stats --feature-type=psd --cmap=coolwarm
     """
-    from pathlib import Path
-    import json
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import mne
-
-    print("=" * 80)
-    print(f"Visualizing {feature_type} Statistics")
-    print("=" * 80)
-
-    # Load config and build filename
-    from code.utils.config import load_config
-    config = load_config()
-    data_root = Path(config["paths"]["data_root"])
-    inout_bounds = config["analysis"]["inout_bounds"]
-    inout_str = f"{inout_bounds[0]}{inout_bounds[1]}"
-
-    stats_dir = data_root / "features" / f"statistics_{space}"
-
-    # Find matching result files (support partial matching like "psd" for all psd_* features)
-    exact_match = stats_dir / f"feature-{feature_type}_inout-{inout_str}_test-paired_ttest_results.npz"
-    if exact_match.exists():
-        results_files = [exact_match]
-    else:
-        # Try partial match (e.g., "psd" matches "psd_alpha", "psd_theta", etc.)
-        pattern = f"feature-{feature_type}_*_inout-{inout_str}_test-paired_ttest_results.npz"
-        results_files = sorted(stats_dir.glob(pattern))
-
-    if not results_files:
-        print(f"ERROR: No results found for feature type '{feature_type}'")
-        # List available features
-        available_files = list(stats_dir.glob("feature-*_results.npz"))
-        if available_files:
-            print(f"\nAvailable feature types in {stats_dir.name}/:")
-            for f in sorted(available_files):
-                # Extract feature type from filename: feature-{type}_inout-...
-                name = f.stem.replace("_results", "")
-                parts = name.split("_inout-")
-                if parts:
-                    feat = parts[0].replace("feature-", "")
-                    print(f"  --feature-type={feat}")
-        else:
-            print(f"\nNo statistics found. Run analysis.stats.* tasks first:")
-            print(f"  invoke analysis.stats.fooof")
-            print(f"  invoke analysis.stats.psd")
-            print(f"  invoke analysis.stats.psd-corrected")
-        return
-
-    # Extract feature names from files
-    feature_names = []
-    for f in results_files:
-        name = f.stem.replace("_results", "")
-        parts = name.split("_inout-")
-        if parts:
-            feature_names.append(parts[0].replace("feature-", ""))
-
-    # Sort by frequency band order (low to high frequency)
-    band_order = ["delta", "theta", "alpha", "lobeta", "hibeta", "gamma1", "gamma2", "gamma3"]
-
-    def get_band_index(feat_name):
-        """Get sort index based on frequency band."""
-        for i, band in enumerate(band_order):
-            if feat_name.endswith(f"_{band}") or feat_name == band:
-                return i
-        return 999  # Unknown bands go last
-
-    # Sort features and files together
-    sorted_pairs = sorted(zip(feature_names, results_files), key=lambda x: get_band_index(x[0]))
-    feature_names = [p[0] for p in sorted_pairs]
-    results_files = [p[1] for p in sorted_pairs]
-
-    print(f"Found {len(results_files)} feature(s): {', '.join(feature_names)}")
-
-    # Get sensor info from a sample preprocessed file
-    print("Loading sensor positions...")
-    derivatives_dir = data_root / config["paths"]["derivatives"]
-    sample_files = list(derivatives_dir.glob("preprocessed/sub-*/meg/*_proc-clean_meg.fif"))
-    if not sample_files:
-        sample_files = list(derivatives_dir.glob("**/sub-*/meg/*_meg.fif"))
-    if not sample_files:
-        print("ERROR: No preprocessed MEG files found to get sensor positions")
-        return
-
-    raw = mne.io.read_raw_fif(sample_files[0], preload=False, verbose=False)
-    raw.pick("mag")  # Pick only magnetometers (not ref_meg)
-    info = raw.info
-
-    # Load all results
-    all_results = []
-    all_metadata = []
-    for results_file in results_files:
-        results = np.load(results_file, allow_pickle=True)
-        all_results.append(results)
-        metadata_file = results_file.with_name(results_file.stem.replace("_results", "_metadata") + ".json")
-        if metadata_file.exists():
-            with open(metadata_file) as f:
-                all_metadata.append(json.load(f))
-        else:
-            all_metadata.append({})
-
-    # Collect maps to plot - one t-value map per feature
-    maps_to_plot = []
-    masks_to_plot = []
-    titles = []
-
-    for feat_name, results in zip(feature_names, all_results):
-        # Get t-values for this feature
-        if "tvals" in results.files:
-            tvals = results["tvals"].flatten()
-            maps_to_plot.append(tvals)
-            # Get significance mask from corrected p-values
-            mask = None
-            n_sig = 0
-            for key in results.files:
-                if key.startswith("pvals_corrected_"):
-                    pvals = results[key].flatten()
-                    mask = pvals < alpha
-                    n_sig = np.sum(mask)
-                    break
-            masks_to_plot.append(mask)
-            # Clean up feature name for title
-            short_name = feat_name.replace("psd_corrected_", "").replace("psd_", "").replace("fooof_", "")
-            titles.append(f"{short_name}\n(n={n_sig} sig)")
-
-    n_maps = len(maps_to_plot)
-    print(f"Creating panel with {n_maps} topomaps (t-values)...")
-
-    # Create figure with subplots + colorbar space
-    fig, axes = plt.subplots(1, n_maps, figsize=(3 * n_maps + 1, 3.5), dpi=150)
-    if n_maps == 1:
-        axes = [axes]
-
-    # Determine global color limits (symmetric around 0 for diverging colormaps)
-    all_values = np.concatenate([m for m in maps_to_plot])
-    vmax = np.nanpercentile(np.abs(all_values), 98)
-    vmin = -vmax
-
-    # Mask params for significant sensors (white circles with black borders)
-    mask_params = dict(
-        marker="o",
-        markerfacecolor="w",
-        markeredgecolor="k",
-        linewidth=0,
-        markersize=5,
-    )
-
-    # Plot each topomap
-    im = None
-    for ax, data, mask, title in zip(axes, maps_to_plot, masks_to_plot, titles):
-        im = mne.viz.plot_topomap(
-            data,
-            info,
-            axes=ax,
-            show=False,
-            cmap=cmap,
-            mask=mask,
-            mask_params=mask_params,
-            vlim=(vmin, vmax),
-            extrapolate="local",
-            outlines="head",
-            sphere=0.15,
-            contours=0,
-        )
-        ax.set_title(title, fontsize=10)
-
-    # Add single colorbar
-    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-    cbar = fig.colorbar(im[0], cax=cbar_ax)
-    cbar.set_label("Value", fontsize=10)
-    cbar.ax.tick_params(labelsize=8)
-    # Add min/max ticks
-    cbar.set_ticks([vmin, 0, vmax])
-    cbar.set_ticklabels([f"{vmin:.2f}", "0", f"{vmax:.2f}"])
-
-    # Add figure title
-    first_meta = all_metadata[0] if all_metadata else {}
-    data_meta = first_meta.get("data_metadata", {})
-    fig_title = f"{feature_type} t-values | IN/OUT: {inout_bounds} | N={data_meta.get('n_subjects', '?')} subjects"
-    fig.suptitle(fig_title, fontsize=12, y=1.02)
-
-    # Adjust layout manually (avoid tight_layout warning with colorbar)
-    fig.subplots_adjust(left=0.02, right=0.88, top=0.85, bottom=0.05, wspace=0.1)
-
-    # Save figure
-    if save:
-        fig_dir = Path("reports") / "figures"
-        fig_dir.mkdir(parents=True, exist_ok=True)
-        fig_path = fig_dir / f"{feature_type}_stats.png"
-        fig.savefig(fig_path, dpi=300, bbox_inches="tight", facecolor="white")
-        print(f"Saved figure to: {fig_path}")
-
-    # Show or close
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.visualization.run_viz_stats"]
+    cmd.extend(["--feature-type", feature_type])
+    cmd.extend(["--space", space])
+    cmd.extend(["--alpha", str(alpha)])
+    if cmap:
+        cmd.extend(["--cmap", cmap])
     if show:
-        plt.show()
-    else:
-        plt.close(fig)
+        cmd.append("--show")
+    if not save:
+        cmd.append("--no-save")
 
-    # Print summary
-    print(f"\nResults summary:")
-    print(f"  Features: {', '.join(feature_names)}")
-    print(f"  Subjects: {data_meta.get('n_subjects', 'unknown')}")
-    print(f"  IN trials: {data_meta.get('n_in', 'unknown')}")
-    print(f"  OUT trials: {data_meta.get('n_out', 'unknown')}")
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task

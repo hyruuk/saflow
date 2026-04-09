@@ -348,6 +348,25 @@ def load_all_features(
             f"{input_git_hashes_list}. This may indicate inconsistent preprocessing."
         )
 
+    # Load spatial names for non-sensor spaces
+    spatial_names = None
+    if space not in ("sensor", "source"):
+        # Atlas space: load ROI names from atlas definition
+        try:
+            import mne
+            from code.source_reconstruction.apply_atlas import get_mne_atlas_name
+
+            fsaverage_path = mne.datasets.fetch_fsaverage(verbose=False)
+            subjects_dir = str(Path(fsaverage_path).parent)
+            mne_atlas = get_mne_atlas_name(space)
+            labels = mne.read_labels_from_annot(
+                "fsaverage", parc=mne_atlas, subjects_dir=subjects_dir, verbose=False
+            )
+            spatial_names = sorted(label.name for label in labels)
+            logger.info(f"Loaded {len(spatial_names)} ROI names from atlas '{space}'")
+        except Exception as e:
+            logger.warning(f"Could not load ROI names for space '{space}': {e}")
+
     # Create metadata
     metadata = {
         "feature_type": feature_type,
@@ -359,6 +378,8 @@ def load_all_features(
         "n_out": total_out,
         "input_git_hashes": input_git_hashes_list,
     }
+    if spatial_names is not None:
+        metadata["spatial_names"] = spatial_names
 
     logger.info(
         f"Loaded {len(y)} trials from {metadata['n_subjects']} subjects "
@@ -384,6 +405,9 @@ def run_statistical_test(
     avg: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run statistical test, either on subject-averaged or trial-level data.
+
+    Convention: OUT - IN direction. Positive t-values mean OUT > IN (red),
+    negative t-values mean IN > OUT (blue).
 
     Two modes controlled by the `avg` parameter:
 
@@ -428,9 +452,10 @@ def run_statistical_test(
         logger.info(f"Trial counts: IN={n_in}, OUT={n_out}")
 
         # Compute contrast from trial means
+        # Convention: OUT - IN, so positive = OUT > IN (red), negative = IN > OUT (blue)
         grand_in = np.nanmean(X[:, in_mask, :], axis=1)
         grand_out = np.nanmean(X[:, out_mask, :], axis=1)
-        contrast = (grand_in - grand_out) / np.abs(grand_out)
+        contrast = (grand_out - grand_in) / np.abs(grand_in)
 
         tvals = np.zeros((n_features, X.shape[2]))
         pvals = np.zeros((n_features, X.shape[2]))
@@ -441,9 +466,10 @@ def run_statistical_test(
             logger.info(f"Using {n_permutations} permutations")
 
         for feat_idx in range(n_features):
+            # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
             t, p = stats.ttest_ind(
-                X[feat_idx, in_mask, :],
                 X[feat_idx, out_mask, :],
+                X[feat_idx, in_mask, :],
                 axis=0,
                 **perm_kwarg,
             )
@@ -475,18 +501,20 @@ def run_statistical_test(
 
         logger.info(f"Computed subject-level averages for {len(subj_in)} subjects")
 
+        # Convention: OUT - IN, so positive = OUT > IN (red), negative = IN > OUT (blue)
         grand_in = np.nanmean(subj_in, axis=0)
         grand_out = np.nanmean(subj_out, axis=0)
-        contrast = (grand_in - grand_out) / np.abs(grand_out)
+        contrast = (grand_out - grand_in) / np.abs(grand_in)
 
         tvals = np.zeros((n_features, X.shape[2]))
         pvals = np.zeros((n_features, X.shape[2]))
 
         if test_type == "paired_ttest":
             for feat_idx in range(n_features):
+                # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
                 t, p = stats.ttest_rel(
-                    subj_in[:, feat_idx, :],
                     subj_out[:, feat_idx, :],
+                    subj_in[:, feat_idx, :],
                     axis=0,
                 )
                 tvals[feat_idx, :] = t
@@ -494,9 +522,10 @@ def run_statistical_test(
 
         elif test_type == "independent_ttest":
             for feat_idx in range(n_features):
+                # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
                 t, p = stats.ttest_ind(
-                    subj_in[:, feat_idx, :],
                     subj_out[:, feat_idx, :],
+                    subj_in[:, feat_idx, :],
                     axis=0,
                 )
                 tvals[feat_idx, :] = t
@@ -752,8 +781,7 @@ def main():
         "--space",
         type=str,
         default="sensor",
-        choices=["sensor", "source", "atlas"],
-        help="Analysis space",
+        help="Analysis space: 'sensor', 'source', or an atlas name (e.g., 'schaefer_400', 'aparc.a2009s')",
     )
     parser.add_argument(
         "--test",
