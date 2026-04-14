@@ -147,55 +147,134 @@ def create_output_paths(
     }
 
 
+def _run_coreg_fit(
+    info: mne.Info,
+    fs_subject: str,
+    subjects_dir: Path,
+    scale_mode: Optional[str] = None,
+) -> mne.coreg.Coregistration:
+    """Run the standard ICP coregistration pipeline.
+
+    Args:
+        info: MEG Info (sensor + digitization).
+        fs_subject: FreeSurfer subject name to fit against.
+        subjects_dir: FreeSurfer subjects directory.
+        scale_mode: None (no scaling), "uniform", or "3-axis".
+
+    Returns:
+        Fitted Coregistration object.
+    """
+    coreg = mne.coreg.Coregistration(
+        info, fs_subject, subjects_dir, fiducials="auto"
+    )
+    if scale_mode is not None:
+        coreg.set_scale_mode(scale_mode)
+    coreg.fit_fiducials(verbose=False)
+    coreg.fit_icp(n_iterations=6, nasion_weight=2.0, verbose=False)
+    coreg.omit_head_shape_points(distance=5.0 / 1000)
+    coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=False)
+    return coreg
+
+
+def ensure_subject_anatomy(
+    subject: str,
+    subjects_dir: Path,
+    info: mne.Info,
+    uniform_residual_threshold_mm: float = 5.0,
+) -> Tuple[str, Optional[mne.transforms.Transform]]:
+    """Ensure sub-XX has a FreeSurfer anatomy directory.
+
+    If sub-XX exists (real MRI or previously-scaled fsaverage), no-op.
+    Otherwise: fits fsaverage to the subject's head with uniform scaling,
+    escalating to 3-axis if residuals are too large, then materializes a
+    scaled fsaverage as sub-XX via mne.scale_mri.
+
+    Args:
+        subject: Subject ID.
+        subjects_dir: FreeSurfer subjects directory.
+        info: MEG Info containing digitization points.
+        uniform_residual_threshold_mm: Median dig-MRI distance above which
+            we escalate from uniform to 3-axis scaling.
+
+    Returns:
+        (fs_subject_name, precomputed_trans). The trans is returned only when
+        a new scaled template was just created; callers should save it as the
+        subject's trans file. Returns None for trans if anatomy already existed.
+    """
+    fs_subject = f"sub-{subject}"
+    subject_path = Path(subjects_dir) / fs_subject
+
+    if subject_path.exists():
+        logger.info(f"Anatomy exists: {fs_subject}")
+        return fs_subject, None
+
+    logger.info(
+        f"No anatomy for {fs_subject}. Fitting scaled fsaverage template..."
+    )
+
+    coreg = _run_coreg_fit(info, "fsaverage", subjects_dir, scale_mode="uniform")
+    dists_mm = coreg.compute_dig_mri_distances() * 1000.0
+    median_err = float(np.median(dists_mm))
+    logger.info(f"Uniform scaling fit: median dig-MRI distance {median_err:.2f} mm")
+
+    if median_err > uniform_residual_threshold_mm:
+        logger.warning(
+            f"Uniform scaling residuals too large ({median_err:.2f} mm > "
+            f"{uniform_residual_threshold_mm} mm). Retrying with 3-axis scaling."
+        )
+        coreg = _run_coreg_fit(info, "fsaverage", subjects_dir, scale_mode="3-axis")
+        dists_mm = coreg.compute_dig_mri_distances() * 1000.0
+        logger.info(
+            f"3-axis scaling fit: median dig-MRI distance {float(np.median(dists_mm)):.2f} mm"
+        )
+
+    logger.info(f"Scale factors: {coreg.scale}")
+    mne.scale_mri(
+        subject_from="fsaverage",
+        subject_to=fs_subject,
+        scale=coreg.scale,
+        subjects_dir=subjects_dir,
+        overwrite=False,
+        labels=True,
+        annot=True,
+        verbose=False,
+    )
+    logger.info(f"Created scaled template: {subject_path}")
+    return fs_subject, coreg.trans
+
+
 def compute_coregistration(
     preproc_path: BIDSPath,
     trans_path: BIDSPath,
     subject: str,
     subjects_dir: Path,
-    mri_available: bool = False,
 ) -> mne.transforms.Transform:
     """Compute coregistration between MEG and MRI coordinate systems.
 
-    Uses MNE's automatic coregistration with ICP fitting.
+    Runs MNE's automatic ICP coregistration against the subject's anatomy
+    directory (which must already exist — use ensure_subject_anatomy first).
+    No scaling is applied here: scaling is handled when creating the scaled
+    template, so this is a rigid-body fit.
 
     Args:
         preproc_path: BIDSPath to preprocessed data (used for sensor info)
         trans_path: BIDSPath to save transformation
         subject: Subject ID
         subjects_dir: FreeSurfer subjects directory
-        mri_available: Whether individual MRI is available
 
     Returns:
         Transform object with MEG-to-MRI transformation
     """
     logger.info("Computing coregistration...")
 
-    # Load info from preprocessed file (same sensor geometry as raw)
     raw = mne.io.read_raw_fif(str(preproc_path.fpath), preload=False, verbose=False)
     info = raw.info
 
-    # Use individual MRI if available, otherwise fsaverage
-    fs_subject = f"sub-{subject}" if mri_available else "fsaverage"
+    fs_subject = f"sub-{subject}"
     logger.info(f"Using FreeSurfer subject: {fs_subject}")
 
-    # Automatic coregistration with fiducials
-    coreg = mne.coreg.Coregistration(
-        info, fs_subject, subjects_dir, fiducials="auto"
-    )
+    coreg = _run_coreg_fit(info, fs_subject, subjects_dir, scale_mode=None)
 
-    # First pass: coarse fit
-    logger.debug("Coregistration: First pass (coarse fit)")
-    coreg.fit_icp(n_iterations=6, nasion_weight=2.0, verbose=False)
-
-    # Remove outliers
-    logger.debug("Coregistration: Removing outlier head shape points")
-    coreg.omit_head_shape_points(distance=5.0 / 1000)
-
-    # Second pass: fine fit
-    logger.debug("Coregistration: Second pass (fine fit)")
-    coreg.fit_icp(n_iterations=20, nasion_weight=10.0, verbose=False)
-
-    # Save transformation
     trans_fpath = str(trans_path.fpath)
     os.makedirs(op.dirname(trans_fpath), exist_ok=True)
     mne.write_trans(trans_fpath, coreg.trans, overwrite=True)
@@ -207,21 +286,10 @@ def compute_coregistration(
 def setup_source_space(
     subject: str,
     subjects_dir: Path,
-    mri_available: bool = False,
     spacing: str = "oct6",
 ) -> mne.SourceSpaces:
-    """Create source space.
-
-    Args:
-        subject: Subject ID
-        subjects_dir: FreeSurfer subjects directory
-        mri_available: Whether individual MRI is available
-        spacing: Source space spacing (e.g., "oct6")
-
-    Returns:
-        Source spaces object
-    """
-    fs_subject = f"sub-{subject}" if mri_available else "fsaverage"
+    """Create source space for the subject's anatomy directory (sub-XX)."""
+    fs_subject = f"sub-{subject}"
     logger.info(f"Setting up source space for {fs_subject} (spacing={spacing})...")
 
     src = mne.setup_source_space(
@@ -239,21 +307,10 @@ def setup_source_space(
 def create_bem_model(
     subject: str,
     subjects_dir: Path,
-    mri_available: bool = False,
     conductivity: Tuple[float, ...] = (0.3,),
 ) -> mne.bem.ConductorModel:
-    """Create BEM (Boundary Element Model) solution.
-
-    Args:
-        subject: Subject ID
-        subjects_dir: FreeSurfer subjects directory
-        mri_available: Whether individual MRI is available
-        conductivity: Conductivity values (single-layer for MEG)
-
-    Returns:
-        BEM solution
-    """
-    fs_subject = f"sub-{subject}" if mri_available else "fsaverage"
+    """Create BEM solution for the subject's anatomy directory (sub-XX)."""
+    fs_subject = f"sub-{subject}"
     logger.info(f"Creating BEM model for {fs_subject}...")
 
     model = mne.make_bem_model(
@@ -437,7 +494,6 @@ def morph_to_fsaverage(
     fwd: mne.Forward,
     subject: str,
     subjects_dir: Path,
-    mri_available: bool = False,
 ) -> List[SourceEstimate]:
     """Morph source estimates to fsaverage template.
 
@@ -471,7 +527,7 @@ def morph_to_fsaverage(
     src_to = mne.read_source_spaces(fsaverage_fpath, verbose=False)
 
     # Determine subject for morphing
-    fs_subject = f"sub-{subject}" if mri_available else "fsaverage"
+    fs_subject = f"sub-{subject}"
 
     # Morph each source estimate
     morphed_stcs = []
@@ -530,22 +586,14 @@ def save_source_estimate(
     return saved_path
 
 
-def check_mri_availability(subject: str, subjects_dir: Path) -> bool:
-    """Check if individual MRI is available for subject.
+def has_real_mri(subject: str, subjects_dir: Path) -> bool:
+    """Return True if sub-XX has a real MRI (not a scaled-fsaverage template).
 
-    Args:
-        subject: Subject ID
-        subjects_dir: FreeSurfer subjects directory
-
-    Returns:
-        True if individual MRI exists, False otherwise
+    mne.scale_mri writes 'MRI scaling parameters.cfg' into the scaled subject
+    directory; we use its presence to tell scaled templates apart from real
+    individual MRIs.
     """
-    subject_path = subjects_dir / f"sub-{subject}"
-    available = subject_path.exists()
-
-    if available:
-        logger.info(f"Individual MRI found for sub-{subject}")
-    else:
-        logger.info(f"No individual MRI for sub-{subject}, using fsaverage")
-
-    return available
+    subject_path = Path(subjects_dir) / f"sub-{subject}"
+    if not subject_path.exists():
+        return False
+    return not (subject_path / "MRI scaling parameters.cfg").exists()

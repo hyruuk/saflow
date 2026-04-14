@@ -184,33 +184,50 @@ def process_single_run(
         logger.info(f"Output already exists, skipping: {morph_output}")
         return True
 
-    # Check MRI availability
-    mri_available = utils.check_mri_availability(subject, fs_subjects_dir)
+    # Check whether subject has a real (non-scaled) MRI for metadata/logging
+    mri_available = utils.has_real_mri(subject, fs_subjects_dir)
 
-    # Step 1: Coregistration (uses preprocessed file for sensor info)
+    # Step 0: Ensure subject anatomy exists (creates scaled fsaverage if needed)
     trans_fpath = Path(str(filepaths["trans"].fpath))
+    try:
+        preproc_info = mne.io.read_raw_fif(
+            str(filepaths["preproc"].fpath), preload=False, verbose=False
+        ).info
+        fs_subject, precomputed_trans = utils.ensure_subject_anatomy(
+            subject, fs_subjects_dir, preproc_info
+        )
+    except Exception as e:
+        logger.error(f"Failed to ensure subject anatomy: {e}", exc_info=True)
+        return False
+
+    # Step 1: Coregistration
     if not trans_fpath.exists():
-        logger.info("[1/7] Computing coregistration...")
-        try:
-            utils.compute_coregistration(
-                filepaths["preproc"],
-                filepaths["trans"],
-                subject,
-                fs_subjects_dir,
-                mri_available=mri_available,
+        if precomputed_trans is not None:
+            logger.info(
+                "[1/7] Using coregistration from scaled-template fitting"
             )
-        except Exception as e:
-            logger.error(f"Coregistration failed: {e}", exc_info=True)
-            return False
+            trans_fpath.parent.mkdir(parents=True, exist_ok=True)
+            mne.write_trans(str(trans_fpath), precomputed_trans, overwrite=True)
+            logger.info(f"Saved coregistration: {trans_fpath}")
+        else:
+            logger.info("[1/7] Computing coregistration...")
+            try:
+                utils.compute_coregistration(
+                    filepaths["preproc"],
+                    filepaths["trans"],
+                    subject,
+                    fs_subjects_dir,
+                )
+            except Exception as e:
+                logger.error(f"Coregistration failed: {e}", exc_info=True)
+                return False
     else:
         logger.info(f"[1/7] Coregistration exists, loading: {trans_fpath}")
 
     # Step 2: Source space
     logger.info("[2/7] Setting up source space...")
     try:
-        src = utils.setup_source_space(
-            subject, fs_subjects_dir, mri_available=mri_available
-        )
+        src = utils.setup_source_space(subject, fs_subjects_dir)
     except Exception as e:
         logger.error(f"Source space setup failed: {e}", exc_info=True)
         return False
@@ -218,9 +235,7 @@ def process_single_run(
     # Step 3: BEM model
     logger.info("[3/7] Creating BEM model...")
     try:
-        bem = utils.create_bem_model(
-            subject, fs_subjects_dir, mri_available=mri_available
-        )
+        bem = utils.create_bem_model(subject, fs_subjects_dir)
     except Exception as e:
         logger.error(f"BEM creation failed: {e}", exc_info=True)
         return False
@@ -324,7 +339,6 @@ def process_single_run(
             fwd,
             subject,
             fs_subjects_dir,
-            mri_available=mri_available,
         )
 
         # Save morphed source estimates
