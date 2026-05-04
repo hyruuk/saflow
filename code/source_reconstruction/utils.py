@@ -258,6 +258,7 @@ def ensure_subject_anatomy(
         overwrite=False,
         labels=True,
         annot=True,
+        skip_fiducials=True,
         verbose=False,
     )
     logger.info(f"Created scaled template: {subject_path}")
