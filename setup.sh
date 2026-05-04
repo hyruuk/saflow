@@ -334,6 +334,25 @@ else
 fi
 
 # ==============================================================================
+# fsaverage Template (for source reconstruction)
+# ==============================================================================
+
+print_header "fsaverage template"
+
+# Only attempt download if config.yaml has a resolvable data_root
+if python -c "from code.utils.config import load_config; load_config()" 2>/dev/null; then
+    print_info "Downloading fsaverage if missing (required for source reconstruction)"
+    if bash "$(dirname "$0")/scripts/download_fsaverage.sh"; then
+        print_success "fsaverage ready"
+    else
+        print_warning "fsaverage download failed; you can retry later with scripts/download_fsaverage.sh"
+    fi
+else
+    print_info "Skipping fsaverage download (config.yaml not fully configured yet)"
+    print_info "  After editing config.yaml, run: scripts/download_fsaverage.sh"
+fi
+
+# ==============================================================================
 # Verification
 # ==============================================================================
 

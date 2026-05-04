@@ -176,37 +176,58 @@ def _run_coreg_fit(
     return coreg
 
 
+def _has_usable_anatomy(subject_path: Path) -> bool:
+    """Return True if the subject dir has the BEM files needed for coregistration.
+
+    mne.coreg.Coregistration needs a head surface (bem/*-head*.fif). A directory
+    that exists but lacks this file is a leftover from a partial run and must be
+    rebuilt.
+    """
+    bem_dir = subject_path / "bem"
+    if not bem_dir.exists():
+        return False
+    return any(bem_dir.glob("*-head*.fif"))
+
+
 def ensure_subject_anatomy(
     subject: str,
     subjects_dir: Path,
     info: mne.Info,
     uniform_residual_threshold_mm: float = 5.0,
 ) -> Tuple[str, Optional[mne.transforms.Transform]]:
-    """Ensure sub-XX has a FreeSurfer anatomy directory.
+    """Ensure sub-XX has a usable FreeSurfer anatomy directory.
 
-    If sub-XX exists (real MRI or previously-scaled fsaverage), no-op.
-    Otherwise: fits fsaverage to the subject's head with uniform scaling,
-    escalating to 3-axis if residuals are too large, then materializes a
-    scaled fsaverage as sub-XX via mne.scale_mri.
+    If sub-XX is already populated (real MRI or previously-scaled fsaverage with
+    a head BEM), no-op. If the directory is missing OR present-but-incomplete
+    (e.g. from a partial earlier run), fit fsaverage to the subject's head with
+    uniform scaling — escalating to 3-axis if residuals are too large — and
+    materialize a scaled fsaverage as sub-XX via mne.scale_mri.
 
-    Args:
-        subject: Subject ID.
-        subjects_dir: FreeSurfer subjects directory.
-        info: MEG Info containing digitization points.
-        uniform_residual_threshold_mm: Median dig-MRI distance above which
-            we escalate from uniform to 3-axis scaling.
-
-    Returns:
-        (fs_subject_name, precomputed_trans). The trans is returned only when
-        a new scaled template was just created; callers should save it as the
-        subject's trans file. Returns None for trans if anatomy already existed.
+    Requires fsaverage to be properly populated in subjects_dir (use
+    mne.datasets.fetch_fsaverage to download it).
     """
     fs_subject = f"sub-{subject}"
     subject_path = Path(subjects_dir) / fs_subject
 
     if subject_path.exists():
-        logger.info(f"Anatomy exists: {fs_subject}")
-        return fs_subject, None
+        if _has_usable_anatomy(subject_path):
+            logger.info(f"Anatomy exists and is usable: {fs_subject}")
+            return fs_subject, None
+        logger.warning(
+            f"Anatomy directory {subject_path} is present but missing a head BEM "
+            "(bem/*-head*.fif). Treating as stale and rebuilding from fsaverage."
+        )
+        import shutil
+        shutil.rmtree(subject_path)
+
+    fsaverage_path = Path(subjects_dir) / "fsaverage"
+    if not _has_usable_anatomy(fsaverage_path):
+        raise RuntimeError(
+            f"fsaverage is missing or incomplete in {subjects_dir} "
+            f"(no head BEM at {fsaverage_path}/bem/*-head*.fif). "
+            "Run scripts/download_fsaverage.sh (or "
+            "`mne.datasets.fetch_fsaverage(subjects_dir)`) before source recon."
+        )
 
     logger.info(
         f"No anatomy for {fs_subject}. Fitting scaled fsaverage template..."
