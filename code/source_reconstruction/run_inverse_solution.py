@@ -184,10 +184,7 @@ def process_single_run(
         logger.info(f"Output already exists, skipping: {morph_output}")
         return True
 
-    # Check whether subject has a real (non-scaled) MRI for metadata/logging
-    mri_available = utils.has_real_mri(subject, fs_subjects_dir)
-
-    # Step 0: Ensure subject anatomy exists (creates scaled fsaverage if needed)
+    # Step 0: Ensure subject anatomy exists (real MRI BEM if needed, or scaled template)
     trans_fpath = Path(str(filepaths["trans"].fpath))
     try:
         preproc_info = mne.io.read_raw_fif(
@@ -199,6 +196,12 @@ def process_single_run(
     except Exception as e:
         logger.error(f"Failed to ensure subject anatomy: {e}", exc_info=True)
         return False
+
+    mri_available = not fs_subject.endswith("_scaled")
+    logger.info(
+        f"Resolved FreeSurfer subject: {fs_subject} "
+        f"({'real MRI' if mri_available else 'scaled fsaverage'})"
+    )
 
     # Step 1: Coregistration
     if not trans_fpath.exists():
@@ -215,7 +218,7 @@ def process_single_run(
                 utils.compute_coregistration(
                     filepaths["preproc"],
                     filepaths["trans"],
-                    subject,
+                    fs_subject,
                     fs_subjects_dir,
                 )
             except Exception as e:
@@ -227,7 +230,7 @@ def process_single_run(
     # Step 2: Source space
     logger.info("[2/7] Setting up source space...")
     try:
-        src = utils.setup_source_space(subject, fs_subjects_dir)
+        src = utils.setup_source_space(fs_subject, fs_subjects_dir)
     except Exception as e:
         logger.error(f"Source space setup failed: {e}", exc_info=True)
         return False
@@ -235,7 +238,7 @@ def process_single_run(
     # Step 3: BEM model
     logger.info("[3/7] Creating BEM model...")
     try:
-        bem = utils.create_bem_model(subject, fs_subjects_dir)
+        bem = utils.create_bem_model(fs_subject, fs_subjects_dir)
     except Exception as e:
         logger.error(f"BEM creation failed: {e}", exc_info=True)
         return False
@@ -337,7 +340,7 @@ def process_single_run(
         morphed_stcs = utils.morph_to_fsaverage(
             stcs,
             fwd,
-            subject,
+            fs_subject,
             fs_subjects_dir,
         )
 
