@@ -1312,30 +1312,18 @@ def preprocess_run(
         random_state=42,
     )
 
-    # Map AR2 flags back to full epoch array if pre-AR2 filter removed some
+    # Map AR2 flags back to full epoch array if pre-AR2 filter removed some.
+    # epochs_interp_subset is post-drop: AR.transform() removes bad epochs in
+    # addition to interpolating, so it has fewer rows than reject_log_second_raw.
+    # We keep it as-is (cleanest output) and only widen the bad-epoch mask.
+    reject_log_second = reject_log_second_raw
+    epochs_interpolated = epochs_interp_subset
     if outlier_mask is not None and np.any(outlier_mask):
-        # Build full-size reject log flags: outlier epochs are marked bad
-        ar2_flags_full = np.ones(len(epochs_preproc), dtype=bool)  # start all bad
+        ar2_flags_full = np.ones(len(epochs_preproc), dtype=bool)  # outliers bad by default
         non_outlier_indices = np.where(~outlier_mask)[0]
         ar2_flags_full[non_outlier_indices] = reject_log_second_raw.bad_epochs
-        reject_log_second = reject_log_second_raw  # keep raw for saving
-
-        # Build full-size interpolated epochs: use originals for outlier positions
-        # (outliers get flagged as bad, not interpolated)
-        epochs_interpolated = epochs_preproc.copy()
-        # Copy interpolated data into non-outlier positions
-        epochs_interp_data = epochs_interpolated.get_data()
-        epochs_interp_data[non_outlier_indices] = epochs_interp_subset.get_data()
-        epochs_interpolated = mne.EpochsArray(
-            epochs_interp_data, epochs_interpolated.info,
-            events=epochs_interpolated.events,
-            event_id=epochs_interpolated.event_id,
-            tmin=epochs_interpolated.tmin,
-        )
     else:
         ar2_flags_full = reject_log_second_raw.bad_epochs
-        reject_log_second = reject_log_second_raw
-        epochs_interpolated = epochs_interp_subset
 
     n_ar2_bad = int(np.sum(ar2_flags_full))
     console.print(f"[green]\u2713 AR2: {n_ar2_bad}/{len(epochs_preproc)} bad epochs[/green]")
