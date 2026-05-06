@@ -50,12 +50,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import mne
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
 # Local imports
+from code.features.loaders import load_data
 from code.features.utils import segment_spatial_temporal_data
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
@@ -281,7 +281,6 @@ def process_subject_run(
 
     # Get paths
     data_root = Path(config["paths"]["data_root"])
-    derivatives_root = Path(config["paths"]["derivatives"])
     bids_root = data_root / "bids"
     task_name = config["bids"]["task_name"]
 
@@ -299,14 +298,6 @@ def process_subject_run(
         logger.info(f"Output exists, skipping: {output_file.name}")
         return None
 
-    # Build path for preprocessed data (ICA-cleaned continuous data)
-    preproc_dir = derivatives_root / "preprocessed" / f"sub-{subject}" / "meg"
-    preproc_file = preproc_dir / f"sub-{subject}_task-{task_name}_run-{run}_proc-clean_meg.fif"
-
-    if not preproc_file.exists():
-        logger.error(f"Preprocessed file not found: {preproc_file}")
-        return None
-
     # Load events.tsv for trial metadata
     events_path = (
         bids_root
@@ -322,18 +313,22 @@ def process_subject_run(
     events_df = pd.read_csv(events_path, sep="\t")
     logger.info(f"Loaded {len(events_df)} events from {events_path}")
 
-    # Load data
-    logger.info(f"Loading data from {preproc_file}")
-    raw = mne.io.read_raw_fif(preproc_file, preload=True)
-
-    # Pick MEG channels only
-    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, eog=False)
-    data = raw.get_data(picks=picks)
-    sfreq = raw.info["sfreq"]
-    ch_names = [raw.ch_names[i] for i in picks]
+    # Load continuous data via unified loader (sensor / source / atlas)
+    logger.info(f"Loading {space}-level continuous data...")
+    spatial_data = load_data(
+        space=space,
+        bids_root=bids_root,
+        subject=subject,
+        run=run,
+        input_type="continuous",
+        config=config,
+    )
+    data = spatial_data.data
+    sfreq = spatial_data.sfreq
+    ch_names = list(spatial_data.spatial_names)
 
     logger.info(
-        f"Data shape: {data.shape} ({data.shape[0]} channels, {data.shape[1]} samples)"
+        f"Data shape: {data.shape} ({data.shape[0]} {space} units, {data.shape[1]} samples)"
     )
 
     # Get epoch timing from config

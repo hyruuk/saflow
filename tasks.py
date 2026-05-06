@@ -960,15 +960,20 @@ def stats_psd_corrected(c, space="sensor", correction="fdr", alpha=0.05, n_permu
 
 
 @task
-def classify(c, features, clf="lda", cv="logo", space="sensor",
-             n_permutations=1000, no_balance=False, visualize=False,
-             slurm=False, dry_run=False):
+def classify(c, feature, clf="lda", cv="logo", space="sensor",
+             mode="univariate", n_permutations=1000, no_balance=False,
+             n_jobs=-1, slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT).
 
+    Modes:
+      - univariate (default): per-channel/ROI LDA + shared-permutation t-max
+      - multivariate: pooled features, single permutation_test_score
+
     Examples:
-        invoke analysis.classify --features=fooof_exponent
-        invoke analysis.classify --features="fooof_exponent psd_alpha"
-        invoke analysis.classify --features=psd_alpha --clf=svm
+        invoke analysis.classify --feature=fooof_exponent
+        invoke analysis.classify --feature=psd_alpha --clf=svm
+        invoke analysis.classify --feature=complexity_lzc_median --space=schaefer_400
+        invoke analysis.classify --feature=psd_corrected_alpha --mode=multivariate
     """
     print("=" * 80)
     print("Classification Analysis")
@@ -980,16 +985,16 @@ def classify(c, features, clf="lda", cv="logo", space="sensor",
 
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.classification.run_classification"]
-    cmd.extend(["--features"] + features.split())
+    cmd.extend(["--feature", feature])
     cmd.extend(["--clf", clf])
     cmd.extend(["--cv", cv])
     cmd.extend(["--space", space])
+    cmd.extend(["--mode", mode])
     cmd.extend(["--n-permutations", str(n_permutations)])
+    cmd.extend(["--n-jobs", str(n_jobs)])
 
     if no_balance:
         cmd.append("--no-balance")
-    if visualize:
-        cmd.append("--visualize")
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
