@@ -965,6 +965,7 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
+             slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT).
 
@@ -1025,6 +1026,9 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
             seed=seed,
             aggregate=aggregate,
             delete_chunks=delete_chunks,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
             dry_run=dry_run,
         )
         return
@@ -1602,6 +1606,7 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
                     no_balance=False, n_jobs=-1, continue_on_error=False,
                     combine_features=False, importances=False, label=None,
                     n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
+                    slurm_time=None, slurm_mem=None, slurm_cpus=None,
                     dry_run=False):
     """Submit classification jobs to SLURM.
 
@@ -1671,12 +1676,18 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
     print(f"n_permutations: {n_permutations}  combine_features: {combine_features}")
     print(f"Classifications: {len(classifications)}  chunks per classification: {n_chunks}")
 
+    # Resolve resources: per-invocation overrides win over config defaults
+    cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources["cpus"]
+    mem_resolved = slurm_mem if slurm_mem is not None else classification_resources["mem"]
+    time_resolved = slurm_time if slurm_time is not None else classification_resources["time"]
+    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
+
     base_resources = dict(
         account=slurm_config["account"],
         partition=slurm_config.get("partition", ""),
-        cpus=classification_resources["cpus"],
-        mem=classification_resources["mem"],
-        time=classification_resources["time"],
+        cpus=cpus_resolved,
+        mem=mem_resolved,
+        time=time_resolved,
         log_dir=str(log_dir),
         venv_path=str(venv_path),
         project_root=str(PROJECT_ROOT),
@@ -1880,6 +1891,124 @@ stats.add_task(stats_fooof, name="fooof")
 stats.add_task(stats_psd, name="psd")
 stats.add_task(stats_psd_corrected, name="psd-corrected")
 
+@task
+def slurm_jobs(c, pattern=None, state=None, user=None):
+    """List your running/queued SLURM jobs, optionally filtered by name glob.
+
+    Args:
+        pattern: glob-style name filter (e.g. 'classify_*', '*chunk-0*'). Default: all.
+        state: filter by SLURM state code (R, PD, CG, ...). Default: all.
+        user: SLURM username to query (default: current user).
+
+    Examples:
+        invoke slurm.jobs
+        invoke slurm.jobs --pattern='classify_*'
+        invoke slurm.jobs --pattern='aggregate_*' --state=PD
+    """
+    import fnmatch
+    from code.utils.slurm import get_user_jobs
+
+    jobs = get_user_jobs(user=user)
+    if pattern:
+        jobs = [j for j in jobs if fnmatch.fnmatch(j["JobName"], pattern)]
+    if state:
+        jobs = [j for j in jobs if j["State"] == state]
+
+    if not jobs:
+        print("No matching jobs.")
+        return
+
+    print(f"{'JobID':>10}  {'State':>5}  {'Time':>10}  {'CPUs':>4}  {'Mem':>6}  Name")
+    print("-" * 80)
+    for j in jobs:
+        print(
+            f"{j['JobID']:>10}  {j['State']:>5}  {j['Time']:>10}  "
+            f"{j['CPUs']:>4}  {j['Memory']:>6}  {j['JobName']}"
+        )
+    print(f"\n{len(jobs)} job(s)")
+
+
+@task
+def slurm_cancel(c, pattern=None, job_ids=None, state=None, user=None,
+                 dry_run=False, yes=False):
+    """Cancel SLURM jobs matching a name glob (or explicit IDs).
+
+    Safety: by default, prints what would be cancelled and asks for confirmation.
+    Pass --yes to skip the prompt, or --dry-run to print without cancelling.
+
+    Args:
+        pattern: glob-style name filter (e.g. 'classify_psd_*', '*chunk-*').
+        job_ids: comma- or space-separated explicit job IDs (overrides pattern matching).
+        state: optional SLURM state code filter (R, PD, CG, ...). Useful with pattern.
+        user: SLURM username to query (default: current user).
+        dry_run: just print the matches; don't cancel.
+        yes: skip the confirmation prompt and cancel immediately.
+
+    Examples:
+        invoke slurm.cancel --pattern='classify_psd_*' --dry-run
+        invoke slurm.cancel --pattern='aggregate_*' --state=PD --yes
+        invoke slurm.cancel --pattern='*chunk-0of*'
+        invoke slurm.cancel --job-ids='123,124,125'
+    """
+    import fnmatch
+    from code.utils.slurm import cancel_job, get_user_jobs
+
+    if not pattern and not job_ids:
+        print("ERROR: pass --pattern or --job-ids")
+        return
+
+    targets: list = []
+    if job_ids:
+        ids = [s for s in job_ids.replace(",", " ").split() if s]
+        # If state/pattern also given, look up names from squeue and apply filters
+        if state or pattern:
+            all_jobs = {j["JobID"]: j for j in get_user_jobs(user=user)}
+            for jid in ids:
+                if jid not in all_jobs:
+                    print(f"  ! {jid}: not in queue, skipping")
+                    continue
+                j = all_jobs[jid]
+                if state and j["State"] != state:
+                    continue
+                if pattern and not fnmatch.fnmatch(j["JobName"], pattern):
+                    continue
+                targets.append(j)
+        else:
+            targets = [{"JobID": jid, "JobName": "(unknown)", "State": "?"} for jid in ids]
+    else:
+        jobs = get_user_jobs(user=user)
+        targets = [j for j in jobs if fnmatch.fnmatch(j["JobName"], pattern)]
+        if state:
+            targets = [j for j in targets if j["State"] == state]
+
+    if not targets:
+        print("No matching jobs.")
+        return
+
+    print(f"Targets ({len(targets)}):")
+    for j in targets:
+        print(f"  {j['JobID']:>10}  [{j.get('State', '?'):>3}]  {j['JobName']}")
+
+    if dry_run:
+        print(f"\n[DRY RUN] Would cancel {len(targets)} job(s)")
+        return
+
+    if not yes:
+        try:
+            ans = input(f"\nCancel {len(targets)} job(s)? [y/N] ").strip().lower()
+        except EOFError:
+            ans = ""
+        if ans not in ("y", "yes"):
+            print("Aborted.")
+            return
+
+    cancelled = 0
+    for j in targets:
+        if cancel_job(j["JobID"]):
+            cancelled += 1
+    print(f"\n✓ Cancelled {cancelled}/{len(targets)} job(s)")
+
+
 # Analysis tasks
 analysis = Collection("analysis")
 analysis.add_task(statistics)
@@ -1892,6 +2021,11 @@ viz = Collection("viz")
 viz.add_task(viz_stats, name="stats")
 viz.add_task(behavior)
 
+# SLURM job-management tasks
+slurm = Collection("slurm")
+slurm.add_task(slurm_jobs, name="jobs")
+slurm.add_task(slurm_cancel, name="cancel")
+
 # Build main namespace
 namespace = Collection()
 namespace.add_collection(dev)
@@ -1900,6 +2034,7 @@ namespace.add_collection(get)
 namespace.add_collection(pipeline)
 namespace.add_collection(analysis)
 namespace.add_collection(viz)
+namespace.add_collection(slurm)
 
 
 # Default task

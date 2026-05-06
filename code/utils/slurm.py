@@ -215,6 +215,9 @@ def cancel_job(job_id: str) -> bool:
         print(f"✓ Cancelled job {job_id}")
         return True
 
+    except FileNotFoundError:
+        print("✗ scancel not found — are you on a SLURM cluster?")
+        return False
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to cancel job {job_id}: {e.stderr}")
         print(f"✗ Failed to cancel job {job_id}")
@@ -275,6 +278,10 @@ def get_user_jobs(user: Optional[str] = None) -> List[Dict]:
 
         return jobs
 
+    except FileNotFoundError:
+        logger.warning("squeue not found — are you on a SLURM cluster?")
+        print("squeue not found — are you on a SLURM cluster?")
+        return []
     except subprocess.CalledProcessError:
         logger.warning("Could not get user jobs")
         return []
