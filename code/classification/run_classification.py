@@ -321,6 +321,79 @@ def load_classification_data(
     return X, y, groups, metadata
 
 
+def load_combined_features(
+    features: List[str],
+    space: str,
+    inout_bounds: Tuple[int, int],
+    config: Dict,
+    subjects: Optional[List[str]] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
+    """Load multiple features and stack along a new feature axis.
+
+    Each feature must produce the same trial set (same y, same groups). When a
+    feature has different per-subject trial coverage (rare), this raises.
+
+    Returns:
+        X: (n_trials, n_spatial, n_features)
+        y, groups: as in load_classification_data
+        metadata: includes per-feature metadata under ``per_feature``.
+    """
+    Xs = []
+    y_ref = None
+    groups_ref = None
+    per_feature = {}
+    spatial_names = None
+
+    for feat in features:
+        X_f, y_f, g_f, meta_f = load_classification_data(
+            feature=feat,
+            space=space,
+            inout_bounds=inout_bounds,
+            config=config,
+            subjects=subjects,
+        )
+        if y_ref is None:
+            y_ref = y_f
+            groups_ref = g_f
+        else:
+            if not (
+                len(y_f) == len(y_ref)
+                and np.array_equal(y_f, y_ref)
+                and np.array_equal(g_f, groups_ref)
+            ):
+                raise ValueError(
+                    f"Feature '{feat}' produced a different trial set than "
+                    f"'{features[0]}'. Cannot combine features that don't share "
+                    f"identical trial alignment."
+                )
+        Xs.append(X_f)
+        per_feature[feat] = {k: v for k, v in meta_f.items() if k != "spatial_names"}
+        if spatial_names is None:
+            spatial_names = meta_f.get("spatial_names")
+
+    X = np.stack(Xs, axis=2)  # (n_trials, n_spatial, n_features)
+
+    metadata = {
+        "features": list(features),
+        "space": space,
+        "inout_bounds": list(inout_bounds),
+        "n_subjects": int(len(np.unique(groups_ref))),
+        "n_trials": int(len(y_ref)),
+        "n_spatial": int(X.shape[1]),
+        "n_features": int(X.shape[2]),
+        "n_in": int((y_ref == 0).sum()),
+        "n_out": int((y_ref == 1).sum()),
+        "per_feature": per_feature,
+    }
+    if spatial_names is not None:
+        metadata["spatial_names"] = spatial_names
+
+    logger.info(
+        f"Combined {len(features)} features into X of shape {X.shape}"
+    )
+    return X, y_ref, groups_ref, metadata
+
+
 # ---------------------------------------------------------------------------
 # Class balancing (within-subject, within-class subsampling)
 # ---------------------------------------------------------------------------
@@ -328,6 +401,7 @@ def load_classification_data(
 def balance_within_subject(
     X: np.ndarray, y: np.ndarray, groups: np.ndarray, seed: int = 42069
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Subsample IN/OUT to equal counts per subject. Works for 2D or 3D X."""
     rng = np.random.default_rng(seed)
     keep: List[int] = []
     for g in np.unique(groups):
@@ -364,10 +438,13 @@ def _is_group_cv(cv) -> bool:
 # Univariate classification with shared-permutation t-max
 # ---------------------------------------------------------------------------
 
-def _score_one_spatial(clf, X_col, y, cv, groups, scoring="roc_auc"):
+def _score_one_spatial(clf, X_slice, y, cv, groups, scoring="roc_auc"):
+    """Score one spatial unit. X_slice is (n_trials,) or (n_trials, n_features)."""
+    if X_slice.ndim == 1:
+        X_slice = X_slice.reshape(-1, 1)
     kw = {"groups": groups} if _is_group_cv(cv) else {}
     scores = cross_val_score(
-        clf, X_col.reshape(-1, 1), y, cv=cv, scoring=scoring, n_jobs=1, **kw
+        clf, X_slice, y, cv=cv, scoring=scoring, n_jobs=1, **kw
     )
     return float(np.mean(scores))
 
@@ -380,6 +457,21 @@ def _permute_y_within_groups(y, groups, rng):
     return y_perm
 
 
+def _slice_spatial(X, s):
+    """Slice the spatial dim. X is (n_trials, n_spatial) or (n_trials, n_spatial, n_features)."""
+    return X[:, s] if X.ndim == 2 else X[:, s, :]
+
+
+def _fit_full_and_get_importances(clf, X, y):
+    """Fit on the full dataset and try to extract feature_importances_."""
+    try:
+        clf.fit(X, y)
+    except Exception as exc:
+        logger.debug(f"Importance fit failed: {exc}")
+        return None
+    return getattr(clf, "feature_importances_", None)
+
+
 def run_univariate_with_tmax(
     X: np.ndarray,
     y: np.ndarray,
@@ -390,6 +482,7 @@ def run_univariate_with_tmax(
     n_jobs: int = -1,
     seed: int = 42,
     scoring: str = "roc_auc",
+    fit_importances: bool = False,
 ) -> Dict:
     """Per-spatial classification with shared-permutation t-max correction.
 
@@ -398,7 +491,7 @@ def run_univariate_with_tmax(
     FWER across the spatial dimension.
 
     Args:
-        X: (n_trials, n_spatial)
+        X: (n_trials, n_spatial) or (n_trials, n_spatial, n_features) for combined.
         y: (n_trials,)
         groups: (n_trials,)
         clf_factory: callable returning a fresh sklearn classifier instance.
@@ -407,28 +500,28 @@ def run_univariate_with_tmax(
         n_jobs: parallel jobs over (channels, permutations).
         seed: RNG seed.
         scoring: sklearn scoring name.
-
-    Returns:
-        dict with: observed (n_spatial,), perm_scores (n_perms, n_spatial),
-        pvals_uncorrected, pvals_tmax, pvals_fdr_bh, pvals_bonferroni.
+        fit_importances: if True, fit one classifier per spatial unit on the full
+            dataset to extract feature_importances_ (only meaningful when X has a
+            feature dim and the classifier exposes it, e.g. random forest).
     """
-    n_trials, n_spatial = X.shape
+    n_trials, n_spatial = X.shape[0], X.shape[1]
+    has_feature_dim = X.ndim == 3
+    n_features = X.shape[2] if has_feature_dim else 1
     logger.info(
         f"Univariate t-max: n_trials={n_trials}, n_spatial={n_spatial}, "
-        f"n_permutations={n_permutations}"
+        f"n_features={n_features}, n_permutations={n_permutations}"
     )
 
-    # Observed scores in parallel across spatial units
     logger.info("Computing observed scores per spatial unit…")
     observed = np.array(
         Parallel(n_jobs=n_jobs)(
-            delayed(_score_one_spatial)(clf_factory(), X[:, s], y, cv, groups, scoring)
+            delayed(_score_one_spatial)(
+                clf_factory(), _slice_spatial(X, s), y, cv, groups, scoring
+            )
             for s in range(n_spatial)
         )
     )
 
-    # Permutation scores: outer loop over permutations (shared y_perm), inner
-    # parallelism over channels.
     logger.info("Running permutations with shared label shuffles…")
     rng = np.random.default_rng(seed)
     perm_scores = np.zeros((n_permutations, n_spatial), dtype=float)
@@ -437,26 +530,37 @@ def run_univariate_with_tmax(
         y_perm = _permute_y_within_groups(y, groups, rng)
         scores_p = Parallel(n_jobs=n_jobs)(
             delayed(_score_one_spatial)(
-                clf_factory(), X[:, s], y_perm, cv, groups, scoring
+                clf_factory(), _slice_spatial(X, s), y_perm, cv, groups, scoring
             )
             for s in range(n_spatial)
         )
         perm_scores[p, :] = scores_p
 
-    # Uncorrected p-values: per-channel right-tail
     pvals_unc = (np.sum(perm_scores >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )
-
-    # T-max corrected p-values: compare each observed to the max-across-channels
-    # null distribution
     max_perm = perm_scores.max(axis=1)
     pvals_tmax = (np.sum(max_perm[:, None] >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )
-
     pvals_fdr = apply_fdr_correction(pvals_unc, alpha=0.05, method="bh")
     pvals_bonf = apply_bonferroni_correction(pvals_unc, alpha=0.05)
+
+    importances = None
+    if fit_importances and has_feature_dim:
+        logger.info("Extracting feature importances per spatial unit…")
+        imp_list = Parallel(n_jobs=n_jobs)(
+            delayed(_fit_full_and_get_importances)(
+                clf_factory(), _slice_spatial(X, s), y
+            )
+            for s in range(n_spatial)
+        )
+        if all(imp is not None for imp in imp_list):
+            importances = np.stack(imp_list, axis=0)  # (n_spatial, n_features)
+        else:
+            logger.warning(
+                "Some classifiers did not expose feature_importances_; skipping."
+            )
 
     n_sig_tmax = int(np.sum(pvals_tmax < 0.05))
     n_sig_fdr = int(np.sum(pvals_fdr < 0.05))
@@ -466,7 +570,7 @@ def run_univariate_with_tmax(
         f"max observed: {observed.max():.3f}"
     )
 
-    return {
+    out = {
         "mode": "univariate",
         "observed": observed,
         "perm_scores": perm_scores,
@@ -475,6 +579,9 @@ def run_univariate_with_tmax(
         "pvals_fdr_bh": pvals_fdr,
         "pvals_bonferroni": pvals_bonf,
     }
+    if importances is not None:
+        out["feature_importances"] = importances  # (n_spatial, n_features)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -485,11 +592,18 @@ def run_multivariate(
     X: np.ndarray,
     y: np.ndarray,
     groups: np.ndarray,
-    clf,
+    clf_factory,
     cv,
     n_permutations: int,
     scoring: str = "roc_auc",
+    fit_importances: bool = False,
 ) -> Dict:
+    """Multivariate classification on a flat (n_trials, n_features_total) input."""
+    if X.ndim > 2:
+        # Flatten any extra dims (spatial, features) into one feature axis
+        X = X.reshape(X.shape[0], -1)
+
+    clf = clf_factory()
     kw = {"groups": groups} if _is_group_cv(cv) else {}
     score, perm_scores, pvalue = permutation_test_score(
         clf,
@@ -505,12 +619,21 @@ def run_multivariate(
         f"Multivariate: score={score:.3f}, p-value={pvalue:.4f} "
         f"(perm mean={np.mean(perm_scores):.3f})"
     )
-    return {
+    out = {
         "mode": "multivariate",
         "observed": float(score),
         "perm_scores": np.asarray(perm_scores),
         "pvalue": float(pvalue),
     }
+    if fit_importances:
+        importances = _fit_full_and_get_importances(clf_factory(), X, y)
+        if importances is not None:
+            out["feature_importances"] = importances  # (n_features_total,)
+        else:
+            logger.warning(
+                "Classifier did not expose feature_importances_; skipping."
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -519,25 +642,35 @@ def run_multivariate(
 
 def save_results(
     output_dir: Path,
-    feature: str,
+    feature_label: str,
     space: str,
     inout_bounds: Tuple[int, int],
     clf_name: str,
     cv_name: str,
     mode: str,
+    combined: bool,
+    feature_list: List[str],
     results: Dict,
     metadata: Dict,
 ) -> Path:
+    """Save NPZ scores + JSON metadata with provenance.
+
+    feature_label is what goes into the filename (single feature name, or a
+    composite tag like 'combined-N' for combined-feature runs). The full
+    ordered feature_list is recorded in the metadata JSON.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     base = (
-        f"feature-{feature}_space-{space}"
+        f"feature-{feature_label}_space-{space}"
         f"_inout-{inout_bounds_to_string(inout_bounds)}"
         f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}"
     )
+    if combined:
+        base += "_combined"
 
+    npz_payload: Dict[str, np.ndarray] = {}
     if mode == "univariate":
-        np.savez_compressed(
-            output_dir / f"{base}_scores.npz",
+        npz_payload.update(
             observed=results["observed"],
             perm_scores=results["perm_scores"],
             pvals_uncorrected=results["pvals_uncorrected"],
@@ -553,9 +686,8 @@ def save_results(
             "n_permutations": int(results["perm_scores"].shape[0]),
         }
     else:
-        np.savez_compressed(
-            output_dir / f"{base}_scores.npz",
-            observed=results["observed"],
+        npz_payload.update(
+            observed=np.asarray(results["observed"]),
             perm_scores=results["perm_scores"],
         )
         summary = {
@@ -564,8 +696,15 @@ def save_results(
             "n_permutations": int(len(results["perm_scores"])),
         }
 
+    if "feature_importances" in results:
+        npz_payload["feature_importances"] = results["feature_importances"]
+
+    np.savez_compressed(output_dir / f"{base}_scores.npz", **npz_payload)
+
     meta_out = {
-        "feature": feature,
+        "feature": feature_label,
+        "feature_list": feature_list,
+        "combined": combined,
         "space": space,
         "inout_bounds": list(inout_bounds),
         "classifier": clf_name,
@@ -615,6 +754,32 @@ def main():
         "--continue-on-error",
         action="store_true",
         help="If a feature fails, log and continue with the next instead of exiting.",
+    )
+    parser.add_argument(
+        "--combine-features",
+        action="store_true",
+        help=(
+            "Combine all selected features into a single classification (stacked "
+            "along a new feature axis). For mode=univariate this gives one "
+            "multi-feature classifier per spatial unit; for mode=multivariate "
+            "this flattens features × space into one big classifier."
+        ),
+    )
+    parser.add_argument(
+        "--importances",
+        action="store_true",
+        help=(
+            "After scoring, fit each classifier on the full data and save "
+            "feature_importances_ if available (e.g. random forest)."
+        ),
+    )
+    parser.add_argument(
+        "--label",
+        default=None,
+        help=(
+            "Filename label when --combine-features is set "
+            "(default: 'combined-{N}'). Ignored otherwise."
+        ),
     )
     parser.add_argument(
         "--space",
@@ -670,63 +835,94 @@ def main():
         data_root / config["paths"]["features"] / f"classification_{args.space}" / "group"
     )
 
+    def _run_one(label: str, feature_list: List[str], X, y, groups, metadata):
+        if not args.no_balance:
+            X_b, y_b, g_b = balance_within_subject(X, y, groups, seed=args.seed)
+            logger.info(
+                f"Balanced: {len(y_b)} trials (IN={int((y_b == 0).sum())}, "
+                f"OUT={int((y_b == 1).sum())})"
+            )
+        else:
+            X_b, y_b, g_b = X, y, groups
+
+        if args.mode == "univariate":
+            results = run_univariate_with_tmax(
+                X=X_b,
+                y=y_b,
+                groups=g_b,
+                clf_factory=lambda: get_classifier(args.clf),
+                cv=cv,
+                n_permutations=args.n_permutations,
+                n_jobs=args.n_jobs,
+                seed=args.seed,
+                fit_importances=args.importances,
+            )
+        else:
+            results = run_multivariate(
+                X=X_b,
+                y=y_b,
+                groups=g_b,
+                clf_factory=lambda: get_classifier(args.clf),
+                cv=cv,
+                n_permutations=args.n_permutations,
+                fit_importances=args.importances,
+            )
+
+        save_results(
+            output_dir=output_dir,
+            feature_label=label,
+            space=args.space,
+            inout_bounds=inout_bounds,
+            clf_name=args.clf,
+            cv_name=args.cv,
+            mode=args.mode,
+            combined=args.combine_features,
+            feature_list=feature_list,
+            results=results,
+            metadata=metadata,
+        )
+
     failures: List[Tuple[str, str]] = []
-    for i, feat in enumerate(features, start=1):
-        logger.info("")
-        logger.info(f"[{i}/{len(features)}] feature: {feat}")
-        logger.info("-" * 78)
+
+    if args.combine_features:
+        if len(features) < 2:
+            logger.warning(
+                "--combine-features requested but only one feature given; "
+                "running as a normal single-feature classification."
+            )
+        label = args.label or f"combined-{len(features)}"
+        logger.info(f"Combined run over {len(features)} feature(s) -> label '{label}'")
         try:
-            X, y, groups, metadata = load_classification_data(
-                feature=feat,
+            X, y, groups, metadata = load_combined_features(
+                features=features,
                 space=args.space,
                 inout_bounds=inout_bounds,
                 config=config,
             )
-
-            if not args.no_balance:
-                X, y, groups = balance_within_subject(X, y, groups, seed=args.seed)
-                logger.info(
-                    f"Balanced: {len(y)} trials (IN={int((y == 0).sum())}, "
-                    f"OUT={int((y == 1).sum())})"
-                )
-
-            if args.mode == "univariate":
-                results = run_univariate_with_tmax(
-                    X=X,
-                    y=y,
-                    groups=groups,
-                    clf_factory=lambda: get_classifier(args.clf),
-                    cv=cv,
-                    n_permutations=args.n_permutations,
-                    n_jobs=args.n_jobs,
-                    seed=args.seed,
-                )
-            else:
-                results = run_multivariate(
-                    X=X,
-                    y=y,
-                    groups=groups,
-                    clf=get_classifier(args.clf),
-                    cv=cv,
-                    n_permutations=args.n_permutations,
-                )
-
-            save_results(
-                output_dir=output_dir,
-                feature=feat,
-                space=args.space,
-                inout_bounds=inout_bounds,
-                clf_name=args.clf,
-                cv_name=args.cv,
-                mode=args.mode,
-                results=results,
-                metadata=metadata,
-            )
+            _run_one(label, features, X, y, groups, metadata)
         except Exception as exc:
-            logger.error(f"Feature '{feat}' failed: {exc}", exc_info=True)
-            failures.append((feat, str(exc)))
+            logger.error(f"Combined run failed: {exc}", exc_info=True)
+            failures.append((label, str(exc)))
             if not args.continue_on_error:
                 raise
+    else:
+        for i, feat in enumerate(features, start=1):
+            logger.info("")
+            logger.info(f"[{i}/{len(features)}] feature: {feat}")
+            logger.info("-" * 78)
+            try:
+                X, y, groups, metadata = load_classification_data(
+                    feature=feat,
+                    space=args.space,
+                    inout_bounds=inout_bounds,
+                    config=config,
+                )
+                _run_one(feat, [feat], X, y, groups, metadata)
+            except Exception as exc:
+                logger.error(f"Feature '{feat}' failed: {exc}", exc_info=True)
+                failures.append((feat, str(exc)))
+                if not args.continue_on_error:
+                    raise
 
     if failures:
         logger.warning(f"{len(failures)}/{len(features)} feature(s) failed:")

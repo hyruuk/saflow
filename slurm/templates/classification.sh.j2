@@ -1,0 +1,42 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Classification (IN vs OUT) — {{ feature_label }} on {{ space }}
+# =============================================================================
+
+echo "Classification configuration:"
+echo "  Features:        {{ feature_args }}"
+echo "  Space:           {{ space }}"
+echo "  Mode:            {{ mode }}"
+echo "  Classifier:      {{ clf }}"
+echo "  CV strategy:     {{ cv }}"
+echo "  Permutations:    {{ n_permutations }}"
+echo "  Combined:        {{ combine_features }}"
+echo "  Importances:     {{ importances }}"
+echo ""
+
+python -m code.classification.run_classification \
+    {{ feature_args }} \
+    --space {{ space }} \
+    --mode {{ mode }} \
+    --clf {{ clf }} \
+    --cv {{ cv }} \
+    --n-permutations {{ n_permutations }} \
+    --n-jobs {{ n_jobs }} \
+    {% if no_balance %}--no-balance{% endif %} \
+    {% if combine_features %}--combine-features{% endif %} \
+    {% if importances %}--importances{% endif %} \
+    {% if continue_on_error %}--continue-on-error{% endif %} \
+    {% if label %}--label {{ label }}{% endif %}
+
+CLASSIFY_EXIT=$?
+
+if [ $CLASSIFY_EXIT -eq 0 ]; then
+    echo "Classification completed successfully"
+else
+    echo "Classification failed with exit code $CLASSIFY_EXIT"
+    exit $CLASSIFY_EXIT
+fi
+
+{% endblock %}

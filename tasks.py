@@ -963,33 +963,65 @@ def stats_psd_corrected(c, space="sensor", correction="fdr", alpha=0.05, n_permu
 def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
+             combine_features=False, importances=False, label=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT).
 
-    Modes:
-      - univariate (default): per-channel/ROI LDA + shared-permutation t-max
-      - multivariate: pooled features, single permutation_test_score
+    Spatial mode:
+      - univariate (default): per-channel/ROI classifier + shared-permutation t-max
+      - multivariate: pool spatial dim, single permutation_test_score
 
-    Feature-set shortcuts (loops over many features in one call):
-      psds, psds_corrected, fooof, complexity, all
+    Feature handling:
+      - Default loop: each feature in --feature / --feature-set is run separately.
+      - --combine-features: stack all selected features into a single classification
+        (great for RF feature importance with --importances).
+
+    Feature-set shortcuts: psds, psds_corrected, fooof, complexity, all.
 
     Examples:
-        invoke analysis.classify --feature=fooof_exponent
-        invoke analysis.classify --feature="psd_alpha psd_theta"
+        # Single feature, per-channel LDA + tmax (recommended for single features)
+        invoke analysis.classify --feature=fooof_exponent --clf=lda
+
+        # All 8 PSD bands, each as its own job
         invoke analysis.classify --feature-set=psds --space=sensor
-        invoke analysis.classify --feature-set=complexity --space=schaefer_400
-        invoke analysis.classify --feature-set=all --continue-on-error
+
+        # Combine all complexity metrics, RF per ROI, save importances
+        invoke analysis.classify --feature-set=complexity --space=schaefer_400 \\
+            --clf=rf --combine-features --importances
+
+        # Combine + multivariate: one big RF over (n_features × n_spatial)
+        invoke analysis.classify --feature-set=all --combine-features \\
+            --mode=multivariate --clf=rf --importances
+
+        # Submit each feature as a separate SLURM job
+        invoke analysis.classify --feature-set=psds --slurm
     """
     print("=" * 80)
     print("Classification Analysis")
     print("=" * 80)
 
-    if slurm:
-        print("ERROR: SLURM execution not yet implemented")
-        return
-
     if not feature and not feature_set:
         print("ERROR: pass --feature and/or --feature-set")
+        return
+
+    if slurm:
+        _classify_slurm(
+            c,
+            feature=feature,
+            feature_set=feature_set,
+            clf=clf,
+            cv=cv,
+            space=space,
+            mode=mode,
+            n_permutations=n_permutations,
+            no_balance=no_balance,
+            n_jobs=n_jobs,
+            continue_on_error=continue_on_error,
+            combine_features=combine_features,
+            importances=importances,
+            label=label,
+            dry_run=dry_run,
+        )
         return
 
     python_exe = get_python_executable()
@@ -1009,6 +1041,12 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
         cmd.append("--no-balance")
     if continue_on_error:
         cmd.append("--continue-on-error")
+    if combine_features:
+        cmd.append("--combine-features")
+    if importances:
+        cmd.append("--importances")
+    if label:
+        cmd.extend(["--label", label])
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -1544,6 +1582,133 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
         print(f"\n✓ Submitted {len(job_ids)} {feature_type} feature extraction jobs")
     elif dry_run:
         print(f"\n[DRY RUN] Would have submitted {len(subjects) * len(run_list)} jobs")
+
+
+def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
+                    space="sensor", mode="univariate", n_permutations=1000,
+                    no_balance=False, n_jobs=-1, continue_on_error=False,
+                    combine_features=False, importances=False, label=None,
+                    dry_run=False):
+    """Submit classification jobs to SLURM.
+
+    One sbatch job per feature when --combine-features is OFF (parallel jobs).
+    A single sbatch job covering all features when --combine-features is ON.
+    """
+    from datetime import datetime
+    from code.classification.run_classification import expand_feature_set
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+
+    print(f"\n[SLURM Mode] Submitting classification jobs to cluster\n")
+
+    config = load_config()
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+
+    classification_resources = slurm_config.get("classification", {})
+    if not classification_resources:
+        print("ERROR: No classification resources in config.yaml (computing.slurm.classification)")
+        return
+
+    # Resolve features the same way the CLI does
+    features = []
+    if feature_set:
+        features.extend(expand_feature_set(feature_set, config))
+    if feature:
+        features.extend(feature.split())
+    seen = set()
+    features = [f for f in features if not (f in seen or seen.add(f))]
+    if not features:
+        print("ERROR: no features to submit")
+        return
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "classification"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "classification"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build the list of (job_name, feature_args, feature_label, feature_list) tuples.
+    # Combined: one job covering all features. Otherwise: one job per feature.
+    if combine_features:
+        feature_args = "--feature " + " ".join(features)
+        job_label = label or f"combined-{len(features)}"
+        jobs = [(f"classify_{job_label}_{space}_{mode}_{clf}",
+                 feature_args, job_label, features)]
+    else:
+        jobs = [
+            (f"classify_{feat}_{space}_{mode}_{clf}",
+             f"--feature {feat}", feat, [feat])
+            for feat in features
+        ]
+
+    print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv}")
+    print(f"n_permutations: {n_permutations}  combine_features: {combine_features}")
+    print(f"Total jobs: {len(jobs)}")
+
+    job_ids = []
+    for job_name, feature_args, feat_label, feat_list in jobs:
+        context = {
+            "job_name": job_name,
+            "account": slurm_config["account"],
+            "partition": slurm_config.get("partition", ""),
+            "cpus": classification_resources["cpus"],
+            "mem": classification_resources["mem"],
+            "time": classification_resources["time"],
+            "log_dir": str(log_dir),
+            "venv_path": str(venv_path),
+            "project_root": str(PROJECT_ROOT),
+            "feature_label": feat_label,
+            "feature_args": feature_args,
+            "space": space,
+            "mode": mode,
+            "clf": clf,
+            "cv": cv,
+            "n_permutations": n_permutations,
+            "n_jobs": n_jobs,
+            "no_balance": no_balance,
+            "combine_features": combine_features,
+            "importances": importances,
+            "continue_on_error": continue_on_error,
+            "label": label,
+            "timestamp": timestamp,
+        }
+
+        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+        render_slurm_script("classification.sh.j2", context, output_path=script_path)
+
+        if not dry_run:
+            try:
+                jid = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
+                if jid:
+                    job_ids.append(jid)
+            except Exception as e:
+                print(f"  ✗ Failed to submit {job_name}: {e}")
+        else:
+            print(f"[DRY RUN] Would submit: {script_path.name}")
+
+    if job_ids:
+        manifest_path = log_dir / f"classification_manifest_{timestamp}.json"
+        save_job_manifest(job_ids, manifest_path, metadata={
+            "stage": "classification",
+            "space": space,
+            "mode": mode,
+            "clf": clf,
+            "cv": cv,
+            "n_permutations": n_permutations,
+            "combine_features": combine_features,
+            "features": features,
+            "timestamp": timestamp,
+        })
+        print(f"\n✓ Submitted {len(job_ids)} classification job(s); manifest: {manifest_path}")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would have submitted {len(jobs)} job(s)")
 
 
 # ==============================================================================
