@@ -3,6 +3,7 @@
 {% block job_commands %}
 # =============================================================================
 # Classification (IN vs OUT) — {{ feature_label }} on {{ space }}
+{% if n_chunks and n_chunks > 1 %}# chunk {{ chunk_idx }}/{{ n_chunks }} of spatial dim{% endif %}
 # =============================================================================
 
 echo "Classification configuration:"
@@ -14,7 +15,8 @@ echo "  CV strategy:     {{ cv }}"
 echo "  Permutations:    {{ n_permutations }}"
 echo "  Combined:        {{ combine_features }}"
 echo "  Importances:     {{ importances }}"
-echo ""
+{% if n_chunks and n_chunks > 1 %}echo "  Chunk:           {{ chunk_idx }} / {{ n_chunks }}"
+{% endif %}echo ""
 
 python -m code.classification.run_classification \
     {{ feature_args }} \
@@ -24,11 +26,13 @@ python -m code.classification.run_classification \
     --cv {{ cv }} \
     --n-permutations {{ n_permutations }} \
     --n-jobs {{ n_jobs }} \
+    --seed {{ seed }} \
     {% if no_balance %}--no-balance{% endif %} \
     {% if combine_features %}--combine-features{% endif %} \
     {% if importances %}--importances{% endif %} \
     {% if continue_on_error %}--continue-on-error{% endif %} \
-    {% if label %}--label {{ label }}{% endif %}
+    {% if label %}--label {{ label }}{% endif %} \
+    {% if n_chunks and n_chunks > 1 %}--n-chunks {{ n_chunks }} --chunk-idx {{ chunk_idx }}{% endif %}
 
 CLASSIFY_EXIT=$?
 

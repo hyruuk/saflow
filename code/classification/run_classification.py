@@ -462,6 +462,21 @@ def _slice_spatial(X, s):
     return X[:, s] if X.ndim == 2 else X[:, s, :]
 
 
+def chunk_range(n_spatial: int, n_chunks: int, chunk_idx: int) -> Tuple[int, int]:
+    """Return (start, stop) indices for chunk_idx of n_chunks over n_spatial.
+
+    Splits as evenly as possible. The first n_spatial % n_chunks chunks get one
+    extra unit so every spatial index lands in exactly one chunk.
+    """
+    if not (0 <= chunk_idx < n_chunks):
+        raise ValueError(f"chunk_idx={chunk_idx} out of range [0, {n_chunks})")
+    base, rem = divmod(n_spatial, n_chunks)
+    sizes = [base + 1 if i < rem else base for i in range(n_chunks)]
+    start = sum(sizes[:chunk_idx])
+    stop = start + sizes[chunk_idx]
+    return start, stop
+
+
 def _fit_full_and_get_importances(clf, X, y):
     """Fit on the full dataset and try to extract feature_importances_."""
     try:
@@ -640,6 +655,25 @@ def run_multivariate(
 # Persistence
 # ---------------------------------------------------------------------------
 
+def build_base_name(
+    feature_label: str,
+    space: str,
+    inout_bounds: Tuple[int, int],
+    clf_name: str,
+    cv_name: str,
+    mode: str,
+    combined: bool,
+) -> str:
+    base = (
+        f"feature-{feature_label}_space-{space}"
+        f"_inout-{inout_bounds_to_string(inout_bounds)}"
+        f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}"
+    )
+    if combined:
+        base += "_combined"
+    return base
+
+
 def save_results(
     output_dir: Path,
     feature_label: str,
@@ -652,24 +686,44 @@ def save_results(
     feature_list: List[str],
     results: Dict,
     metadata: Dict,
+    chunk_info: Optional[Dict] = None,
 ) -> Path:
     """Save NPZ scores + JSON metadata with provenance.
 
-    feature_label is what goes into the filename (single feature name, or a
-    composite tag like 'combined-N' for combined-feature runs). The full
-    ordered feature_list is recorded in the metadata JSON.
+    If chunk_info is provided, this is a partial result for one spatial chunk:
+    only `observed`, `perm_scores`, and `feature_importances` are stored; p-
+    values are deferred to the aggregation step. The filename gets a
+    ``_chunk-{idx}of{N}`` suffix.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    base = (
-        f"feature-{feature_label}_space-{space}"
-        f"_inout-{inout_bounds_to_string(inout_bounds)}"
-        f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}"
+    base = build_base_name(
+        feature_label, space, inout_bounds, clf_name, cv_name, mode, combined
     )
-    if combined:
-        base += "_combined"
+    if chunk_info is not None:
+        base += f"_chunk-{chunk_info['chunk_idx']}of{chunk_info['n_chunks']}"
 
     npz_payload: Dict[str, np.ndarray] = {}
-    if mode == "univariate":
+    summary: Dict[str, object] = {}
+
+    if chunk_info is not None:
+        # Partial output: just observed + perm_scores (and importances if any)
+        npz_payload.update(
+            observed=results["observed"],
+            perm_scores=results["perm_scores"],
+            spatial_start=np.array(chunk_info["start"]),
+            spatial_stop=np.array(chunk_info["stop"]),
+            n_spatial_total=np.array(chunk_info["n_spatial_total"]),
+        )
+        summary = {
+            "chunk_idx": chunk_info["chunk_idx"],
+            "n_chunks": chunk_info["n_chunks"],
+            "spatial_start": chunk_info["start"],
+            "spatial_stop": chunk_info["stop"],
+            "n_spatial_total": chunk_info["n_spatial_total"],
+            "max_score_in_chunk": float(results["observed"].max()),
+            "n_permutations": int(results["perm_scores"].shape[0]),
+        }
+    elif mode == "univariate":
         npz_payload.update(
             observed=results["observed"],
             perm_scores=results["perm_scores"],
@@ -715,6 +769,15 @@ def save_results(
         "data_metadata": metadata,
         "summary": summary,
     }
+    if chunk_info is not None:
+        meta_out["chunk"] = {
+            "chunk_idx": chunk_info["chunk_idx"],
+            "n_chunks": chunk_info["n_chunks"],
+            "spatial_start": chunk_info["start"],
+            "spatial_stop": chunk_info["stop"],
+            "n_spatial_total": chunk_info["n_spatial_total"],
+            "seed": chunk_info["seed"],
+        }
     meta_path = output_dir / f"{base}_metadata.json"
     meta_path.write_text(json.dumps(meta_out, indent=2))
 
@@ -782,6 +845,22 @@ def main():
         ),
     )
     parser.add_argument(
+        "--n-chunks",
+        type=int,
+        default=1,
+        help=(
+            "Split the spatial dimension into N chunks; this run only processes "
+            "the chunk indexed by --chunk-idx. Used for parallelizing one "
+            "classification across many SLURM tasks. Univariate mode only."
+        ),
+    )
+    parser.add_argument(
+        "--chunk-idx",
+        type=int,
+        default=0,
+        help="Zero-based index of the chunk this run will process (0..n_chunks-1).",
+    )
+    parser.add_argument(
         "--space",
         default="sensor",
         help="Analysis space: 'sensor', 'source', or atlas name (e.g. 'schaefer_400').",
@@ -835,6 +914,10 @@ def main():
         data_root / config["paths"]["features"] / f"classification_{args.space}" / "group"
     )
 
+    chunked = args.n_chunks > 1
+    if chunked and args.mode != "univariate":
+        raise SystemExit("--n-chunks only applies to mode=univariate")
+
     def _run_one(label: str, feature_list: List[str], X, y, groups, metadata):
         if not args.no_balance:
             X_b, y_b, g_b = balance_within_subject(X, y, groups, seed=args.seed)
@@ -844,6 +927,24 @@ def main():
             )
         else:
             X_b, y_b, g_b = X, y, groups
+
+        chunk_info = None
+        if chunked:
+            n_spatial_total = X_b.shape[1]
+            start, stop = chunk_range(n_spatial_total, args.n_chunks, args.chunk_idx)
+            logger.info(
+                f"Chunk {args.chunk_idx}/{args.n_chunks}: "
+                f"spatial[{start}:{stop}] of {n_spatial_total}"
+            )
+            X_b = X_b[:, start:stop] if X_b.ndim == 2 else X_b[:, start:stop, :]
+            chunk_info = {
+                "chunk_idx": args.chunk_idx,
+                "n_chunks": args.n_chunks,
+                "start": int(start),
+                "stop": int(stop),
+                "n_spatial_total": int(n_spatial_total),
+                "seed": int(args.seed),
+            }
 
         if args.mode == "univariate":
             results = run_univariate_with_tmax(
@@ -880,6 +981,7 @@ def main():
             feature_list=feature_list,
             results=results,
             metadata=metadata,
+            chunk_info=chunk_info,
         )
 
     failures: List[Tuple[str, str]] = []

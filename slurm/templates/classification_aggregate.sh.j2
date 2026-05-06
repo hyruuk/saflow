@@ -1,0 +1,28 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Classification chunk aggregation — {{ feature_label }} on {{ space }}
+# =============================================================================
+
+echo "Aggregating chunks for: {{ feature_label }} ({{ space }}, {{ mode }}, {{ clf }})"
+echo ""
+
+python -m code.classification.aggregate_chunks \
+    --feature {{ feature_label }} \
+    --space {{ space }} \
+    --mode {{ mode }} \
+    --clf {{ clf }} \
+    --cv {{ cv }} \
+    {% if combined %}--combined{% endif %} \
+    {% if delete_chunks %}--delete-chunks{% endif %}
+
+AGG_EXIT=$?
+if [ $AGG_EXIT -eq 0 ]; then
+    echo "Aggregation completed successfully"
+else
+    echo "Aggregation failed with exit code $AGG_EXIT"
+    exit $AGG_EXIT
+fi
+
+{% endblock %}

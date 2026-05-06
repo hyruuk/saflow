@@ -964,6 +964,7 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
+             n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT).
 
@@ -1020,6 +1021,10 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
             combine_features=combine_features,
             importances=importances,
             label=label,
+            n_chunks=n_chunks,
+            seed=seed,
+            aggregate=aggregate,
+            delete_chunks=delete_chunks,
             dry_run=dry_run,
         )
         return
@@ -1037,6 +1042,7 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
     cmd.extend(["--n-permutations", str(n_permutations)])
     cmd.extend(["--n-jobs", str(n_jobs)])
 
+    cmd.extend(["--seed", str(seed)])
     if no_balance:
         cmd.append("--no-balance")
     if continue_on_error:
@@ -1047,6 +1053,13 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
         cmd.append("--importances")
     if label:
         cmd.extend(["--label", label])
+    if n_chunks > 1:
+        print(
+            f"NOTE: --n-chunks={n_chunks} requires running each chunk separately. "
+            f"Use --slurm to fan out automatically, or pass --chunk-idx N to the "
+            f"underlying script directly."
+        )
+        return
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -1588,11 +1601,16 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
                     space="sensor", mode="univariate", n_permutations=1000,
                     no_balance=False, n_jobs=-1, continue_on_error=False,
                     combine_features=False, importances=False, label=None,
+                    n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
                     dry_run=False):
     """Submit classification jobs to SLURM.
 
-    One sbatch job per feature when --combine-features is OFF (parallel jobs).
-    A single sbatch job covering all features when --combine-features is ON.
+    Job fan-out:
+      - One classification per feature (or one per combined-feature run).
+      - When n_chunks > 1 (univariate only), each classification is split into
+        n_chunks parallel jobs over the spatial dimension. All chunks share the
+        same seed so the permutation y-shuffle sequence is identical, and an
+        aggregation job (afterok dependency) merges them into the final output.
     """
     from datetime import datetime
     from code.classification.run_classification import expand_feature_set
@@ -1610,6 +1628,10 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
     classification_resources = slurm_config.get("classification", {})
     if not classification_resources:
         print("ERROR: No classification resources in config.yaml (computing.slurm.classification)")
+        return
+
+    if n_chunks > 1 and mode != "univariate":
+        print("ERROR: --n-chunks requires --mode=univariate (multivariate has no spatial dim to split)")
         return
 
     # Resolve features the same way the CLI does
@@ -1634,68 +1656,125 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
     log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "classification"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build the list of (job_name, feature_args, feature_label, feature_list) tuples.
-    # Combined: one job covering all features. Otherwise: one job per feature.
+    # One classification per feature, OR one combined classification.
+    # Each entry: (label_for_filename, feature_args_for_cli, feature_list)
     if combine_features:
-        feature_args = "--feature " + " ".join(features)
-        job_label = label or f"combined-{len(features)}"
-        jobs = [(f"classify_{job_label}_{space}_{mode}_{clf}",
-                 feature_args, job_label, features)]
+        classifications = [(
+            label or f"combined-{len(features)}",
+            "--feature " + " ".join(features),
+            features,
+        )]
     else:
-        jobs = [
-            (f"classify_{feat}_{space}_{mode}_{clf}",
-             f"--feature {feat}", feat, [feat])
-            for feat in features
-        ]
+        classifications = [(feat, f"--feature {feat}", [feat]) for feat in features]
 
     print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv}")
     print(f"n_permutations: {n_permutations}  combine_features: {combine_features}")
-    print(f"Total jobs: {len(jobs)}")
+    print(f"Classifications: {len(classifications)}  chunks per classification: {n_chunks}")
 
-    job_ids = []
-    for job_name, feature_args, feat_label, feat_list in jobs:
-        context = {
-            "job_name": job_name,
-            "account": slurm_config["account"],
-            "partition": slurm_config.get("partition", ""),
-            "cpus": classification_resources["cpus"],
-            "mem": classification_resources["mem"],
-            "time": classification_resources["time"],
-            "log_dir": str(log_dir),
-            "venv_path": str(venv_path),
-            "project_root": str(PROJECT_ROOT),
-            "feature_label": feat_label,
-            "feature_args": feature_args,
-            "space": space,
-            "mode": mode,
-            "clf": clf,
-            "cv": cv,
-            "n_permutations": n_permutations,
-            "n_jobs": n_jobs,
-            "no_balance": no_balance,
-            "combine_features": combine_features,
-            "importances": importances,
-            "continue_on_error": continue_on_error,
-            "label": label,
-            "timestamp": timestamp,
-        }
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=classification_resources["cpus"],
+        mem=classification_resources["mem"],
+        time=classification_resources["time"],
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
 
-        script_path = script_dir / f"{job_name}_{timestamp}.sh"
-        render_slurm_script("classification.sh.j2", context, output_path=script_path)
+    all_job_ids = []
+    aggregator_job_ids = []
 
-        if not dry_run:
+    for feat_label, feature_args, feat_list in classifications:
+        chunk_indices = list(range(n_chunks))
+        chunk_job_ids = []
+
+        for chunk_idx in chunk_indices:
+            chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
+            job_name = f"classify_{feat_label}_{space}_{mode}_{clf}{chunk_suffix}"
+            context = {
+                **base_resources,
+                "job_name": job_name,
+                "feature_label": feat_label,
+                "feature_args": feature_args,
+                "space": space,
+                "mode": mode,
+                "clf": clf,
+                "cv": cv,
+                "n_permutations": n_permutations,
+                "n_jobs": n_jobs,
+                "no_balance": no_balance,
+                "combine_features": combine_features,
+                "importances": importances,
+                "continue_on_error": continue_on_error,
+                "label": label,
+                "n_chunks": n_chunks,
+                "chunk_idx": chunk_idx,
+                "seed": seed,
+                "timestamp": timestamp,
+            }
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script("classification.sh.j2", context, output_path=script_path)
+
+            if dry_run:
+                print(f"[DRY RUN] Would submit: {script_path.name}")
+                continue
+
             try:
                 jid = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
                 if jid:
-                    job_ids.append(jid)
+                    chunk_job_ids.append(jid)
+                    all_job_ids.append(jid)
             except Exception as e:
                 print(f"  ✗ Failed to submit {job_name}: {e}")
-        else:
-            print(f"[DRY RUN] Would submit: {script_path.name}")
 
-    if job_ids:
+        # Submit aggregation job with afterok dependency on this classification's chunks
+        if n_chunks > 1 and aggregate:
+            agg_job_name = f"aggregate_{feat_label}_{space}_{mode}_{clf}"
+            agg_context = {
+                **base_resources,
+                # Aggregation is light — one CPU, modest RAM, short walltime.
+                "cpus": 1,
+                "mem": "8G",
+                "time": "0:30:00",
+                "job_name": agg_job_name,
+                "feature_label": feat_label,
+                "space": space,
+                "mode": mode,
+                "clf": clf,
+                "cv": cv,
+                "combined": combine_features,
+                "delete_chunks": delete_chunks,
+                "timestamp": timestamp,
+            }
+            agg_script = script_dir / f"{agg_job_name}_{timestamp}.sh"
+            render_slurm_script("classification_aggregate.sh.j2", agg_context, output_path=agg_script)
+
+            if dry_run:
+                print(f"[DRY RUN] Would submit aggregator: {agg_script.name} "
+                      f"(afterok:{','.join(chunk_job_ids) if chunk_job_ids else '<chunks>'})")
+                continue
+
+            if not chunk_job_ids:
+                print(f"  ✗ Skipping aggregator for {feat_label}: no chunk jobs were submitted")
+                continue
+            try:
+                jid = submit_slurm_job(
+                    agg_script,
+                    job_name=agg_job_name,
+                    dependencies=chunk_job_ids,
+                    dep_type="afterok",
+                    dry_run=False,
+                )
+                if jid:
+                    aggregator_job_ids.append(jid)
+                    all_job_ids.append(jid)
+            except Exception as e:
+                print(f"  ✗ Failed to submit aggregator {agg_job_name}: {e}")
+
+    if all_job_ids:
         manifest_path = log_dir / f"classification_manifest_{timestamp}.json"
-        save_job_manifest(job_ids, manifest_path, metadata={
+        save_job_manifest(all_job_ids, manifest_path, metadata={
             "stage": "classification",
             "space": space,
             "mode": mode,
@@ -1703,12 +1782,49 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
             "cv": cv,
             "n_permutations": n_permutations,
             "combine_features": combine_features,
+            "n_chunks": n_chunks,
+            "aggregator_job_ids": aggregator_job_ids,
             "features": features,
             "timestamp": timestamp,
         })
-        print(f"\n✓ Submitted {len(job_ids)} classification job(s); manifest: {manifest_path}")
+        print(f"\n✓ Submitted {len(all_job_ids)} job(s) "
+              f"({len(aggregator_job_ids)} aggregator); manifest: {manifest_path}")
     elif dry_run:
-        print(f"\n[DRY RUN] Would have submitted {len(jobs)} job(s)")
+        n_total = len(classifications) * n_chunks + (
+            len(classifications) if n_chunks > 1 and aggregate else 0
+        )
+        print(f"\n[DRY RUN] Would have submitted {n_total} job(s)")
+
+
+@task
+def classify_aggregate(c, feature, space, clf="lda", cv="logo",
+                       mode="univariate", combined=False,
+                       delete_chunks=False, config="config.yaml"):
+    """Manually aggregate per-chunk classification outputs.
+
+    Use this if --aggregate=False was used at submission, or if the afterok
+    aggregator job failed and chunk files are still on disk.
+
+    Examples:
+        invoke analysis.classify-aggregate --feature=psd_alpha --space=sensor
+        invoke analysis.classify-aggregate --feature=combined-10 --space=schaefer_400 --combined
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.classification.aggregate_chunks",
+        "--feature", feature,
+        "--space", space,
+        "--mode", mode,
+        "--clf", clf,
+        "--cv", cv,
+        "--config", config,
+    ]
+    if combined:
+        cmd.append("--combined")
+    if delete_chunks:
+        cmd.append("--delete-chunks")
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 # ==============================================================================
@@ -1768,6 +1884,7 @@ stats.add_task(stats_psd_corrected, name="psd-corrected")
 analysis = Collection("analysis")
 analysis.add_task(statistics)
 analysis.add_task(classify)
+analysis.add_task(classify_aggregate, name="classify-aggregate")
 analysis.add_collection(stats)  # Nested: analysis.stats.*
 
 # Visualization tasks
