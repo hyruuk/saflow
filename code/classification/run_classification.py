@@ -82,6 +82,53 @@ def inout_bounds_to_string(bounds: Tuple[int, int]) -> str:
 # Feature loading from new npz format
 # ---------------------------------------------------------------------------
 
+FOOOF_FEATURES = ["fooof_exponent", "fooof_offset", "fooof_r_squared"]
+COMPLEXITY_METRICS = [
+    "lzc_median",
+    "entropy_permutation",
+    "entropy_spectral",
+    "entropy_sample",
+    "entropy_approximate",
+    "entropy_svd",
+    "fractal_higuchi",
+    "fractal_petrosian",
+    "fractal_katz",
+    "fractal_dfa",
+]
+
+
+def expand_feature_set(name: str, config: Dict) -> List[str]:
+    """Expand a feature-set name to a list of individual feature names.
+
+    Sets:
+        psds            -> psd_<band> for each band in config.features.frequency_bands
+        psds_corrected  -> psd_corrected_<band> for each band
+        fooof           -> fooof_exponent, fooof_offset, fooof_r_squared
+        complexity      -> complexity_<metric> for every npz key in COMPLEXITY_METRICS
+        all             -> union of fooof + psds + psds_corrected + complexity
+    """
+    bands = list(config.get("features", {}).get("frequency_bands", {}).keys())
+    if name == "psds":
+        return [f"psd_{b}" for b in bands]
+    if name == "psds_corrected":
+        return [f"psd_corrected_{b}" for b in bands]
+    if name == "fooof":
+        return list(FOOOF_FEATURES)
+    if name == "complexity":
+        return [f"complexity_{m}" for m in COMPLEXITY_METRICS]
+    if name == "all":
+        return (
+            list(FOOOF_FEATURES)
+            + [f"psd_{b}" for b in bands]
+            + [f"psd_corrected_{b}" for b in bands]
+            + [f"complexity_{m}" for m in COMPLEXITY_METRICS]
+        )
+    raise ValueError(
+        f"Unknown feature-set '{name}'. Choose: psds, psds_corrected, fooof, "
+        f"complexity, all."
+    )
+
+
 def parse_feature(feature: str) -> Tuple[str, str, Optional[str]]:
     """Map a feature name to (folder_prefix, file_suffix, sub_key).
 
@@ -547,12 +594,27 @@ def main():
     )
     parser.add_argument(
         "--feature",
-        required=True,
+        nargs="+",
+        default=None,
         help=(
-            "Feature name. Examples: fooof_exponent, psd_alpha, psd_corrected_alpha, "
-            "complexity_lzc_median, complexity_entropy_permutation, "
-            "complexity_fractal_higuchi."
+            "One or more feature names. Examples: fooof_exponent, psd_alpha, "
+            "psd_corrected_alpha, complexity_lzc_median. Pass any combination "
+            "(space-separated). Use --feature-set for shortcuts."
         ),
+    )
+    parser.add_argument(
+        "--feature-set",
+        default=None,
+        choices=["psds", "psds_corrected", "fooof", "complexity", "all"],
+        help=(
+            "Shortcut to run a family of features in one call. Combined with "
+            "--feature if both are given."
+        ),
+    )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="If a feature fails, log and continue with the next instead of exiting.",
     )
     parser.add_argument(
         "--space",
@@ -582,66 +644,94 @@ def main():
     config = load_config(Path(args.config))
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
 
+    # Resolve feature list from --feature and/or --feature-set
+    features: List[str] = []
+    if args.feature_set:
+        features.extend(expand_feature_set(args.feature_set, config))
+    if args.feature:
+        features.extend(args.feature)
+    # de-dupe while preserving order
+    seen = set()
+    features = [f for f in features if not (f in seen or seen.add(f))]
+    if not features:
+        raise SystemExit("Must pass --feature and/or --feature-set")
+
     logger.info("=" * 78)
     logger.info("CLASSIFICATION (IN vs OUT)")
     logger.info("=" * 78)
-    logger.info(f"feature={args.feature}  space={args.space}  mode={args.mode}")
-    logger.info(f"clf={args.clf}  cv={args.cv}  inout={inout_bounds}")
-    logger.info(f"n_permutations={args.n_permutations}  balance={not args.no_balance}")
+    logger.info(f"features ({len(features)}): {features}")
+    logger.info(f"space={args.space}  mode={args.mode}  clf={args.clf}  cv={args.cv}")
+    logger.info(f"inout={inout_bounds}  n_permutations={args.n_permutations}")
     logger.info("=" * 78)
 
-    X, y, groups, metadata = load_classification_data(
-        feature=args.feature,
-        space=args.space,
-        inout_bounds=inout_bounds,
-        config=config,
-    )
-
-    if not args.no_balance:
-        X, y, groups = balance_within_subject(X, y, groups, seed=args.seed)
-        logger.info(
-            f"Balanced: {len(y)} trials (IN={int((y == 0).sum())}, "
-            f"OUT={int((y == 1).sum())})"
-        )
-
     cv = get_cv_strategy(args.cv, n_splits=args.n_splits)
-
-    if args.mode == "univariate":
-        results = run_univariate_with_tmax(
-            X=X,
-            y=y,
-            groups=groups,
-            clf_factory=lambda: get_classifier(args.clf),
-            cv=cv,
-            n_permutations=args.n_permutations,
-            n_jobs=args.n_jobs,
-            seed=args.seed,
-        )
-    else:
-        results = run_multivariate(
-            X=X,
-            y=y,
-            groups=groups,
-            clf=get_classifier(args.clf),
-            cv=cv,
-            n_permutations=args.n_permutations,
-        )
-
     data_root = Path(config["paths"]["data_root"])
     output_dir = (
         data_root / config["paths"]["features"] / f"classification_{args.space}" / "group"
     )
-    save_results(
-        output_dir=output_dir,
-        feature=args.feature,
-        space=args.space,
-        inout_bounds=inout_bounds,
-        clf_name=args.clf,
-        cv_name=args.cv,
-        mode=args.mode,
-        results=results,
-        metadata=metadata,
-    )
+
+    failures: List[Tuple[str, str]] = []
+    for i, feat in enumerate(features, start=1):
+        logger.info("")
+        logger.info(f"[{i}/{len(features)}] feature: {feat}")
+        logger.info("-" * 78)
+        try:
+            X, y, groups, metadata = load_classification_data(
+                feature=feat,
+                space=args.space,
+                inout_bounds=inout_bounds,
+                config=config,
+            )
+
+            if not args.no_balance:
+                X, y, groups = balance_within_subject(X, y, groups, seed=args.seed)
+                logger.info(
+                    f"Balanced: {len(y)} trials (IN={int((y == 0).sum())}, "
+                    f"OUT={int((y == 1).sum())})"
+                )
+
+            if args.mode == "univariate":
+                results = run_univariate_with_tmax(
+                    X=X,
+                    y=y,
+                    groups=groups,
+                    clf_factory=lambda: get_classifier(args.clf),
+                    cv=cv,
+                    n_permutations=args.n_permutations,
+                    n_jobs=args.n_jobs,
+                    seed=args.seed,
+                )
+            else:
+                results = run_multivariate(
+                    X=X,
+                    y=y,
+                    groups=groups,
+                    clf=get_classifier(args.clf),
+                    cv=cv,
+                    n_permutations=args.n_permutations,
+                )
+
+            save_results(
+                output_dir=output_dir,
+                feature=feat,
+                space=args.space,
+                inout_bounds=inout_bounds,
+                clf_name=args.clf,
+                cv_name=args.cv,
+                mode=args.mode,
+                results=results,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.error(f"Feature '{feat}' failed: {exc}", exc_info=True)
+            failures.append((feat, str(exc)))
+            if not args.continue_on_error:
+                raise
+
+    if failures:
+        logger.warning(f"{len(failures)}/{len(features)} feature(s) failed:")
+        for f, msg in failures:
+            logger.warning(f"  - {f}: {msg}")
 
 
 if __name__ == "__main__":

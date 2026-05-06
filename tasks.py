@@ -960,20 +960,25 @@ def stats_psd_corrected(c, space="sensor", correction="fdr", alpha=0.05, n_permu
 
 
 @task
-def classify(c, feature, clf="lda", cv="logo", space="sensor",
-             mode="univariate", n_permutations=1000, no_balance=False,
-             n_jobs=-1, slurm=False, dry_run=False):
+def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
+             space="sensor", mode="univariate", n_permutations=1000,
+             no_balance=False, n_jobs=-1, continue_on_error=False,
+             slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT).
 
     Modes:
       - univariate (default): per-channel/ROI LDA + shared-permutation t-max
       - multivariate: pooled features, single permutation_test_score
 
+    Feature-set shortcuts (loops over many features in one call):
+      psds, psds_corrected, fooof, complexity, all
+
     Examples:
         invoke analysis.classify --feature=fooof_exponent
-        invoke analysis.classify --feature=psd_alpha --clf=svm
-        invoke analysis.classify --feature=complexity_lzc_median --space=schaefer_400
-        invoke analysis.classify --feature=psd_corrected_alpha --mode=multivariate
+        invoke analysis.classify --feature="psd_alpha psd_theta"
+        invoke analysis.classify --feature-set=psds --space=sensor
+        invoke analysis.classify --feature-set=complexity --space=schaefer_400
+        invoke analysis.classify --feature-set=all --continue-on-error
     """
     print("=" * 80)
     print("Classification Analysis")
@@ -983,9 +988,16 @@ def classify(c, feature, clf="lda", cv="logo", space="sensor",
         print("ERROR: SLURM execution not yet implemented")
         return
 
+    if not feature and not feature_set:
+        print("ERROR: pass --feature and/or --feature-set")
+        return
+
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.classification.run_classification"]
-    cmd.extend(["--feature", feature])
+    if feature:
+        cmd.extend(["--feature"] + feature.split())
+    if feature_set:
+        cmd.extend(["--feature-set", feature_set])
     cmd.extend(["--clf", clf])
     cmd.extend(["--cv", cv])
     cmd.extend(["--space", space])
@@ -995,6 +1007,8 @@ def classify(c, feature, clf="lda", cv="logo", space="sensor",
 
     if no_balance:
         cmd.append("--no-balance")
+    if continue_on_error:
+        cmd.append("--continue-on-error")
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
