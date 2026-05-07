@@ -960,6 +960,81 @@ def stats_psd_corrected(c, space="sensor", correction="fdr", alpha=0.05, n_permu
 
 
 @task
+def stats_all(c, space="sensor", correction="tmax", alpha=0.05,
+              n_permutations=10000,
+              bands="delta theta alpha lobeta hibeta gamma1 gamma2 gamma3",
+              n_jobs=1, average_trials=True,
+              skip_psd=False, skip_psd_corrected=False,
+              skip_fooof=False, skip_complexity=False,
+              continue_on_error=True):
+    """Run every t-test family (PSD, PSD-corrected, FOOOF, complexity).
+
+    Defaults that differ from the per-family tasks:
+      --average-trials=True   (subject-level paired t-test)
+      --correction=tmax       (proper FWER control via permutation)
+      --n-permutations=10000  (matches the classification pipeline)
+      --bands=all 8 bands     (delta → gamma3, full coverage)
+
+    Skip an entire family with --skip-<family>. By default, a family that
+    fails (e.g. its features aren't on disk) just logs and continues to the
+    next; pass --no-continue-on-error to abort on first failure.
+
+    Examples:
+        invoke analysis.stats.all                          # sensor, defaults
+        invoke analysis.stats.all --space=schaefer_400 --skip-complexity
+        invoke analysis.stats.all --no-average-trials      # trial-level instead
+        invoke analysis.stats.all --correction=fdr --n-permutations=1000
+    """
+    families = []
+    if not skip_psd:
+        families.append(("psd",            lambda: stats_psd(
+            c, space=space, correction=correction, alpha=alpha,
+            n_permutations=n_permutations, bands=bands, n_jobs=n_jobs,
+            average_trials=average_trials)))
+    if not skip_psd_corrected:
+        families.append(("psd_corrected",  lambda: stats_psd_corrected(
+            c, space=space, correction=correction, alpha=alpha,
+            n_permutations=n_permutations, bands=bands, n_jobs=n_jobs,
+            average_trials=average_trials)))
+    if not skip_fooof:
+        families.append(("fooof",          lambda: stats_fooof(
+            c, space=space, correction=correction, alpha=alpha,
+            n_permutations=n_permutations, n_jobs=n_jobs,
+            average_trials=average_trials)))
+    if not skip_complexity:
+        families.append(("complexity",     lambda: stats_complexity(
+            c, space=space, correction=correction, alpha=alpha,
+            n_permutations=n_permutations)))
+
+    print("=" * 80)
+    print(f"analysis.stats.all  | space={space}  correction={correction}  "
+          f"α={alpha}  n_perm={n_permutations}")
+    print(f"                    | average_trials={average_trials}  "
+          f"families={[f for f, _ in families]}")
+    print("=" * 80)
+
+    failures = []
+    for fam, runner in families:
+        print(f"\n>>> family: {fam}")
+        try:
+            runner()
+        except Exception as exc:
+            failures.append((fam, str(exc)))
+            print(f"  ! family '{fam}' failed: {exc}")
+            if not continue_on_error:
+                raise
+
+    print("\n" + "=" * 80)
+    if failures:
+        print(f"Done with {len(failures)} failure(s):")
+        for fam, msg in failures:
+            print(f"  - {fam}: {msg}")
+    else:
+        print("All families completed.")
+    print("=" * 80)
+
+
+@task
 def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
@@ -1939,6 +2014,7 @@ pipeline.add_collection(features)  # Nested: pipeline.features.*
 
 # Statistics subcollection (under analysis)
 stats = Collection("stats")
+stats.add_task(stats_all, name="all")
 stats.add_task(stats_complexity, name="complexity")
 stats.add_task(stats_fooof, name="fooof")
 stats.add_task(stats_psd, name="psd")
