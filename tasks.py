@@ -789,39 +789,46 @@ def statistics(c, feature_type, space="sensor", test="paired_ttest",
 
 
 @task
-def stats_complexity(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000):
+def stats_complexity(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000,
+                     n_jobs=1, average_trials=True):
     """Run t-tests on complexity measures (IN vs OUT).
 
-    Runs paired t-tests comparing IN vs OUT attentional states for all
-    complexity metrics:
-    - LZC (Lempel-Ziv Complexity)
-    - Entropy measures (permutation, spectral, sample, approximate, SVD)
-    - Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
+    Tests every complexity sub-metric in the same per-feature schema as PSD/
+    FOOOF stats so they share the same unified viz path:
+    - lzc_median
+    - entropy_{permutation,spectral,sample,approximate,svd}
+    - fractal_{higuchi,petrosian,katz,dfa}
 
-    Outputs:
-    - Topographic figure: reports/figures/complexity_ttest_{correction}.png
-    - Numerical results: {data_root}/features/statistics_{space}/complexity_ttest_results.npz
+    Defaults to subject-level paired t-test (--average-trials). Pass
+    --no-average-trials for the trial-level independent t-test.
 
-    Examples:
-        invoke analysis.stats.complexity
-        invoke analysis.stats.complexity --correction=bonferroni
-        invoke analysis.stats.complexity --correction=permutation --n-permutations=5000
-        invoke analysis.stats.complexity --correction=none --alpha=0.01
+    Output: {data_root}/features/statistics_{space}/feature-complexity_*_results.npz
     """
+    test_label = "Paired T-tests (subject-level)" if average_trials else "Independent T-tests (trial-level)"
     print("=" * 80)
-    print("Complexity Statistics: IN vs OUT (Paired T-tests)")
+    print(f"Complexity Statistics: IN vs OUT ({test_label})")
     print(f"Space: {space}, Correction: {correction}, Alpha: {alpha}")
     print("=" * 80)
 
-    python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.statistics.run_complexity_stats"]
-    cmd.extend(["--space", space])
-    cmd.extend(["--correction", correction])
-    cmd.extend(["--alpha", str(alpha)])
-    cmd.extend(["--n-permutations", str(n_permutations)])
+    metrics = [
+        "lzc_median",
+        "entropy_permutation", "entropy_spectral", "entropy_sample",
+        "entropy_approximate", "entropy_svd",
+        "fractal_higuchi", "fractal_petrosian", "fractal_katz", "fractal_dfa",
+    ]
+    feature_types = [f"complexity_{m}" for m in metrics]
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+           "--feature-type", *feature_types,
+           "--space", space, "--test", "paired_ttest",
+           "--correction", correction, "--alpha", str(alpha),
+           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
+    if average_trials:
+        cmd.append("--average-trials")
+
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
 
 
 @task
@@ -850,25 +857,18 @@ def stats_fooof(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=
     print("=" * 80)
 
     python_exe = get_python_executable()
+    feature_types = ["fooof_exponent", "fooof_offset", "fooof_r_squared"]
 
-    # Run for each FOOOF parameter
-    fooof_params = ["fooof_exponent", "fooof_offset", "fooof_r_squared"]
+    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+           "--feature-type", *feature_types,
+           "--space", space, "--test", "paired_ttest",
+           "--correction", correction, "--alpha", str(alpha),
+           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
+    if average_trials:
+        cmd.append("--average-trials")
 
-    for param in fooof_params:
-        print(f"\n[{param}]")
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
-        cmd.extend(["--feature-type", param])
-        cmd.extend(["--space", space])
-        cmd.extend(["--test", "paired_ttest"])
-        cmd.extend(["--correction", correction])
-        cmd.extend(["--alpha", str(alpha)])
-        cmd.extend(["--n-permutations", str(n_permutations)])
-        cmd.extend(["--n-jobs", str(n_jobs)])
-        if average_trials:
-            cmd.append("--average-trials")
-
-        print(f"Running: {' '.join(cmd)}\n")
-        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
 
 
 @task
@@ -896,23 +896,18 @@ def stats_psd(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=10
     print("=" * 80)
 
     python_exe = get_python_executable()
-    band_list = bands.split()
+    feature_types = [f"psd_{b}" for b in bands.split()]
 
-    for band in band_list:
-        print(f"\n[psd_{band}]")
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
-        cmd.extend(["--feature-type", f"psd_{band}"])
-        cmd.extend(["--space", space])
-        cmd.extend(["--test", "paired_ttest"])
-        cmd.extend(["--correction", correction])
-        cmd.extend(["--alpha", str(alpha)])
-        cmd.extend(["--n-permutations", str(n_permutations)])
-        cmd.extend(["--n-jobs", str(n_jobs)])
-        if average_trials:
-            cmd.append("--average-trials")
+    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+           "--feature-type", *feature_types,
+           "--space", space, "--test", "paired_ttest",
+           "--correction", correction, "--alpha", str(alpha),
+           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
+    if average_trials:
+        cmd.append("--average-trials")
 
-        print(f"Running: {' '.join(cmd)}\n")
-        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
 
 
 @task
@@ -940,23 +935,18 @@ def stats_psd_corrected(c, space="sensor", correction="fdr", alpha=0.05, n_permu
     print("=" * 80)
 
     python_exe = get_python_executable()
-    band_list = bands.split()
+    feature_types = [f"psd_corrected_{b}" for b in bands.split()]
 
-    for band in band_list:
-        print(f"\n[psd_corrected_{band}]")
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
-        cmd.extend(["--feature-type", f"psd_corrected_{band}"])
-        cmd.extend(["--space", space])
-        cmd.extend(["--test", "paired_ttest"])
-        cmd.extend(["--correction", correction])
-        cmd.extend(["--alpha", str(alpha)])
-        cmd.extend(["--n-permutations", str(n_permutations)])
-        cmd.extend(["--n-jobs", str(n_jobs)])
-        if average_trials:
-            cmd.append("--average-trials")
+    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+           "--feature-type", *feature_types,
+           "--space", space, "--test", "paired_ttest",
+           "--correction", correction, "--alpha", str(alpha),
+           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
+    if average_trials:
+        cmd.append("--average-trials")
 
-        print(f"Running: {' '.join(cmd)}\n")
-        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
 
 
 @task
