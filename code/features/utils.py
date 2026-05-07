@@ -10,12 +10,70 @@ Date: 2026-01-31
 """
 
 import logging
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+def compute_bad_trial_mask(
+    onsets: np.ndarray,
+    tmin: float,
+    tmax: float,
+    annotations,
+    bad_prefix: str = "BAD_",
+) -> np.ndarray:
+    """Flag trials whose epoch window overlaps any BAD_* annotation.
+
+    A trial spans [onset + tmin, onset + tmax] in seconds. A BAD_* annotation
+    spans [annot.onset, annot.onset + annot.duration]. The trial is flagged
+    if the two intervals overlap at all (matches mne.Epochs reject_by_annotation
+    behaviour: events landing inside a BAD region are dropped).
+
+    Parameters
+    ----------
+    onsets : np.ndarray
+        Trial event onsets in seconds, shape (n_trials,).
+    tmin, tmax : float
+        Epoch window relative to onset (seconds).
+    annotations : mne.Annotations or None
+        Annotations from the cleaned raw recording. If None or empty, every
+        trial is considered good.
+    bad_prefix : str
+        Annotations whose description starts with this prefix are treated as
+        bad. Defaults to ``"BAD_"`` (catches BAD_AR2 and any other BAD_*).
+
+    Returns
+    -------
+    bad_mask : np.ndarray
+        Boolean array of length n_trials, True where the trial overlaps a
+        BAD_* annotation.
+    """
+    n = len(onsets)
+    bad_mask = np.zeros(n, dtype=bool)
+    if annotations is None or len(annotations) == 0:
+        return bad_mask
+
+    descs = np.asarray(annotations.description)
+    is_bad = np.array([d.startswith(bad_prefix) for d in descs], dtype=bool)
+    if not is_bad.any():
+        return bad_mask
+
+    bad_starts = np.asarray(annotations.onset)[is_bad]
+    bad_ends = bad_starts + np.asarray(annotations.duration)[is_bad]
+
+    trial_starts = onsets + tmin
+    trial_ends = onsets + tmax
+
+    # Overlap test: trial_end > bad_start AND trial_start < bad_end
+    # Vectorise across (n_trials, n_bad).
+    overlaps = (trial_ends[:, None] > bad_starts[None, :]) & (
+        trial_starts[:, None] < bad_ends[None, :]
+    )
+    bad_mask = overlaps.any(axis=1)
+    return bad_mask
 
 
 def segment_spatial_temporal_data(
@@ -24,6 +82,7 @@ def segment_spatial_temporal_data(
     sfreq: float,
     tmin: float = 0.426,
     tmax: float = 1.278,
+    annotations=None,
 ) -> Tuple[np.ndarray, pd.DataFrame]:
     """Segment continuous data based on events.
 
@@ -41,13 +100,20 @@ def segment_spatial_temporal_data(
         Start time of epoch relative to event onset, in seconds
     tmax : float
         End time of epoch relative to event onset, in seconds
+    annotations : mne.Annotations or None
+        Annotations from the cleaned raw recording. If provided, each trial
+        is tagged with a ``bad_ar2`` boolean in the returned metadata
+        indicating whether its epoch window overlaps a BAD_* annotation.
+        Trials are kept either way — comparative analyses are responsible
+        for filtering on ``bad_ar2`` at load time.
 
     Returns
     -------
     segmented_array : np.ndarray
         Segmented data, shape (n_trials, n_spatial, n_samples_per_trial)
     trial_metadata : pd.DataFrame
-        Metadata for each segmented trial
+        Metadata for each segmented trial. Includes a ``bad_ar2`` column
+        when ``annotations`` is supplied (always False when not).
     """
     logger.info(f"Segmenting continuous data (tmin={tmin}, tmax={tmax})")
 
@@ -82,7 +148,20 @@ def segment_spatial_temporal_data(
     segmented_array = np.array(segmented_array)
     trial_metadata = pd.DataFrame(trial_metadata_list).reset_index(drop=True)
 
-    logger.info(f"Segmented {len(segmented_array)} trials from continuous data")
+    # Tag bad trials (BAD_* annotations from autoreject second pass).
+    onsets = trial_metadata["onset"].to_numpy(dtype=float) if len(trial_metadata) else np.empty(0)
+    bad_mask = compute_bad_trial_mask(
+        onsets=onsets,
+        tmin=tmin,
+        tmax=tmax,
+        annotations=annotations,
+    )
+    trial_metadata["bad_ar2"] = bad_mask
+
+    logger.info(
+        f"Segmented {len(segmented_array)} trials from continuous data "
+        f"({int(bad_mask.sum())} flagged bad_ar2)"
+    )
     logger.debug(f"Segmented array shape: {segmented_array.shape}")
 
     return segmented_array, trial_metadata

@@ -39,6 +39,7 @@ import pandas as pd
 
 from code.features.loaders import load_data
 from code.features.utils import segment_spatial_temporal_data
+from code.utils.annotations import load_clean_raw_annotations
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
 
@@ -54,6 +55,7 @@ def compute_welch_psd_from_continuous(
     tmin: float = 0.426,
     tmax: float = 1.278,
     n_jobs: int = -1,
+    annotations=None,
 ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """Compute Welch PSD from continuous data (space-agnostic).
 
@@ -96,6 +98,7 @@ def compute_welch_psd_from_continuous(
         sfreq=sfreq,
         tmin=tmin,
         tmax=tmax,
+        annotations=annotations,
     )
 
     logger.info(f"Segmented data shape: {segmented_data.shape}")
@@ -412,6 +415,15 @@ def main() -> int:
     events_df = pd.read_csv(events_path, sep="\t")
     logger.info(f"Loaded {len(events_df)} events from {events_path}")
 
+    # Load BAD_* annotations from the cleaned raw recording so the segmenter
+    # can tag trials overlapping autoreject-rejected periods. PSDs are still
+    # computed for all trials; the flag is consumed by comparative analyses.
+    annotations = load_clean_raw_annotations(
+        subject=args.subject,
+        run=args.run,
+        config=config,
+    )
+
     # Resolve Welch parameters from config if not given on CLI
     sfreq = spatial_data.sfreq
     n_fft = cli_n_fft
@@ -438,6 +450,7 @@ def main() -> int:
         tmin=tmin,
         tmax=tmax,
         n_jobs=args.n_jobs,
+        annotations=annotations,
     )
 
     # Save PSDs

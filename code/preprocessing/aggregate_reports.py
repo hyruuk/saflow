@@ -127,6 +127,7 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
 
         ar1 = p.get("autoreject_first_pass", {})
         ar2 = p.get("autoreject_second_pass", {})
+        bad_chans = p.get("bad_channels", {}) or {}
         threshold = p.get("threshold_detection", {})
         ica = p.get("ica", {})
         three_way = p.get("three_way_comparison", {})
@@ -211,6 +212,9 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "isi_mean": isi_mean,
             "isi_std": isi_std,
             "pre_ar2_outliers": _safe_get(pre_ar2, "n_outliers"),
+            "bad_channels_n": int(bad_chans.get("n_bad", 0)) if isinstance(bad_chans, dict) else 0,
+            "bad_channels_names": list(bad_chans.get("names", [])) if isinstance(bad_chans, dict) else [],
+            "bad_channels_threshold": bad_chans.get("threshold") if isinstance(bad_chans, dict) else None,
         })
 
     # Compute summary statistics from complete runs
@@ -929,6 +933,7 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         <th>Run</th><th>Stim Epochs</th>
         <th>Freq</th><th>Rare</th><th>Resp</th>
         <th>ISI Mean</th>
+        <th>Bad Chans</th>
         <th>AR1 Bad</th><th>AR1 %</th>
         <th>AR2 Bad</th><th>AR2 %</th>
         <th>Threshold %</th>
@@ -978,6 +983,14 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
         else:
             report_link = '<i>N/A</i>'
 
+        bad_chan_n = r.get("bad_channels_n") or 0
+        bad_chan_names = r.get("bad_channels_names") or []
+        bad_chan_cell = (
+            f'<span title="{", ".join(bad_chan_names)}">{int(bad_chan_n)}</span>'
+            if bad_chan_n
+            else "0"
+        )
+
         html += f"""<tr{row_style}>
             <td>{r['run']}</td>
             <td>{_fmt_int(r.get('n_stimulus_epochs'))}</td>
@@ -985,6 +998,7 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
             <td>{_fmt_int(r.get('n_rare'))}</td>
             <td>{_fmt_int(r.get('n_resp'))}</td>
             <td>{isi_mean}</td>
+            <td>{bad_chan_cell}</td>
             <td>{_fmt_int(r.get('ar1_n_bad'))}</td>
             <td>{_fmt(r.get('ar1_pct_bad'))}%</td>
             <td>{_fmt_int(r.get('ar2_n_bad'))}</td>

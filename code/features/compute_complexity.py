@@ -57,6 +57,7 @@ from joblib import Parallel, delayed
 # Local imports
 from code.features.loaders import load_data
 from code.features.utils import segment_spatial_temporal_data
+from code.utils.annotations import load_clean_raw_annotations
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
 from code.utils.validation import validate_subject, validate_run
@@ -335,6 +336,15 @@ def process_subject_run(
     tmin = config["analysis"]["epochs"]["tmin"]
     tmax = config["analysis"]["epochs"]["tmax"]
 
+    # Load BAD_* annotations from the cleaned raw recording so the segmenter
+    # can tag trials overlapping autoreject-rejected periods. Complexity is
+    # still computed for all trials; the flag is consumed downstream.
+    annotations = load_clean_raw_annotations(
+        subject=subject,
+        run=run,
+        config=config,
+    )
+
     # Segment data into epochs
     segmented_data, trial_metadata = segment_spatial_temporal_data(
         data=data,
@@ -342,6 +352,7 @@ def process_subject_run(
         sfreq=sfreq,
         tmin=tmin,
         tmax=tmax,
+        annotations=annotations,
     )
     # Shape: (n_epochs, n_channels, n_samples)
     logger.info(f"Segmented data shape: {segmented_data.shape}")

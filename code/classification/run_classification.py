@@ -166,8 +166,14 @@ def load_classification_data(
     inout_bounds: Tuple[int, int],
     config: Dict,
     subjects: Optional[List[str]] = None,
+    drop_bad_trials: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load per-trial feature data, split into IN/OUT using per-subject VTC.
+
+    IN/OUT thresholds are computed per subject from VTC over **all** trials
+    (including those flagged ``bad_ar2``). Trials flagged ``bad_ar2`` by the
+    autoreject second pass are dropped after masking when
+    ``drop_bad_trials=True`` (default).
 
     Args:
         feature: feature name (see parse_feature).
@@ -175,6 +181,7 @@ def load_classification_data(
         inout_bounds: (low_pct, high_pct) for IN/OUT VTC zones.
         config: loaded config.yaml dictionary.
         subjects: list of subject IDs; defaults to config["bids"]["subjects"].
+        drop_bad_trials: drop trials flagged ``bad_ar2`` (default True).
 
     Returns:
         X        : (n_trials, n_spatial)
@@ -209,6 +216,9 @@ def load_classification_data(
     spatial_names: Optional[List[str]] = None
     n_in_total = 0
     n_out_total = 0
+    n_bad_excluded = 0
+    per_subject: Dict[str, Dict[str, int]] = {}
+    bad_metadata_present = False
 
     for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading", unit="subj")):
         subj_dir = feature_root / f"sub-{subject}"
@@ -218,6 +228,7 @@ def load_classification_data(
         subj_data = []
         subj_vtc = []
         subj_task = []
+        subj_bad: List[np.ndarray] = []
 
         for run in runs:
             files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_suffix}"))
@@ -267,23 +278,58 @@ def load_classification_data(
             subj_vtc.append(np.asarray(meta["VTC_filtered"], dtype=float))
             subj_task.append(np.asarray(meta["task"]))
 
+            run_n = len(meta["VTC_filtered"])
+            if "bad_ar2" in meta:
+                subj_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
+            else:
+                subj_bad.append(np.zeros(run_n, dtype=bool))
+
         if not subj_data:
             continue
 
         subj_data = np.concatenate(subj_data, axis=0)
         subj_vtc = np.concatenate(subj_vtc)
         subj_task = np.concatenate(subj_task)
+        subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.zeros_like(subj_vtc, dtype=bool)
+        if subj_bad_arr.any():
+            bad_metadata_present = True
 
+        # IN/OUT thresholds anchored to the full VTC distribution (incl. bads)
         inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
         outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
 
         task_mask = subj_task == "correct_commission"
-        in_mask = task_mask & (subj_vtc <= inbound)
-        out_mask = task_mask & (subj_vtc >= outbound)
+        in_mask_full = task_mask & (subj_vtc <= inbound)
+        out_mask_full = task_mask & (subj_vtc >= outbound)
+        mid_mask_full = task_mask & ~in_mask_full & ~out_mask_full
+
+        n_bad_in = int((in_mask_full & subj_bad_arr).sum()) if drop_bad_trials else 0
+        n_bad_out = int((out_mask_full & subj_bad_arr).sum()) if drop_bad_trials else 0
+
+        if drop_bad_trials:
+            in_mask = in_mask_full & ~subj_bad_arr
+            out_mask = out_mask_full & ~subj_bad_arr
+        else:
+            in_mask = in_mask_full
+            out_mask = out_mask_full
 
         n_in = int(in_mask.sum())
         n_out = int(out_mask.sum())
+        per_subject[subject] = {
+            "n_total": int(len(subj_vtc)),
+            "n_in": n_in,
+            "n_out": n_out,
+            "n_mid": int(mid_mask_full.sum()),
+            "n_bad_in": n_bad_in,
+            "n_bad_out": n_bad_out,
+            "n_in_before_bad_filter": int(in_mask_full.sum()),
+            "n_out_before_bad_filter": int(out_mask_full.sum()),
+        }
         if n_in == 0 or n_out == 0:
+            logger.warning(
+                f"sub-{subject}: dropped — n_in={n_in}, n_out={n_out} "
+                f"(bad_in={n_bad_in}, bad_out={n_bad_out})"
+            )
             continue
 
         all_X.append(subj_data[in_mask])
@@ -292,9 +338,18 @@ def load_classification_data(
         all_groups.extend([subj_idx] * (n_in + n_out))
         n_in_total += n_in
         n_out_total += n_out
+        n_bad_excluded += n_bad_in + n_bad_out
 
     if not all_X:
         raise ValueError("No data loaded for any subject")
+
+    if drop_bad_trials and not bad_metadata_present:
+        logger.warning(
+            "drop_bad_trials=True but no bad_ar2 column was found in any "
+            "trial_metadata — feature files predate the bad-trial flag. "
+            "Run `python -m code.utils.backfill_bad_trials` to backfill, "
+            "or recompute features."
+        )
 
     X = np.concatenate(all_X, axis=0)
     y = np.array(all_y)
@@ -309,6 +364,10 @@ def load_classification_data(
         "n_spatial": int(X.shape[1]),
         "n_in": int(n_in_total),
         "n_out": int(n_out_total),
+        "n_bad_excluded": int(n_bad_excluded),
+        "drop_bad_trials": bool(drop_bad_trials),
+        "bad_ar2_metadata_present": bool(bad_metadata_present),
+        "per_subject": per_subject,
         "input_git_hashes": sorted(input_git_hashes),
     }
     if spatial_names is not None:
@@ -327,6 +386,7 @@ def load_combined_features(
     inout_bounds: Tuple[int, int],
     config: Dict,
     subjects: Optional[List[str]] = None,
+    drop_bad_trials: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load multiple features and stack along a new feature axis.
 
@@ -351,6 +411,7 @@ def load_combined_features(
             inout_bounds=inout_bounds,
             config=config,
             subjects=subjects,
+            drop_bad_trials=drop_bad_trials,
         )
         if y_ref is None:
             y_ref = y_f
@@ -883,6 +944,13 @@ def main():
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument(
+        "--keep-bad-trials",
+        action="store_true",
+        default=False,
+        help="Skip the bad_ar2 filter (keeps trials inside autoreject-rejected "
+             "BAD_AR2 windows). Default is to drop them.",
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -1000,6 +1068,7 @@ def main():
                 space=args.space,
                 inout_bounds=inout_bounds,
                 config=config,
+                drop_bad_trials=not args.keep_bad_trials,
             )
             _run_one(label, features, X, y, groups, metadata)
         except Exception as exc:
@@ -1018,6 +1087,7 @@ def main():
                     space=args.space,
                     inout_bounds=inout_bounds,
                     config=config,
+                    drop_bad_trials=not args.keep_bad_trials,
                 )
                 _run_one(feat, [feat], X, y, groups, metadata)
             except Exception as exc:

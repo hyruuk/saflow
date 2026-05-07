@@ -186,6 +186,7 @@ def load_all_features_batched(
     inout_bounds: Tuple[int, int],
     config: Dict,
     subjects: Optional[List[str]] = None,
+    drop_bad_trials: bool = True,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
     """Load several features sharing the same source files in one pass.
 
@@ -194,8 +195,15 @@ def load_all_features_batched(
     (subject, run) npz is opened exactly once; per-feature slices are
     extracted in memory.
 
+    IN/OUT thresholds are computed per subject from VTC over **all** trials
+    (including those flagged ``bad_ar2``). Bad trials are dropped *after*
+    masking so the percentile cuts stay anchored to the full distribution
+    even though the noisy trials never enter the t-test.
+
     Returns a dict mapping `feature_type` -> `(X, y, groups, metadata)`,
-    matching the shape returned by `load_all_features`.
+    matching the shape returned by `load_all_features`. ``metadata``
+    includes a ``per_subject`` breakdown of trial counts (n_in, n_out,
+    n_bad_in, n_bad_out, n_mid, n_total) plus aggregate ``n_bad_excluded``.
     """
     if not feature_types:
         raise ValueError("feature_types must be non-empty")
@@ -251,6 +259,9 @@ def load_all_features_batched(
     input_git_hashes: set = set()
     total_in = 0
     total_out = 0
+    total_bad_excluded = 0
+    per_subject: Dict[str, Dict[str, int]] = {}
+    bad_metadata_present = False
 
     for subj_idx, subject in enumerate(
         tqdm(subjects, desc="Loading subjects", unit="subj")
@@ -263,6 +274,7 @@ def load_all_features_batched(
         subj_data: Dict[str, List[np.ndarray]] = {ft: [] for ft in feature_types}
         subj_vtc: List[np.ndarray] = []
         subj_task: List[np.ndarray] = []
+        subj_bad: List[np.ndarray] = []
 
         for run in runs:
             files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_pattern}"))
@@ -324,6 +336,14 @@ def load_all_features_batched(
                 subj_vtc.append(np.array(meta["VTC_filtered"]))
                 subj_task.append(np.array(meta["task"]))
 
+                # bad_ar2 is an opt-in tag added by the segmenter / backfill.
+                # If absent, treat all trials as good and warn once.
+                run_n = len(meta["VTC_filtered"])
+                if "bad_ar2" in meta:
+                    subj_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
+                else:
+                    subj_bad.append(np.zeros(run_n, dtype=bool))
+
             finally:
                 npz_data.close()
 
@@ -335,16 +355,52 @@ def load_all_features_batched(
             subj_data[ft] = np.concatenate(subj_data[ft], axis=0)
         subj_vtc_arr = np.concatenate(subj_vtc)
         subj_task_arr = np.concatenate(subj_task)
+        subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.zeros_like(subj_vtc_arr, dtype=bool)
+        if subj_bad_arr.any():
+            bad_metadata_present = True
 
-        # Per-subject IN/OUT bounds (same as load_all_features)
+        # Per-subject IN/OUT bounds — computed on ALL trials (including bads)
+        # so the percentile cut is anchored to the full VTC distribution.
+        # Bad trials are dropped *after* masking.
         inbound = np.nanpercentile(subj_vtc_arr, inout_bounds[0])
         outbound = np.nanpercentile(subj_vtc_arr, inout_bounds[1])
         task_mask = subj_task_arr == "correct_commission"
-        in_mask = task_mask & (subj_vtc_arr <= inbound)
-        out_mask = task_mask & (subj_vtc_arr >= outbound)
+        in_mask_full = task_mask & (subj_vtc_arr <= inbound)
+        out_mask_full = task_mask & (subj_vtc_arr >= outbound)
+        mid_mask_full = task_mask & ~in_mask_full & ~out_mask_full
+
+        # Bookkeeping before bad-filter
+        n_in_pre = int(in_mask_full.sum())
+        n_out_pre = int(out_mask_full.sum())
+        n_mid = int(mid_mask_full.sum())
+        n_bad_in = int((in_mask_full & subj_bad_arr).sum()) if drop_bad_trials else 0
+        n_bad_out = int((out_mask_full & subj_bad_arr).sum()) if drop_bad_trials else 0
+
+        if drop_bad_trials:
+            in_mask = in_mask_full & ~subj_bad_arr
+            out_mask = out_mask_full & ~subj_bad_arr
+        else:
+            in_mask = in_mask_full
+            out_mask = out_mask_full
+
         n_in = int(in_mask.sum())
         n_out = int(out_mask.sum())
+        per_subject[subject] = {
+            "n_total": int(len(subj_vtc_arr)),
+            "n_in": n_in,
+            "n_out": n_out,
+            "n_mid": n_mid,
+            "n_bad_in": n_bad_in,
+            "n_bad_out": n_bad_out,
+            "n_in_before_bad_filter": n_in_pre,
+            "n_out_before_bad_filter": n_out_pre,
+        }
+
         if n_in == 0 or n_out == 0:
+            logger.warning(
+                f"sub-{subject}: dropped from analysis — n_in={n_in}, n_out={n_out} "
+                f"(after bad-filter: bad_in={n_bad_in}, bad_out={n_bad_out})"
+            )
             continue
 
         # Append IN then OUT for every feature (same trial order across features).
@@ -356,6 +412,7 @@ def load_all_features_batched(
         all_groups.extend([subj_idx] * (n_in + n_out))
         total_in += n_in
         total_out += n_out
+        total_bad_excluded += n_bad_in + n_bad_out
 
     if not all_y:
         raise ValueError("No data loaded from any subject")
@@ -379,6 +436,14 @@ def load_all_features_batched(
         except Exception as exc:
             logger.warning(f"Could not load ROI names for space '{space}': {exc}")
 
+    if drop_bad_trials and not bad_metadata_present:
+        logger.warning(
+            "drop_bad_trials=True but no bad_ar2 column was found in any "
+            "trial_metadata — feature files predate the bad-trial flag. "
+            "Run `python -m code.utils.backfill_bad_trials` to backfill, "
+            "or recompute features. Falling back to keeping all trials."
+        )
+
     out: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]] = {}
     for ft in feature_types:
         X = np.concatenate(per_feat_X[ft], axis=0)[np.newaxis, :, :]
@@ -390,6 +455,10 @@ def load_all_features_batched(
             "n_trials": int(len(y)),
             "n_in": total_in,
             "n_out": total_out,
+            "n_bad_excluded": total_bad_excluded,
+            "drop_bad_trials": bool(drop_bad_trials),
+            "bad_ar2_metadata_present": bool(bad_metadata_present),
+            "per_subject": per_subject,
             "input_git_hashes": sorted(input_git_hashes),
         }
         if spatial_names is not None:
@@ -403,7 +472,7 @@ def load_all_features_batched(
     logger.info(
         f"Batched load done: {len(feature_types)} feature(s), "
         f"{len(np.unique(groups))} subjects, {len(y)} trials each "
-        f"(IN={total_in}, OUT={total_out})"
+        f"(IN={total_in}, OUT={total_out}, bad_excluded={total_bad_excluded})"
     )
     return out
 
@@ -414,24 +483,41 @@ def load_all_features(
     inout_bounds: Tuple[int, int],
     config: Dict,
     subjects: Optional[List[str]] = None,
+    drop_bad_trials: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
-    """Load features from all subjects directly from npz files.
+    """Single-feature wrapper around :func:`load_all_features_batched`.
 
-    Args:
-        feature_type: Feature type to load (e.g., 'fooof_exponent', 'psd_alpha').
-        space: Analysis space ('sensor', 'source', 'atlas').
-        inout_bounds: Tuple of (lower_percentile, upper_percentile) for IN/OUT zones.
-        config: Configuration dictionary.
-        subjects: List of subject IDs to include. Defaults to None (all from config).
-
-    Returns:
-        Tuple containing:
-        - X: Feature data, shape (1, n_trials, n_spatial) for single features
-        - y: Labels (0=IN, 1=OUT), shape (n_trials,)
-        - groups: Subject indices, shape (n_trials,)
-        - metadata: Dictionary with trial info and loading parameters
+    Behaviour matches the batched loader (drops trials flagged ``bad_ar2``
+    by default, computes per-subject IN/OUT thresholds on all trials).
     """
-    from scipy import stats as scipy_stats
+    blocks = load_all_features_batched(
+        feature_types=[feature_type],
+        space=space,
+        inout_bounds=inout_bounds,
+        config=config,
+        subjects=subjects,
+        drop_bad_trials=drop_bad_trials,
+    )
+    return blocks[feature_type]
+
+
+def _load_all_features_legacy_unused(
+    feature_type: str,
+    space: str,
+    inout_bounds: Tuple[int, int],
+    config: Dict,
+    subjects: Optional[List[str]] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
+    """Legacy single-feature loader. Kept only as documentation for the
+    pre-bad-filter behaviour; not used anywhere. Will be removed once the
+    git history confirms no external imports."""
+    raise NotImplementedError(
+        "load_all_features now delegates to load_all_features_batched. "
+        "If you need the pre-filter behaviour, pass drop_bad_trials=False."
+    )
+
+    # --- unreachable original implementation kept below for reference ---
+    from scipy import stats as scipy_stats  # type: ignore[unused-ignore]
 
     # Get feature folder and file pattern
     feature_folder = get_feature_folder(config, feature_type, space)
@@ -629,62 +715,89 @@ def load_all_features(
     return X, y, groups, metadata
 
 
+def _subject_aggregate(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray,
+    aggregate: str,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Reduce trial-level X to (n_subjects, n_features, n_spatial) per condition.
+
+    ``aggregate`` is ``"median"`` (default) or ``"mean"``. Subjects missing
+    one of the conditions are dropped.
+    """
+    if aggregate not in ("median", "mean"):
+        raise ValueError(f"Unknown aggregate '{aggregate}'")
+    reducer = np.nanmedian if aggregate == "median" else np.nanmean
+
+    unique_subjects = np.unique(groups)
+    subj_in: List[np.ndarray] = []
+    subj_out: List[np.ndarray] = []
+    kept = []
+    for subj in unique_subjects:
+        subj_mask = groups == subj
+        in_mask = subj_mask & (y == 0)
+        out_mask = subj_mask & (y == 1)
+        if not (np.any(in_mask) and np.any(out_mask)):
+            continue
+        subj_in.append(reducer(X[:, in_mask, :], axis=1))
+        subj_out.append(reducer(X[:, out_mask, :], axis=1))
+        kept.append(subj)
+    return np.array(subj_in), np.array(subj_out), np.array(kept)
+
+
 def run_statistical_test(
     X: np.ndarray,
     y: np.ndarray,
     groups: np.ndarray,
     test_type: str = "paired_ttest",
     n_permutations: int = 10000,
-    avg: bool = False,
+    single_trials: bool = False,
+    aggregate: str = "median",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run statistical test, either on subject-averaged or trial-level data.
+    """Run group-level statistical test.
 
     Convention: OUT - IN direction. Positive t-values mean OUT > IN (red),
     negative t-values mean IN > OUT (blue).
 
-    Two modes controlled by the `avg` parameter:
-
-    - avg=False (default): Trial-level independent t-test (ttest_ind) with
-      optional permutations. All trials are treated as independent observations.
-      This matches the cc_saflow default behavior.
-
-    - avg=True: Subject-level averaging first, then paired or independent t-test
-      depending on test_type. This is the statistically correct approach for
-      repeated-measures designs.
+    Default mode: subject-level paired t-test on subject **medians** per
+    condition. This matches cc_saflow's `simple_contrast` family of tests
+    and is statistically appropriate for the repeated-measures design.
 
     Args:
         X: Feature data, shape (n_features, n_trials, n_spatial).
         y: Labels (0=IN, 1=OUT), shape (n_trials,).
         groups: Subject indices, shape (n_trials,).
-        test_type: Type of test ('paired_ttest', 'independent_ttest').
-            When avg=False, ttest_ind is always used regardless of this setting.
-        n_permutations: Number of permutations for trial-level ttest_ind
-            (used only when avg=False). Set to 0 to disable.
-        avg: If True, average trials within each subject before testing
-            (subject-level statistics). If False, run trial-level statistics
-            with ttest_ind (default, matches cc_saflow).
+        test_type: 'paired_ttest' (default) or 'independent_ttest'. Only
+            applies in subject-level mode.
+        n_permutations: Permutations for trial-level ttest_ind. Only used
+            when ``single_trials=True``. Set to 0 to disable.
+        single_trials: If True, treat all trials as independent observations
+            and run ttest_ind (legacy behaviour). Default False.
+        aggregate: 'median' (default) or 'mean'. The per-subject aggregation
+            statistic used in subject-level mode.
 
     Returns:
-        Tuple containing:
-        - contrast: Normalized contrast (IN-OUT)/OUT, shape (n_features, n_spatial)
-        - tvals: T-values, shape (n_features, n_spatial)
-        - pvals: P-values, shape (n_features, n_spatial)
+        contrast, tvals, pvals — each of shape (n_features, n_spatial).
     """
     from scipy import stats
 
     n_features = X.shape[0]
 
-    if not avg:
-        # --- Trial-level statistics (no subject averaging) ---
-        logger.info("Running trial-level independent t-test (avg=False)")
+    if single_trials:
+        # --- Trial-level statistics (no subject aggregation, legacy) ---
+        logger.info(
+            "Running trial-level independent t-test (single_trials=True). "
+            "Note: this mixes within- and between-subject variance and "
+            "is statistically NOT recommended for repeated-measures designs."
+        )
 
         in_mask = y == 0
         out_mask = y == 1
-        n_in = np.sum(in_mask)
-        n_out = np.sum(out_mask)
+        n_in = int(np.sum(in_mask))
+        n_out = int(np.sum(out_mask))
         logger.info(f"Trial counts: IN={n_in}, OUT={n_out}")
 
-        # Compute contrast from trial means
         # Convention: OUT - IN, so positive = OUT > IN (red), negative = IN > OUT (blue)
         grand_in = np.nanmean(X[:, in_mask, :], axis=1)
         grand_out = np.nanmean(X[:, out_mask, :], axis=1)
@@ -699,7 +812,6 @@ def run_statistical_test(
             logger.info(f"Using {n_permutations} permutations")
 
         for feat_idx in range(n_features):
-            # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
             t, p = stats.ttest_ind(
                 X[feat_idx, out_mask, :],
                 X[feat_idx, in_mask, :],
@@ -710,41 +822,34 @@ def run_statistical_test(
             pvals[feat_idx, :] = p
 
     else:
-        # --- Subject-level statistics (average then test) ---
-        logger.info(f"Running subject-level {test_type} (avg=True)")
+        # --- Subject-level statistics (median per subject + paired test) ---
+        logger.info(
+            f"Running subject-level {test_type} on per-subject {aggregate}s "
+            f"(single_trials=False)"
+        )
 
-        unique_subjects = np.unique(groups)
+        subj_in, subj_out, kept_subjects = _subject_aggregate(
+            X, y, groups, aggregate=aggregate
+        )
+        # subj_in / subj_out shape: (n_subjects, n_features, n_spatial)
+        logger.info(
+            f"Computed subject-level {aggregate}s for {len(kept_subjects)} "
+            f"of {len(np.unique(groups))} subjects"
+        )
 
-        subj_in = []
-        subj_out = []
-
-        for subj in unique_subjects:
-            subj_mask = groups == subj
-            in_mask = subj_mask & (y == 0)
-            out_mask = subj_mask & (y == 1)
-
-            if np.sum(in_mask) > 0 and np.sum(out_mask) > 0:
-                mean_in = np.nanmean(X[:, in_mask, :], axis=1)
-                mean_out = np.nanmean(X[:, out_mask, :], axis=1)
-                subj_in.append(mean_in)
-                subj_out.append(mean_out)
-
-        subj_in = np.array(subj_in)
-        subj_out = np.array(subj_out)
-
-        logger.info(f"Computed subject-level averages for {len(subj_in)} subjects")
-
-        # Convention: OUT - IN, so positive = OUT > IN (red), negative = IN > OUT (blue)
-        grand_in = np.nanmean(subj_in, axis=0)
-        grand_out = np.nanmean(subj_out, axis=0)
-        contrast = (grand_out - grand_in) / np.abs(grand_in)
+        # Convention: OUT - IN
+        grand_in = np.nanmedian(subj_in, axis=0) if aggregate == "median" else np.nanmean(subj_in, axis=0)
+        grand_out = np.nanmedian(subj_out, axis=0) if aggregate == "median" else np.nanmean(subj_out, axis=0)
+        # Guard the (corrected-PSD) case where grand_in lives near zero
+        # (residual log-power) — divide by max(|in|, eps) to avoid blow-ups.
+        denom = np.maximum(np.abs(grand_in), 1e-12)
+        contrast = (grand_out - grand_in) / denom
 
         tvals = np.zeros((n_features, X.shape[2]))
         pvals = np.zeros((n_features, X.shape[2]))
 
         if test_type == "paired_ttest":
             for feat_idx in range(n_features):
-                # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
                 t, p = stats.ttest_rel(
                     subj_out[:, feat_idx, :],
                     subj_in[:, feat_idx, :],
@@ -752,10 +857,8 @@ def run_statistical_test(
                 )
                 tvals[feat_idx, :] = t
                 pvals[feat_idx, :] = p
-
         elif test_type == "independent_ttest":
             for feat_idx in range(n_features):
-                # OUT first: positive t = OUT > IN (red), negative t = IN > OUT (blue)
                 t, p = stats.ttest_ind(
                     subj_out[:, feat_idx, :],
                     subj_in[:, feat_idx, :],
@@ -763,7 +866,6 @@ def run_statistical_test(
                 )
                 tvals[feat_idx, :] = t
                 pvals[feat_idx, :] = p
-
         else:
             raise ValueError(f"Unknown test type: {test_type}")
 
@@ -821,22 +923,28 @@ def apply_corrections(
     groups: Optional[np.ndarray] = None,
     n_permutations: int = 1000,
     n_jobs: int = -1,
+    aggregate: str = "median",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Apply multiple comparison correction.
 
+    For ``tmax`` the null distribution is built on subject-level paired
+    differences of the per-subject ``aggregate`` (median by default), so
+    it is the matched FWER control for the default subject-level paired
+    t-test in :func:`run_statistical_test`. (When the main test is run in
+    ``single_trials`` mode, prefer FDR — the tmax null built here is on a
+    different scale than a trial-level ``ttest_ind`` t.)
+
     Args:
-        pvals: P-values, shape (n_features, n_spatial).
-        tvals: T-values, shape (n_features, n_spatial).
-        correction: Correction method ('none', 'fdr', 'bonferroni', 'tmax').
-        alpha: Significance threshold.
-        X: Feature data for tmax (required if correction='tmax').
-        y: Labels for tmax (required if correction='tmax').
-        groups: Subject indices for tmax (required if correction='tmax').
-        n_permutations: Number of permutations for tmax.
-        n_jobs: Number of parallel jobs (-1 = all cores).
+        pvals, tvals: shape (n_features, n_spatial).
+        correction: 'none', 'fdr', 'bonferroni', 'tmax'.
+        X, y, groups: trial-level data + labels + subject indices.
+        n_permutations, n_jobs: tmax knobs.
+        aggregate: 'median' (default) or 'mean' — must match the main
+            test's aggregation to keep the test stat and the null
+            distribution on the same scale.
 
     Returns:
-        Tuple of (corrected_pvals, sig_mask).
+        (corrected_pvals, sig_mask).
     """
     from scipy import stats
 
@@ -856,27 +964,17 @@ def apply_corrections(
             logger.warning("Tmax correction requires X, y, groups. Falling back to FDR.")
             corrected = apply_fdr_correction(pvals, alpha, method="bh")
         else:
-            # Tmax permutation test
-            logger.info(f"Running tmax with {n_permutations} permutations (n_jobs={n_jobs})...")
+            logger.info(
+                f"Running tmax with {n_permutations} permutations on per-subject "
+                f"paired diffs of {aggregate}s (n_jobs={n_jobs})..."
+            )
 
-            # Get unique subjects and compute subject-level means
-            unique_subjects = np.unique(groups)
-            n_subjects = len(unique_subjects)
+            subj_in, subj_out, _kept = _subject_aggregate(
+                X, y, groups, aggregate=aggregate
+            )
+            subj_diffs = subj_out - subj_in  # (n_subjects, n_features, n_spatial)
+            n_subjects = subj_diffs.shape[0]
 
-            # Compute subject-level differences (OUT - IN)
-            subj_diffs = []
-            for subj in unique_subjects:
-                subj_mask = groups == subj
-                in_mask = subj_mask & (y == 0)
-                out_mask = subj_mask & (y == 1)
-                if np.sum(in_mask) > 0 and np.sum(out_mask) > 0:
-                    mean_in = np.nanmean(X[:, in_mask, :], axis=1)
-                    mean_out = np.nanmean(X[:, out_mask, :], axis=1)
-                    subj_diffs.append(mean_out - mean_in)
-
-            subj_diffs = np.array(subj_diffs)  # (n_subjects, n_features, n_spatial)
-
-            # Helper function for single permutation
             def _single_permutation(seed):
                 rng = np.random.RandomState(seed)
                 flip = rng.choice([-1, 1], size=n_subjects)
@@ -884,14 +982,12 @@ def apply_corrections(
                 perm_t, _ = stats.ttest_1samp(perm_diffs, 0, axis=0)
                 return np.nanmax(np.abs(perm_t))
 
-            # Build null distribution of max |t| with parallelization
             max_t_perm = Parallel(n_jobs=n_jobs)(
                 delayed(_single_permutation)(seed)
                 for seed in tqdm(range(n_permutations), desc="Permutations", unit="perm")
             )
             max_t_perm = np.array(max_t_perm)
 
-            # Compute corrected p-values
             corrected = np.zeros_like(tvals)
             for i in range(tvals.shape[0]):
                 for j in range(tvals.shape[1]):
@@ -923,6 +1019,7 @@ def save_statistical_results(
     effect_sizes: Dict[str, np.ndarray],
     metadata: Dict,
     config: Dict,
+    analysis_mode: str = "subject-trial-median",
 ) -> None:
     """Save statistical results with provenance metadata.
 
@@ -946,7 +1043,13 @@ def save_statistical_results(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     inout_str = inout_bounds_to_string(inout_bounds)
-    base_name = f"feature-{feature_type}_inout-{inout_str}_test-{test_type}"
+    # Bake the analysis path into the filename so Path-1 (subject-spectrum)
+    # and Path-2 (subject-trial-median / single-trials) results never
+    # overwrite each other for the same feature_type.
+    mode_tag = analysis_mode.replace("subject-", "subj-")
+    base_name = (
+        f"feature-{feature_type}_inout-{inout_str}_test-{test_type}_path-{mode_tag}"
+    )
 
     # Build dictionary of all numerical results
     results_dict = {
@@ -1066,14 +1169,52 @@ def main():
         help="Number of parallel jobs (-1 = all cores, 1 = no parallelization)",
     )
     parser.add_argument(
-        "--average-trials",
+        "--analysis-mode",
+        type=str,
+        default="subject-spectrum",
+        choices=["subject-spectrum", "subject-trial-median", "single-trials"],
+        help=(
+            "Analysis path:\n"
+            "  subject-spectrum (default, Path 1): per (subj, run, cond) "
+            "median PSD across good trials, fit FOOOF on the aggregated "
+            "spectrum, derive psd_<band> / psd_corrected_<band> / "
+            "fooof_<param>; mean across runs; paired t-test. Cleaner FOOOF "
+            "fits than per-trial. Required for psd_corrected_*.\n"
+            "  subject-trial-median: per-trial features (precomputed), "
+            "median-aggregate per subject × condition, paired t-test. Use "
+            "for complexity (always) and for cross-checking PSD-derived "
+            "stats against per-trial FOOOF.\n"
+            "  single-trials: legacy trial-level ttest_ind. Mixes within- "
+            "and between-subject variance. Not recommended."
+        ),
+    )
+    parser.add_argument(
+        "--single-trials",
         action="store_true",
         default=False,
-        help="Average trials within each subject before testing (subject-level "
-             "statistics with paired t-test). Default: trial-level ttest_ind.",
+        help="DEPRECATED alias for --analysis-mode single-trials.",
+    )
+    parser.add_argument(
+        "--aggregate",
+        type=str,
+        default="median",
+        choices=["median", "mean"],
+        help="Per-subject aggregation statistic for subject-trial-median "
+             "mode (ignored otherwise). 'median' (default) matches cc_saflow.",
+    )
+    parser.add_argument(
+        "--keep-bad-trials",
+        action="store_true",
+        default=False,
+        help="Skip the bad_ar2 filter (keeps trials inside autoreject-rejected "
+             "BAD_AR2 windows). Default is to drop them.",
     )
 
     args = parser.parse_args()
+
+    # Honour the deprecated alias.
+    if args.single_trials and args.analysis_mode == "subject-spectrum":
+        args.analysis_mode = "single-trials"
 
     # Load configuration
     config = load_config(Path(args.config))
@@ -1092,21 +1233,51 @@ def main():
     logger.info("=" * 80)
     logger.info(f"Feature types ({len(feature_types)}): {feature_types}")
     logger.info(f"Space: {args.space}")
-    logger.info(f"Averaging: {'subject-level' if args.average_trials else 'trial-level (no averaging)'}")
-    logger.info(f"Test: {args.test if args.average_trials else 'ttest_ind (trial-level)'}")
+    logger.info(f"Analysis mode: {args.analysis_mode}")
+    if args.analysis_mode == "single-trials":
+        logger.info("  (trial-level ttest_ind — legacy)")
+    elif args.analysis_mode == "subject-trial-median":
+        logger.info(f"  per-subject {args.aggregate} of per-trial features → paired {args.test}")
+    elif args.analysis_mode == "subject-spectrum":
+        logger.info("  per (subj, run, cond) median PSD → FOOOF on aggregate → mean across runs → paired t-test")
     logger.info(f"IN/OUT bounds: {inout_bounds}")
+    logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
     logger.info(f"Corrections: {args.correction}")
     logger.info(f"Alpha: {args.alpha}")
     logger.info("=" * 80)
 
-    # Load all requested features in a single pass over the source files.
-    logger.info("Loading features (batched)...")
-    feature_blocks = load_all_features_batched(
-        feature_types=feature_types,
-        space=args.space,
-        inout_bounds=inout_bounds,
-        config=config,
-    )
+    if args.analysis_mode == "subject-spectrum":
+        # Path 1: only PSD-derived families are meaningful here. Reject
+        # complexity_* up front so the user is not silently shifted off-mode.
+        unsupported = [
+            ft for ft in feature_types
+            if not (ft.startswith("psd_") or ft.startswith("fooof_"))
+        ]
+        if unsupported:
+            raise SystemExit(
+                f"--analysis-mode subject-spectrum only supports psd_*, "
+                f"psd_corrected_* and fooof_*. Got non-PSD: {unsupported}. "
+                f"Re-run those with --analysis-mode subject-trial-median."
+            )
+        from code.statistics.subject_spectrum import load_subject_spectrum_features
+        logger.info("Loading features (subject-spectrum)...")
+        feature_blocks = load_subject_spectrum_features(
+            feature_types=feature_types,
+            space=args.space,
+            inout_bounds=inout_bounds,
+            config=config,
+            drop_bad_trials=not args.keep_bad_trials,
+            n_jobs=args.n_jobs,
+        )
+    else:
+        logger.info("Loading features (batched)...")
+        feature_blocks = load_all_features_batched(
+            feature_types=feature_types,
+            space=args.space,
+            inout_bounds=inout_bounds,
+            config=config,
+            drop_bad_trials=not args.keep_bad_trials,
+        )
 
     for feat_idx, ft in enumerate(feature_types, start=1):
         X, y, groups, metadata = feature_blocks[ft]
@@ -1114,13 +1285,21 @@ def main():
         logger.info(f"[{feat_idx}/{len(feature_types)}] Testing: {ft}")
         logger.info("-" * 78)
 
+        # In subject-spectrum mode, X already carries one row per
+        # (subject, condition); aggregate is a no-op (each "trial" is
+        # already a subject-level value).
+        is_subject_spectrum = args.analysis_mode == "subject-spectrum"
+        eff_aggregate = "mean" if is_subject_spectrum else args.aggregate
+        eff_single_trials = args.analysis_mode == "single-trials"
+
         contrast, tvals, pvals = run_statistical_test(
             X=X,
             y=y,
             groups=groups,
             test_type=args.test,
             n_permutations=args.n_permutations,
-            avg=args.average_trials,
+            single_trials=eff_single_trials,
+            aggregate=eff_aggregate,
         )
 
         corrected_pvals, sig_mask = apply_corrections(
@@ -1133,10 +1312,21 @@ def main():
             groups=groups,
             n_permutations=args.n_permutations,
             n_jobs=args.n_jobs,
+            aggregate=eff_aggregate,
         )
         corrected_pvals_dict = {args.correction: corrected_pvals}
 
         effect_sizes = compute_all_effect_sizes(X=X, y=y, groups=groups)
+
+        # Surface the test configuration in the sidecar so each results
+        # file is self-describing (mode, aggregator, bad-filter status).
+        metadata = dict(metadata)
+        metadata["analysis_mode"] = args.analysis_mode
+        metadata["aggregate"] = eff_aggregate if not eff_single_trials else None
+        metadata["test"] = (
+            "ttest_ind" if eff_single_trials else args.test
+        )
+        metadata["drop_bad_trials"] = bool(not args.keep_bad_trials)
 
         save_statistical_results(
             output_dir=output_dir,
@@ -1150,6 +1340,7 @@ def main():
             effect_sizes=effect_sizes,
             metadata=metadata,
             config=config,
+            analysis_mode=args.analysis_mode,
         )
 
     # Visualization

@@ -51,11 +51,13 @@ METRICS = [
 def load_subject_data(
     npz_path: Path,
     metrics: List[str],
-) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray]:
+) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Load data from a single NPZ file efficiently.
 
     Returns:
-        Tuple of (data_dict, vtc, task)
+        Tuple of (data_dict, vtc, task, bad_ar2). When the npz predates
+        the bad-trial flag, ``bad_ar2`` is an all-False array of the
+        right length.
     """
     data = np.load(npz_path, allow_pickle=True)
     meta = data["trial_metadata"].item()
@@ -63,32 +65,56 @@ def load_subject_data(
     data_dict = {m: data[m] for m in metrics}
     vtc = np.array(meta["VTC_filtered"])
     task = np.array(meta["task"])
+    if "bad_ar2" in meta:
+        bad = np.asarray(meta["bad_ar2"], dtype=bool)
+    else:
+        bad = np.zeros(len(vtc), dtype=bool)
 
-    return data_dict, vtc, task
+    return data_dict, vtc, task, bad
 
 
-def compute_subject_means(
+def compute_subject_aggregates(
     data_root: Path,
     subject: str,
     runs: List[str],
     space: str,
     inout_bounds: Tuple[int, int],
     metrics: List[str],
-) -> Tuple[Optional[Dict[str, np.ndarray]], Optional[Dict[str, np.ndarray]], int, int]:
-    """Compute subject-level means for IN and OUT conditions (vectorized).
+    drop_bad_trials: bool = True,
+    aggregate: str = "median",
+) -> Tuple[
+    Optional[Dict[str, np.ndarray]],
+    Optional[Dict[str, np.ndarray]],
+    Dict[str, int],
+]:
+    """Per-subject IN/OUT aggregates for each complexity metric.
+
+    IN/OUT thresholds are computed on **all** trials (including bads).
+    Trials flagged ``bad_ar2`` are dropped after masking when
+    ``drop_bad_trials`` is True.
 
     Returns:
-        Tuple of (means_in, means_out, n_in, n_out)
+        (agg_in, agg_out, counts) where counts has n_in, n_out, n_mid,
+        n_bad_in, n_bad_out, n_total. agg_in/out are None if a subject
+        ends up empty in either condition after filtering.
     """
+    if aggregate not in ("median", "mean"):
+        raise ValueError(f"Unknown aggregate '{aggregate}'")
+    reducer = np.nanmedian if aggregate == "median" else np.nanmean
+
     complexity_dir = data_root / "features" / f"complexity_{space}"
     subj_dir = complexity_dir / f"sub-{subject}"
 
+    empty_counts = {
+        "n_total": 0, "n_in": 0, "n_out": 0, "n_mid": 0,
+        "n_bad_in": 0, "n_bad_out": 0,
+    }
     if not subj_dir.exists():
-        return None, None, 0, 0
+        return None, None, empty_counts
 
-    # Collect all data for this subject across runs
     all_vtc = []
     all_task = []
+    all_bad = []
     all_data = {m: [] for m in metrics}
 
     for run in runs:
@@ -97,42 +123,64 @@ def compute_subject_means(
         if not files:
             continue
 
-        data_dict, vtc, task = load_subject_data(files[0], metrics)
+        data_dict, vtc, task, bad = load_subject_data(files[0], metrics)
 
         all_vtc.append(vtc)
         all_task.append(task)
+        all_bad.append(bad)
         for m in metrics:
             all_data[m].append(data_dict[m])
 
     if not all_vtc:
-        return None, None, 0, 0
+        return None, None, empty_counts
 
-    # Concatenate across runs
     all_vtc = np.concatenate(all_vtc)
     all_task = np.concatenate(all_task)
+    all_bad_arr = np.concatenate(all_bad)
     for m in metrics:
         all_data[m] = np.concatenate(all_data[m], axis=0)
 
-    # Compute IN/OUT bounds for this subject
     inbound = np.nanpercentile(all_vtc, inout_bounds[0])
     outbound = np.nanpercentile(all_vtc, inout_bounds[1])
 
-    # Create masks (vectorized)
     task_mask = all_task == "correct_commission"
-    in_mask = task_mask & (all_vtc <= inbound)
-    out_mask = task_mask & (all_vtc >= outbound)
+    in_mask_full = task_mask & (all_vtc <= inbound)
+    out_mask_full = task_mask & (all_vtc >= outbound)
+    mid_mask_full = task_mask & ~in_mask_full & ~out_mask_full
 
-    n_in = np.sum(in_mask)
-    n_out = np.sum(out_mask)
+    n_bad_in = int((in_mask_full & all_bad_arr).sum()) if drop_bad_trials else 0
+    n_bad_out = int((out_mask_full & all_bad_arr).sum()) if drop_bad_trials else 0
 
-    if n_in == 0 or n_out == 0:
-        return None, None, n_in, n_out
+    if drop_bad_trials:
+        in_mask = in_mask_full & ~all_bad_arr
+        out_mask = out_mask_full & ~all_bad_arr
+    else:
+        in_mask = in_mask_full
+        out_mask = out_mask_full
 
-    # Compute means (vectorized)
-    means_in = {m: np.nanmean(all_data[m][in_mask], axis=0) for m in metrics}
-    means_out = {m: np.nanmean(all_data[m][out_mask], axis=0) for m in metrics}
+    counts = {
+        "n_total": int(len(all_vtc)),
+        "n_in": int(in_mask.sum()),
+        "n_out": int(out_mask.sum()),
+        "n_mid": int(mid_mask_full.sum()),
+        "n_bad_in": n_bad_in,
+        "n_bad_out": n_bad_out,
+    }
 
-    return means_in, means_out, n_in, n_out
+    if counts["n_in"] == 0 or counts["n_out"] == 0:
+        return None, None, counts
+
+    agg_in = {m: reducer(all_data[m][in_mask], axis=0) for m in metrics}
+    agg_out = {m: reducer(all_data[m][out_mask], axis=0) for m in metrics}
+
+    return agg_in, agg_out, counts
+
+
+# Backwards-compatible alias (older callers used compute_subject_means)
+def compute_subject_means(*args, **kwargs):
+    """Deprecated alias for :func:`compute_subject_aggregates`."""
+    agg_in, agg_out, counts = compute_subject_aggregates(*args, **kwargs)
+    return agg_in, agg_out, counts["n_in"], counts["n_out"]
 
 
 def run_paired_ttest(
@@ -323,6 +371,19 @@ def main():
                         help="Number of permutations (for permutation correction)")
     parser.add_argument("--metrics", nargs="+", default=None,
                         help="Specific metrics to analyze (default: all)")
+    parser.add_argument(
+        "--aggregate",
+        default="median",
+        choices=["median", "mean"],
+        help="Per-subject aggregation statistic (default: median, matches cc_saflow)",
+    )
+    parser.add_argument(
+        "--keep-bad-trials",
+        action="store_true",
+        default=False,
+        help="Skip the bad_ar2 filter (keeps trials inside autoreject-rejected "
+             "BAD_AR2 windows). Default is to drop them.",
+    )
     args = parser.parse_args()
 
     logger.info("=" * 60)
@@ -339,26 +400,43 @@ def main():
     logger.info(f"Space: {args.space}")
     logger.info(f"Correction: {args.correction}")
     logger.info(f"Alpha: {args.alpha}")
+    logger.info(f"Aggregate: {args.aggregate}")
+    logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
     logger.info(f"Subjects: {len(subjects)}")
 
     # Process subjects
-    logger.info("Computing subject-level means...")
+    logger.info(f"Computing subject-level {args.aggregate}s...")
     subj_means_in = []
     subj_means_out = []
-    total_in, total_out = 0, 0
+    total_in, total_out, total_bad_excluded = 0, 0, 0
+    per_subject: Dict[str, Dict[str, int]] = {}
 
     for subject in subjects:
-        means_in, means_out, n_in, n_out = compute_subject_means(
-            data_root, subject, runs, args.space, inout_bounds, metrics
+        agg_in, agg_out, counts = compute_subject_aggregates(
+            data_root, subject, runs, args.space, inout_bounds, metrics,
+            drop_bad_trials=not args.keep_bad_trials,
+            aggregate=args.aggregate,
         )
-        if means_in is not None:
-            subj_means_in.append(means_in)
-            subj_means_out.append(means_out)
-            total_in += n_in
-            total_out += n_out
-            logger.info(f"  sub-{subject}: {n_in} IN, {n_out} OUT")
+        per_subject[subject] = counts
+        if agg_in is not None:
+            subj_means_in.append(agg_in)
+            subj_means_out.append(agg_out)
+            total_in += counts["n_in"]
+            total_out += counts["n_out"]
+            total_bad_excluded += counts["n_bad_in"] + counts["n_bad_out"]
+            logger.info(
+                f"  sub-{subject}: {counts['n_in']} IN, {counts['n_out']} OUT "
+                f"(bad excluded: in={counts['n_bad_in']} out={counts['n_bad_out']})"
+            )
+        else:
+            logger.warning(
+                f"  sub-{subject}: dropped (n_in={counts['n_in']}, n_out={counts['n_out']})"
+            )
 
-    logger.info(f"Total: {len(subj_means_in)} subjects, {total_in} IN, {total_out} OUT trials")
+    logger.info(
+        f"Total: {len(subj_means_in)} subjects, {total_in} IN, {total_out} OUT trials "
+        f"(bad excluded: {total_bad_excluded})"
+    )
 
     # Run t-tests
     logger.info("Running paired t-tests...")
@@ -391,6 +469,9 @@ def main():
         "n_subjects": len(subj_means_in),
         "n_trials_in": total_in,
         "n_trials_out": total_out,
+        "n_bad_excluded": total_bad_excluded,
+        "aggregate": args.aggregate,
+        "drop_bad_trials": not args.keep_bad_trials,
     }
     for metric in results:
         save_dict[f"{metric}_tvals"] = results[metric]["tvals"]
@@ -399,7 +480,29 @@ def main():
         save_dict[f"{metric}_sig_mask"] = results[metric]["sig_mask"]
 
     np.savez_compressed(results_path, **save_dict)
+    # Companion JSON sidecar with the per-subject breakdown
+    import json as _json
+    sidecar = results_path.with_suffix("").with_suffix(".json")
+    sidecar = results_path.with_name(results_path.stem + "_metadata.json")
+    with open(sidecar, "w") as f:
+        _json.dump(
+            {
+                "correction": args.correction,
+                "alpha": args.alpha,
+                "aggregate": args.aggregate,
+                "drop_bad_trials": not args.keep_bad_trials,
+                "inout_bounds": list(inout_bounds),
+                "n_subjects": len(subj_means_in),
+                "n_trials_in": int(total_in),
+                "n_trials_out": int(total_out),
+                "n_bad_excluded": int(total_bad_excluded),
+                "per_subject": per_subject,
+            },
+            f,
+            indent=2,
+        )
     logger.info(f"Saved results to {results_path}")
+    logger.info(f"Saved metadata to {sidecar}")
 
     logger.info("=" * 60)
     logger.info("COMPLETE")
