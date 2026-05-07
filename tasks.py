@@ -1119,6 +1119,59 @@ def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
 
 
 @task
+def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
+             family=None, clf="lda", cv="logo", mode="univariate",
+             test="paired_ttest", correction="auto", alpha=0.05,
+             cmap=None, output_subdir=None, config="config.yaml"):
+    """Unified rows-of-maps viz (stats + classification, sensor + atlas).
+
+    One row of topomaps (sensor) or inflated-brain panels (source/atlas) per
+    feature family. Auto-discovers result files for the chosen metric and
+    prints exactly what to run when nothing is found.
+
+    Args:
+        metric: 'tval' | 'contrast' | 'roc_auc' (see code.visualization.metrics).
+        space: 'sensor', 'source', or atlas name (e.g., 'schaefer_400').
+        feature: space-separated feature names (e.g., 'psd_alpha psd_theta').
+        feature_set: shortcut family ('psds', 'psds_corrected', 'fooof',
+            'complexity', 'all').
+        family: filter rendering to one family when features span multiple.
+        clf, cv, mode: classification result filters.
+        test: statistics test filter.
+        correction: which p-value correction for the significance mask
+            ('auto', 'tmax', 'fdr_bh', 'bonferroni', 'uncorrected').
+        alpha: significance threshold for the mask.
+        cmap: override colormap (default: from metric).
+        output_subdir: subfolder under reports/figures/ (default: 'classification').
+
+    Examples:
+        invoke viz.maps --metric=roc_auc --space=sensor --feature-set=psds
+        invoke viz.maps --metric=roc_auc --space=schaefer_400 --feature-set=all
+        invoke viz.maps --metric=tval --space=sensor --feature=fooof_exponent
+        invoke viz.maps --metric=contrast --space=sensor --feature-set=psds
+    """
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.visualization.run_viz",
+           "--metric", metric, "--space", space,
+           "--clf", clf, "--cv", cv, "--mode", mode,
+           "--test", test, "--correction", correction,
+           "--alpha", str(alpha), "--config", config]
+    if feature:
+        cmd.extend(["--feature"] + feature.split())
+    if feature_set:
+        cmd.extend(["--feature-set", feature_set])
+    if family:
+        cmd.extend(["--family", family])
+    if cmap:
+        cmd.extend(["--cmap", cmap])
+    if output_subdir:
+        cmd.extend(["--output-subdir", output_subdir])
+
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def behavior(c, subject="07", run="4", inout_bounds="25 75", output=None, verbose=False):
     """Generate behavioral analysis figure.
 
@@ -2019,6 +2072,7 @@ analysis.add_collection(stats)  # Nested: analysis.stats.*
 # Visualization tasks
 viz = Collection("viz")
 viz.add_task(viz_stats, name="stats")
+viz.add_task(viz_maps, name="maps")
 viz.add_task(behavior)
 
 # SLURM job-management tasks
