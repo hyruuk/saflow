@@ -568,7 +568,7 @@ def generate_preprocessing_report(
 
     <h3>Globally Bad Channels (interpolated post-ICA)</h3>
     <ul>
-    <li><b>Threshold (AR1 bad-or-interp rate):</b> {f"{bad_chan_threshold*100:.0f}%" if bad_chan_threshold is not None else "n/a"}</li>
+    <li><b>Threshold (AR1 rejection rate, label==1 only):</b> {f"{bad_chan_threshold*100:.0f}%" if bad_chan_threshold is not None else "n/a"}</li>
     <li><b>Channels flagged:</b> {len(globally_bad_channels) if globally_bad_channels else 0}</li>
     <li><b>Names:</b> {", ".join(globally_bad_channels) if globally_bad_channels else "<i>none</i>"}</li>
     </ul>
@@ -1265,10 +1265,10 @@ def preprocess_run(
     if n_globally_bad:
         console.print(
             f"[yellow]\u26a0  {n_globally_bad} globally bad channels "
-            f"(>{bad_chan_threshold*100:.0f}% bad/interp in AR1): {globally_bad}[/yellow]"
+            f"(>{bad_chan_threshold*100:.0f}% rejected in AR1): {globally_bad}[/yellow]"
         )
         logger.info(
-            f"Globally bad channels (>{bad_chan_threshold*100:.0f}% bad/interp in AR1): "
+            f"Globally bad channels (>{bad_chan_threshold*100:.0f}% rejected in AR1): "
             f"{globally_bad}"
         )
     else:
@@ -1598,9 +1598,10 @@ def preprocess_run(
         "bad_channels": {
             "description": (
                 "Channels flagged as globally bad from AR1 reject_log "
-                "(bad-or-interp rate > threshold). Marked in raw.info['bads'] "
-                "before ICA, interpolated post-ICA. Eliminates trial-level "
-                "INTERP category from AR2."
+                "(label==1 rejection rate > threshold; interpolated label==2 "
+                "is NOT counted because it is AR's normal per-trial repair). "
+                "Marked in raw.info['bads'] before ICA, interpolated post-ICA. "
+                "Eliminates trial-level INTERP category from AR2."
             ),
             "threshold": bad_chan_threshold,
             "n_bad": int(n_globally_bad),

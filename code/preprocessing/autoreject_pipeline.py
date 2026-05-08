@@ -79,11 +79,18 @@ def find_globally_bad_channels(
     reject_log,
     threshold: float = 0.30,
 ) -> list:
-    """Identify channels with high bad/interp rate across epochs.
+    """Identify channels with a high *rejection* rate across epochs.
 
     Uses the ``labels`` matrix from an AutoReject reject_log
     (shape ``(n_epochs, n_channels)`` with ``0=good, 1=bad, 2=interpolated``)
-    to flag channels whose bad-or-interp rate exceeds ``threshold``.
+    to flag channels whose rejection rate exceeds ``threshold``.
+
+    Only ``label == 1`` (rejected by consensus) is counted. ``label == 2``
+    (interpolated by AutoReject in that epoch) is *not* counted — per-trial
+    interpolation is AutoReject's normal repair operation and a moderately
+    noisy but useful channel can have a high interp rate without being
+    globally broken. Including label 2 here over-flags massively (in this
+    dataset it produced 30–120 "bad" channels per subject out of 275).
 
     These channels are intended to be marked in ``raw.info['bads']`` *before*
     ICA fitting so that ICA does not learn the artifact pattern of a single
@@ -93,8 +100,8 @@ def find_globally_bad_channels(
 
     Args:
         reject_log: AutoReject ``RejectLog`` object from the first pass.
-        threshold: Fraction of epochs in which a channel must be bad or
-            interpolated to be flagged as globally bad. Default 0.30.
+        threshold: Fraction of epochs in which a channel must be rejected
+            (``label == 1``) to be flagged as globally bad. Default 0.30.
 
     Returns:
         List of channel names flagged as globally bad. Empty list when the
@@ -105,8 +112,7 @@ def find_globally_bad_channels(
     labels = np.asarray(reject_log.labels)
     if labels.size == 0:
         return []
-    bad_or_interp = (labels == 1) | (labels == 2)
-    bad_rate = bad_or_interp.mean(axis=0)
+    bad_rate = (labels == 1).mean(axis=0)
     ch_names = list(reject_log.ch_names)
     flagged = [
         ch_names[i] for i in range(len(ch_names)) if bad_rate[i] > threshold
