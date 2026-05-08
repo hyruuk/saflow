@@ -1310,7 +1310,18 @@ def preprocess_run(
         console.print(
             f"[yellow]\u23f3 Interpolating {n_globally_bad} bad channels in cleaned raw...[/yellow]"
         )
-        cleaned_raw.interpolate_bads(reset_bads=True, verbose=False)
+        # CTF MEG data in this dataset lacks headshape digitization (no
+        # FIFFV_POINT_EXTRA / FIFFV_POINT_EEG), so MNE's default
+        # `origin='auto'` fails to fit a sphere. Pass a fixed head-frame
+        # origin so spherical-spline interpolation runs deterministically.
+        try:
+            cleaned_raw.interpolate_bads(reset_bads=True, verbose=False)
+        except ValueError as e:
+            if "No digitization points found" not in str(e):
+                raise
+            cleaned_raw.interpolate_bads(
+                reset_bads=True, origin=(0.0, 0.0, 0.04), verbose=False
+            )
         logger.info(
             f"Interpolated {n_globally_bad} bad channels via spherical splines "
             f"(reset_bads=True)"
