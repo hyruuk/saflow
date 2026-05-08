@@ -254,6 +254,10 @@ def generate_preprocessing_report(
     eog_scores: np.ndarray = None,
     globally_bad_channels: list = None,
     bad_chan_threshold: float = None,
+    ar1_bad_channels: list = None,
+    ar2_bad_channels: list = None,
+    rescued_by_ica: list = None,
+    new_bad_post_ica: list = None,
 ) -> mne.Report:
     """Generate HTML report for preprocessing with three-way comparison.
 
@@ -566,12 +570,37 @@ def generate_preprocessing_report(
     {pre_ar2_html}
     {three_way_html}
 
-    <h3>Globally Bad Channels (interpolated post-ICA)</h3>
-    <ul>
-    <li><b>Threshold (AR1 rejection rate, label==1 only):</b> {f"{bad_chan_threshold*100:.0f}%" if bad_chan_threshold is not None else "n/a"}</li>
-    <li><b>Channels flagged:</b> {len(globally_bad_channels) if globally_bad_channels else 0}</li>
-    <li><b>Names:</b> {", ".join(globally_bad_channels) if globally_bad_channels else "<i>none</i>"}</li>
-    </ul>
+    <h3>Bad Channels</h3>
+    <p><b>Threshold (rejection rate, label==1 only):</b> {f"{bad_chan_threshold*100:.0f}%" if bad_chan_threshold is not None else "n/a"}</p>
+    <table border="1" style="border-collapse: collapse; width: 100%;">
+    <tr style="background-color: #f0f0f0;">
+        <th>Stage</th><th>Count</th><th>Channels</th><th>Action</th>
+    </tr>
+    <tr>
+        <td><b>AR1 (pre-ICA)</b></td>
+        <td>{len(ar1_bad_channels) if ar1_bad_channels else 0}</td>
+        <td>{", ".join(ar1_bad_channels) if ar1_bad_channels else "<i>none</i>"}</td>
+        <td>Excluded from ICA fit</td>
+    </tr>
+    <tr style="background-color: #d4edda;">
+        <td><b>Rescued by ICA</b></td>
+        <td>{len(rescued_by_ica) if rescued_by_ica else 0}</td>
+        <td>{", ".join(rescued_by_ica) if rescued_by_ica else "<i>none</i>"}</td>
+        <td>AR1-flagged but clean post-ICA</td>
+    </tr>
+    <tr style="background-color: #fff3cd;">
+        <td><b>New post-ICA</b></td>
+        <td>{len(new_bad_post_ica) if new_bad_post_ica else 0}</td>
+        <td>{", ".join(new_bad_post_ica) if new_bad_post_ica else "<i>none</i>"}</td>
+        <td>Revealed by AR2</td>
+    </tr>
+    <tr style="background-color: #f8d7da;">
+        <td><b>AR2 (post-ICA)</b></td>
+        <td>{len(ar2_bad_channels) if ar2_bad_channels else 0}</td>
+        <td>{", ".join(ar2_bad_channels) if ar2_bad_channels else "<i>none</i>"}</td>
+        <td>Interpolated on continuous signal</td>
+    </tr>
+    </table>
 
     <h3>ICA Components Removed</h3>
     <ul>
@@ -1250,36 +1279,38 @@ def preprocess_run(
     console.print(f"[green]\u2713 Will use {n_good}/{len(epochs_filt)} good epochs for ICA fitting[/green]")
 
     # ================================================================
-    # GLOBAL BAD-CHANNEL DETECTION (from AR1 stats)
+    # AR1 BAD-CHANNEL DETECTION (exclude-only \u2014 channels are not flagged
+    # as permanently bad here; they are only excluded from ICA fitting so
+    # the unmixing matrix is not contaminated by a single broken sensor.
+    # AR2 re-evaluates every channel post-ICA and makes the final call.)
     # ================================================================
-    bad_chan_cfg = config["preprocessing"].get("bad_channels", {"enabled": True, "threshold": 0.30})
-    bad_chan_threshold = float(bad_chan_cfg.get("threshold", 0.30))
+    bad_chan_cfg = config["preprocessing"].get("bad_channels", {"enabled": True, "threshold": 0.50})
+    bad_chan_threshold = float(bad_chan_cfg.get("threshold", 0.50))
     if bad_chan_cfg.get("enabled", True):
-        globally_bad = find_globally_bad_channels(
+        ar1_bad_channels = find_globally_bad_channels(
             reject_log_first, threshold=bad_chan_threshold
         )
     else:
-        globally_bad = []
+        ar1_bad_channels = []
 
-    n_globally_bad = len(globally_bad)
-    if n_globally_bad:
+    n_ar1_bad = len(ar1_bad_channels)
+    if n_ar1_bad:
         console.print(
-            f"[yellow]\u26a0  {n_globally_bad} globally bad channels "
-            f"(>{bad_chan_threshold*100:.0f}% rejected in AR1): {globally_bad}[/yellow]"
+            f"[yellow]\u26a0  {n_ar1_bad} channels excluded from ICA fitting "
+            f"(>{bad_chan_threshold*100:.0f}% rejected in AR1): {ar1_bad_channels}[/yellow]"
         )
         logger.info(
-            f"Globally bad channels (>{bad_chan_threshold*100:.0f}% rejected in AR1): "
-            f"{globally_bad}"
+            f"AR1 bad channels excluded from ICA "
+            f"(>{bad_chan_threshold*100:.0f}% rejection rate): {ar1_bad_channels}"
         )
     else:
-        console.print(f"[green]\u2713 No globally bad channels detected[/green]")
+        console.print(f"[green]\u2713 AR1: no channels above bad-channel threshold[/green]")
 
-    # Mark on every data structure that ICA / interpolation will see.
-    # MNE's ICA.fit ignores info['bads'] by default, so this prevents the
-    # bad sensors from contaminating the unmixing matrix.
+    # MNE's ICA.fit ignores info['bads'], so marking these here keeps them
+    # out of the unmixing matrix without committing to interpolation.
     for inst in (preproc, raw_filt, epochs_filt):
         existing = list(inst.info.get("bads", []))
-        merged = list(dict.fromkeys(existing + globally_bad))  # preserve order, dedupe
+        merged = list(dict.fromkeys(existing + ar1_bad_channels))
         inst.info["bads"] = merged
 
     # ================================================================
@@ -1303,45 +1334,20 @@ def preprocess_run(
         eog_threshold=ica_cfg.get("eog_threshold", 2.5),
     )
 
-    # ================================================================
-    # INTERPOLATE BAD CHANNELS POST-ICA
-    # ================================================================
-    if n_globally_bad:
-        console.print(
-            f"[yellow]\u23f3 Interpolating {n_globally_bad} bad channels in cleaned raw...[/yellow]"
-        )
-        # CTF MEG data in this dataset lacks headshape digitization (no
-        # FIFFV_POINT_EXTRA / FIFFV_POINT_EEG), so MNE's default
-        # `origin='auto'` fails to fit a sphere. Pass a fixed head-frame
-        # origin so spherical-spline interpolation runs deterministically.
-        try:
-            cleaned_raw.interpolate_bads(reset_bads=True, verbose=False)
-        except ValueError as e:
-            if "No digitization points found" not in str(e):
-                raise
-            cleaned_raw.interpolate_bads(
-                reset_bads=True, origin=(0.0, 0.0, 0.04), verbose=False
-            )
-        logger.info(
-            f"Interpolated {n_globally_bad} bad channels via spherical splines "
-            f"(reset_bads=True)"
-        )
-        console.print(
-            f"[green]\u2713 Interpolated bad channels \u2014 all {len(cleaned_raw.ch_names)} "
-            f"channels now treated as good[/green]"
-        )
+    # Restore AR1-flagged channels as good so AR2 re-evaluates them on the
+    # post-ICA data. AR2's verdict is what drives interpolation.
+    cleaned_raw.info["bads"] = []
 
     # ================================================================
-    # EPOCH FROM ICA-CLEANED CONTINUOUS (same events, no reject_dict)
+    # EPOCH FROM ICA-CLEANED CONTINUOUS (pre-interpolation \u2014 these feed AR2)
     # ================================================================
-    logger.info("Creating epochs from ICA-cleaned continuous data (Freq+Rare, no reject_dict)")
-    console.print(f"\n[yellow]\u23f3 Creating epochs from ICA-cleaned data (no reject_dict)...[/yellow]")
-    epochs_preproc = create_epochs(cleaned_raw, events_stim, event_id_stim, tmin, tmax, picks)
-    console.print(f"[green]\u2713 Created {len(epochs_preproc)} ICA-cleaned epochs (1:1 with AR1)[/green]")
+    logger.info("Creating epochs from ICA-cleaned continuous data for AR2 fit")
+    console.print(f"\n[yellow]\u23f3 Creating epochs from ICA-cleaned data for AR2...[/yellow]")
+    epochs_post_ica = create_epochs(cleaned_raw, events_stim, event_id_stim, tmin, tmax, picks)
+    console.print(f"[green]\u2713 Created {len(epochs_post_ica)} ICA-cleaned epochs[/green]")
 
-    # AR1 flags now map 1:1 to epochs_preproc (same events, same count)
-    assert len(epochs_preproc) == len(epochs_filt), (
-        f"Epoch count mismatch: epochs_preproc={len(epochs_preproc)} vs epochs_filt={len(epochs_filt)}"
+    assert len(epochs_post_ica) == len(epochs_filt), (
+        f"Epoch count mismatch: epochs_post_ica={len(epochs_post_ica)} vs epochs_filt={len(epochs_filt)}"
     )
 
     # ================================================================
@@ -1354,28 +1360,26 @@ def preprocess_run(
         console.print(f"[bold cyan]PRE-AR2 OUTLIER FILTER[/bold cyan]")
         console.print(f"[bold cyan]{'='*60}[/bold cyan]")
         ptp_multiplier = pre_ar2_cfg.get("ptp_multiplier", 10)
-        outlier_mask, pre_ar2_stats = pre_ar2_outlier_filter(epochs_preproc, ptp_multiplier)
+        outlier_mask, pre_ar2_stats = pre_ar2_outlier_filter(epochs_post_ica, ptp_multiplier)
         n_outliers = pre_ar2_stats["n_outliers"]
         if n_outliers > 0:
-            epochs_for_ar2 = epochs_preproc[~outlier_mask]
+            epochs_for_ar2 = epochs_post_ica[~outlier_mask]
             console.print(f"[green]\u2713 Removed {n_outliers} extreme outlier epochs before AR2[/green]")
         else:
-            epochs_for_ar2 = epochs_preproc
+            epochs_for_ar2 = epochs_post_ica
             console.print(f"[green]\u2713 No extreme outliers found[/green]")
     else:
-        epochs_for_ar2 = epochs_preproc
+        epochs_for_ar2 = epochs_post_ica
 
     # ================================================================
-    # SECOND AUTOREJECT PASS (fit only \u2014 flags bad epochs, no interpolation)
+    # SECOND AUTOREJECT PASS (fit only \u2014 single fit gives both bad-channel
+    # and bad-epoch verdicts. Channels above threshold get interpolated on
+    # the continuous signal; bad epochs become BAD_AR2 annotations.)
     # ================================================================
-    # Channels were already interpolated post-ICA, so AR2 only needs to flag
-    # whole bad epochs. No per-channel interpolation here, no `transform()`,
-    # no separate AR2-interpolated epochs file. Downstream tooling sees a
-    # binary trial flag (good vs bad_ar2), no INTERP category.
     console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
-    console.print(f"[bold cyan]SECOND AUTOREJECT PASS (FIT ONLY \u2014 FLAG BAD EPOCHS)[/bold cyan]")
+    console.print(f"[bold cyan]SECOND AUTOREJECT PASS (POST-ICA \u2014 CHANNELS + EPOCHS)[/bold cyan]")
     console.print(f"[bold cyan]{'='*60}[/bold cyan]")
-    logger.info("Running second AutoReject pass (fit only)")
+    logger.info("Running second AutoReject pass (fit only \u2014 channel + epoch detection)")
 
     ar_second, reject_log_second_raw = run_autoreject(
         epochs_for_ar2,
@@ -1387,14 +1391,78 @@ def preprocess_run(
 
     reject_log_second = reject_log_second_raw
     if outlier_mask is not None and np.any(outlier_mask):
-        ar2_flags_full = np.ones(len(epochs_preproc), dtype=bool)  # outliers bad by default
+        ar2_flags_full = np.ones(len(epochs_post_ica), dtype=bool)  # outliers bad by default
         non_outlier_indices = np.where(~outlier_mask)[0]
         ar2_flags_full[non_outlier_indices] = reject_log_second_raw.bad_epochs
     else:
         ar2_flags_full = reject_log_second_raw.bad_epochs
 
     n_ar2_bad = int(np.sum(ar2_flags_full))
-    console.print(f"[green]\u2713 AR2: {n_ar2_bad}/{len(epochs_preproc)} bad epochs flagged[/green]")
+    console.print(f"[green]\u2713 AR2: {n_ar2_bad}/{len(epochs_post_ica)} bad epochs flagged[/green]")
+
+    # ================================================================
+    # AR2 BAD-CHANNEL DETECTION + INTERPOLATION ON CONTINUOUS SIGNAL
+    # ================================================================
+    if bad_chan_cfg.get("enabled", True):
+        ar2_bad_channels = find_globally_bad_channels(
+            reject_log_second_raw, threshold=bad_chan_threshold
+        )
+    else:
+        ar2_bad_channels = []
+
+    n_ar2_bad_chans = len(ar2_bad_channels)
+    rescued_by_ica = sorted(set(ar1_bad_channels) - set(ar2_bad_channels))
+    new_bad_post_ica = sorted(set(ar2_bad_channels) - set(ar1_bad_channels))
+
+    if n_ar2_bad_chans:
+        console.print(
+            f"[yellow]\u26a0  {n_ar2_bad_chans} channels flagged by AR2 "
+            f"(>{bad_chan_threshold*100:.0f}% rejected post-ICA): {ar2_bad_channels}[/yellow]"
+        )
+        if rescued_by_ica:
+            console.print(
+                f"[green]\u2713 Rescued by ICA (AR1-flagged but clean post-ICA): {rescued_by_ica}[/green]"
+            )
+        if new_bad_post_ica:
+            console.print(
+                f"[yellow]  New bad channels revealed post-ICA: {new_bad_post_ica}[/yellow]"
+            )
+        logger.info(
+            f"AR2 bad channels: {ar2_bad_channels} "
+            f"(rescued by ICA: {rescued_by_ica}, new post-ICA: {new_bad_post_ica})"
+        )
+
+        cleaned_raw.info["bads"] = list(ar2_bad_channels)
+        console.print(
+            f"[yellow]\u23f3 Interpolating {n_ar2_bad_chans} bad channels in cleaned raw...[/yellow]"
+        )
+        # CTF MEG data lacks headshape digitization (no FIFFV_POINT_EXTRA /
+        # FIFFV_POINT_EEG), so MNE's default `origin='auto'` fails to fit a
+        # sphere. Pass a fixed head-frame origin as a fallback.
+        try:
+            cleaned_raw.interpolate_bads(reset_bads=True, verbose=False)
+        except ValueError as e:
+            if "No digitization points found" not in str(e):
+                raise
+            cleaned_raw.interpolate_bads(
+                reset_bads=True, origin=(0.0, 0.0, 0.04), verbose=False
+            )
+        logger.info(
+            f"Interpolated {n_ar2_bad_chans} AR2-flagged channels via spherical splines"
+        )
+        console.print(
+            f"[green]\u2713 Interpolated AR2 bad channels \u2014 all {len(cleaned_raw.ch_names)} "
+            f"channels now treated as good[/green]"
+        )
+    else:
+        console.print(f"[green]\u2713 AR2: no channels above bad-channel threshold[/green]")
+
+    # ================================================================
+    # RE-DERIVE FINAL EPOCHS FROM INTERPOLATED CONTINUOUS SIGNAL
+    # ================================================================
+    logger.info("Re-creating epochs from AR2-interpolated continuous data")
+    epochs_preproc = create_epochs(cleaned_raw, events_stim, event_id_stim, tmin, tmax, picks)
+    console.print(f"[green]\u2713 Final epochs: {len(epochs_preproc)} (post-ICA + AR2-interp)[/green]")
 
     # ================================================================
     # THRESHOLD-BASED DETECTION (data-driven or fixed)
@@ -1464,8 +1532,12 @@ def preprocess_run(
         pre_ar2_stats=pre_ar2_stats,
         ecg_scores=ecg_scores,
         eog_scores=eog_scores,
-        globally_bad_channels=globally_bad,
+        globally_bad_channels=ar2_bad_channels,
         bad_chan_threshold=bad_chan_threshold,
+        ar1_bad_channels=ar1_bad_channels,
+        ar2_bad_channels=ar2_bad_channels,
+        rescued_by_ica=rescued_by_ica,
+        new_bad_post_ica=new_bad_post_ica,
     )
 
     # ================================================================
@@ -1597,15 +1669,19 @@ def preprocess_run(
         "isi_statistics": isi_stats,
         "bad_channels": {
             "description": (
-                "Channels flagged as globally bad from AR1 reject_log "
-                "(label==1 rejection rate > threshold; interpolated label==2 "
-                "is NOT counted because it is AR's normal per-trial repair). "
-                "Marked in raw.info['bads'] before ICA, interpolated post-ICA. "
-                "Eliminates trial-level INTERP category from AR2."
+                "Two-stage bad-channel detection. AR1 channels (rejection rate "
+                "> threshold pre-ICA) are excluded from ICA fitting only. AR2 "
+                "re-evaluates every channel post-ICA; AR2-flagged channels are "
+                "interpolated on the continuous signal via spherical splines. "
+                "label==2 (per-trial AR interp) is NOT counted in either pass."
             ),
             "threshold": bad_chan_threshold,
-            "n_bad": int(n_globally_bad),
-            "names": list(globally_bad),
+            "ar1_excluded_from_ica": list(ar1_bad_channels),
+            "ar2_interpolated": list(ar2_bad_channels),
+            "rescued_by_ica": list(rescued_by_ica),
+            "new_bad_post_ica": list(new_bad_post_ica),
+            "n_ar1_excluded": int(n_ar1_bad),
+            "n_ar2_interpolated": int(n_ar2_bad_chans),
         },
         "ica": {
             "n_components_requested": ica_cfg.get("n_components", 0.99),
@@ -1629,9 +1705,12 @@ def preprocess_run(
         },
         "autoreject_second_pass": {
             "description": (
-                "Second pass (fit only) on the cleaned, bad-channel-interpolated "
-                "continuous signal. Flags whole bad epochs only — no per-channel "
-                "interpolation, no INTERP trial category."
+                "Second pass (fit only) on the post-ICA continuous signal "
+                "before bad-channel interpolation. The reject_log gives BOTH "
+                "the bad-channel verdict (interpolated downstream) and the "
+                "bad-epoch verdict (BAD_AR2 annotations on continuous signal). "
+                "Bad-epoch flags are kept as-is (option i): they reflect the "
+                "pre-interpolation state, so they are slightly conservative."
             ),
             "n_bad_epochs": n_ar2_bad,
             "n_total_epochs": n_total,

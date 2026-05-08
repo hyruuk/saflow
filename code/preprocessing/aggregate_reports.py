@@ -212,9 +212,19 @@ def aggregate_subject_metrics(run_params: dict) -> dict:
             "isi_mean": isi_mean,
             "isi_std": isi_std,
             "pre_ar2_outliers": _safe_get(pre_ar2, "n_outliers"),
-            "bad_channels_n": int(bad_chans.get("n_bad", 0)) if isinstance(bad_chans, dict) else 0,
-            "bad_channels_names": list(bad_chans.get("names", [])) if isinstance(bad_chans, dict) else [],
+            # New two-stage schema (AR1 = excluded from ICA, AR2 = interpolated).
+            # Falls back to legacy keys for old params files.
+            "bad_channels_n": int(
+                bad_chans.get("n_ar2_interpolated", bad_chans.get("n_bad", 0))
+            ) if isinstance(bad_chans, dict) else 0,
+            "bad_channels_names": list(
+                bad_chans.get("ar2_interpolated", bad_chans.get("names", []))
+            ) if isinstance(bad_chans, dict) else [],
             "bad_channels_threshold": bad_chans.get("threshold") if isinstance(bad_chans, dict) else None,
+            "ar1_excluded_n": int(bad_chans.get("n_ar1_excluded", 0)) if isinstance(bad_chans, dict) else 0,
+            "ar1_excluded_names": list(bad_chans.get("ar1_excluded_from_ica", [])) if isinstance(bad_chans, dict) else [],
+            "rescued_by_ica": list(bad_chans.get("rescued_by_ica", [])) if isinstance(bad_chans, dict) else [],
+            "new_bad_post_ica": list(bad_chans.get("new_bad_post_ica", [])) if isinstance(bad_chans, dict) else [],
         })
 
     # Compute summary statistics from complete runs
