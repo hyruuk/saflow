@@ -1013,6 +1013,39 @@ def _build_subject_html(subject: str, metrics: dict, config: dict) -> str:
 
     html += "</table></div>"
 
+    # Bad channel summary (recurring across runs)
+    chan_freq: dict[str, int] = {}
+    for r in per_run:
+        if not r.get("complete"):
+            continue
+        for ch in r.get("bad_channels_names") or []:
+            chan_freq[ch] = chan_freq.get(ch, 0) + 1
+
+    html += '<h3 class="collapsible-header">Bad Channel Summary (interpolated post-ICA)</h3>'
+    html += '<div class="collapsible-content">'
+    if chan_freq:
+        n_complete_runs = max(1, n_complete)
+        sorted_chans = sorted(chan_freq.items(), key=lambda kv: (-kv[1], kv[0]))
+        recurring = [c for c, n in sorted_chans if n >= 2]
+        html += (
+            f"<p><b>Unique channels flagged across runs:</b> {len(sorted_chans)} "
+            f"&middot; <b>Recurring (≥ 2 runs):</b> {len(recurring)}</p>"
+        )
+        html += (
+            '<table border="1" class="sortable" '
+            'style="border-collapse: collapse; width: 60%; font-size: 13px;">'
+            '<tr style="background-color: #f0f0f0;">'
+            '<th>Channel</th><th>Runs Flagged</th><th>% of Runs</th></tr>'
+        )
+        for ch, n in sorted_chans:
+            pct = 100 * n / n_complete_runs
+            hl = ' style="background-color: #f8d7da;"' if pct > 50 else ""
+            html += f'<tr{hl}><td>{ch}</td><td>{n}</td><td>{pct:.0f}%</td></tr>'
+        html += "</table>"
+    else:
+        html += '<p style="color: green;">No bad channels flagged in any run.</p>'
+    html += "</div>"
+
     # ISI statistics section
     isi_summary = summary.get("isi_mean", {})
     if isi_summary.get("mean") is not None:
@@ -1670,6 +1703,7 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         <th>Mean Threshold %</th><th>Mean Retention %</th>
         <th>Mean Rescue %</th>
         <th>Mean ICA N</th><th>Mean ECG ICs</th><th>Mean EOG ICs</th><th>Forced ICA Runs</th>
+        <th>Bad Chans</th>
         <th>Outlier Runs</th>
     </tr>
     """
@@ -1718,6 +1752,19 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
         retention_val = s['retention_rate']['mean']
         retention_cell = _retention_badge(retention_val) if retention_val is not None else "-"
 
+        # Unique bad channels for this subject (interpolated post-ICA)
+        unique_bad: set = set()
+        for r in complete_runs:
+            for ch in r.get("bad_channels_names") or []:
+                unique_bad.add(ch)
+        n_unique_bad = len(unique_bad)
+        if n_unique_bad:
+            bad_chans_cell = (
+                f'<span title="{", ".join(sorted(unique_bad))}">{n_unique_bad}</span>'
+            )
+        else:
+            bad_chans_cell = "0"
+
         # Subject link (relative to dataset report location)
         subject_link = f'<a href="sub-{subj}/sub-{subj}_preprocessing-summary.html">sub-{subj}</a>'
 
@@ -1736,10 +1783,52 @@ def _build_dataset_html(dataset_metrics: dict) -> str:
             <td>{mean_ecg}</td>
             <td>{mean_eog}</td>
             <td>{forced_str}</td>
+            <td>{bad_chans_cell}</td>
             <td>{'<b style="color:red;">' + str(n_outliers) + '</b>' if n_outliers > 0 else '0'}</td>
         </tr>"""
 
     html += "</table></div>"
+
+    # Dataset-wide bad channel rollup (which channels recur across subjects)
+    chan_subj: dict[str, set] = {}
+    for subj, metrics in per_subject.items():
+        for r in metrics["per_run"]:
+            if not r.get("complete"):
+                continue
+            for ch in r.get("bad_channels_names") or []:
+                chan_subj.setdefault(ch, set()).add(subj)
+
+    html += '<h3 class="collapsible-header">Bad Channel Summary (across dataset)</h3>'
+    html += '<div class="collapsible-content">'
+    if chan_subj:
+        sorted_chans = sorted(
+            chan_subj.items(), key=lambda kv: (-len(kv[1]), kv[0])
+        )
+        recurring_subj = [c for c, subjs in sorted_chans if len(subjs) >= 2]
+        n_total_subj = max(1, n_subjects)
+        html += (
+            f"<p><b>Unique channels flagged in the dataset:</b> {len(sorted_chans)} "
+            f"&middot; <b>Recurring across subjects (≥ 2):</b> {len(recurring_subj)}</p>"
+        )
+        html += (
+            '<table border="1" class="sortable" '
+            'style="border-collapse: collapse; width: 80%; font-size: 12px;">'
+            '<tr style="background-color: #f0f0f0;">'
+            '<th>Channel</th><th>N Subjects</th><th>% Subjects</th><th>Subjects</th></tr>'
+        )
+        for ch, subjs in sorted_chans:
+            n = len(subjs)
+            pct = 100 * n / n_total_subj
+            hl = ' style="background-color: #f8d7da;"' if pct > 30 else ""
+            subj_list = ", ".join(f"sub-{s}" for s in sorted(subjs))
+            html += (
+                f'<tr{hl}><td>{ch}</td><td>{n}</td>'
+                f'<td>{pct:.0f}%</td><td>{subj_list}</td></tr>'
+            )
+        html += "</table>"
+    else:
+        html += '<p style="color: green;">No bad channels flagged in any subject.</p>'
+    html += "</div>"
 
     # Overall statistics
     html += '<h3 class="collapsible-header">Overall Statistics</h3>'
