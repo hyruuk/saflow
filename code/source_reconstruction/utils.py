@@ -103,12 +103,17 @@ def create_output_paths(
     trans_bidspath.mkdir(exist_ok=True)
 
     # Output: forward solution
+    # NOTE: suffix="fwd" is required — without a suffix, BIDSPath.fpath omits
+    # the extension entirely (mne_bids quirk), so the file gets saved without
+    # ".fif" and mne.read_forward_solution then crashes in _check_fname on
+    # `fname.suffixes[-1]`. "_fwd.fif" also matches MNE's expected convention.
     fwd_bidspath = BIDSPath(
         subject=subject,
         task="gradCPT",
         run=run,
         datatype="meg",
         processing="forward",
+        suffix="fwd",
         extension=".fif",
         root=derivatives_root / "fwd",
         check=False,
