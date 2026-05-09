@@ -18,8 +18,7 @@ Tasks are organized into namespaces:
 | `get.*` | Data downloads (atlases) |
 | `pipeline.*` | Main pipeline stages (BIDS, preprocess, source-recon, atlas) |
 | `pipeline.features.*` | Feature extraction (psd, fooof, complexity, all) |
-| `analysis.*` | Statistical analysis (statistics, classify) |
-| `analysis.stats.*` | Dedicated statistics tasks (complexity, fooof) |
+| `analysis.*` | Statistical analysis (stats, classify) |
 | `viz.*` | Visualization (stats, behavior) |
 
 ---
@@ -363,167 +362,113 @@ invoke pipeline.features.all --slurm
 
 ## Analysis Tasks
 
-### `invoke analysis.statistics`
+`analysis.stats` and `analysis.classify` share the same `--features` interface so they can be called identically.
 
-Run group-level statistical analysis (IN vs OUT attentional states).
+**`--features` accepts:**
+- A single feature name: `fooof_exponent`, `psd_alpha`, `complexity_lzc_median`, ...
+- A space-separated list: `"fooof_exponent psd_alpha"`
+- A shortcut name (expands to the family below):
+  - `psds` → `psd_<band>` for every band in `config.yaml`
+  - `psds_corrected` → `psd_corrected_<band>` for every band
+  - `fooof` → `fooof_exponent`, `fooof_offset`, `fooof_r_squared`
+  - `complexity` → all 10 complexity sub-metrics (LZC, entropies, fractals)
+  - `all` → union of `fooof` + `psds` + `psds_corrected` + `complexity` (29 features)
 
-**Feature types:**
-- FOOOF: `fooof_exponent`, `fooof_offset`, `fooof_knee`, `fooof_r_squared`
-- PSD: `psd_delta`, `psd_theta`, `psd_alpha`, `psd_lobeta`, `psd_hibeta`, `psd_gamma1`, etc.
-- Complexity: `complexity` (uses dedicated script)
+By default each feature is processed independently (single-feature framework). For classification you can also pass `--combine-features` to stack everything into one model.
+
+---
+
+### `invoke analysis.stats`
+
+Run group-level statistical analysis (IN vs OUT attentional states) on one or more features.
+
+Complexity features are routed through the same `run_group_statistics` schema as PSD/FOOOF so a single run can mix families freely.
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--feature-type` | string | required | Feature to analyze |
-| `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
-| `--test` | string | paired_ttest | Statistical test: `paired_ttest`, `independent_ttest`, `permutation` |
-| `--corrections` | string | "fdr bonferroni" | Space-separated correction methods |
+| `--features` | string | required | Single feature, space-separated list, or shortcut (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
+| `--space` | string | sensor | Analysis space: `sensor`, or atlas name (e.g. `schaefer_400`, `aparc.a2009s`) |
+| `--test` | string | paired_ttest | `paired_ttest` or `independent_ttest` |
+| `--correction` | string | tmax | `none`, `fdr`, `bonferroni`, or `tmax` (FWER via permutation) |
 | `--alpha` | float | 0.05 | Significance threshold |
-| `--n-permutations` | int | 10000 | Number of permutations (for permutation tests) |
+| `--n-permutations` | int | 10000 | Permutations for `tmax` |
+| `--n-jobs` | int | 1 | Parallel jobs (`-1` = all cores) |
+| `--average-trials` / `--no-average-trials` | flag | true | Subject-level paired t-test (default) vs trial-level independent t-test |
 | `--visualize` | flag | false | Generate visualization figures |
-| `--slurm` | flag | false | Submit to SLURM (not yet implemented) |
-| `--dry-run` | flag | false | Preview without running |
+| `--continue-on-error` / `--no-continue-on-error` | flag | true | Keep going if a feature family fails |
 
 **Examples:**
 ```bash
-invoke analysis.statistics --feature-type=fooof_exponent
-invoke analysis.statistics --feature-type=psd_alpha --visualize
-invoke analysis.statistics --feature-type=psd_theta --test=permutation --n-permutations=5000
-invoke analysis.statistics --feature-type=complexity
-```
+# Single feature
+invoke analysis.stats --features=fooof_exponent
 
----
+# Whole family
+invoke analysis.stats --features=psds
+invoke analysis.stats --features=fooof --space=schaefer_400
 
-### `invoke analysis.stats.complexity`
+# Every feature on disk (single-feature framework: each tested independently)
+invoke analysis.stats --features=all
+invoke analysis.stats --features=all --space=schaefer_400 --n-jobs=4
 
-Run paired t-tests on complexity measures (IN vs OUT).
+# Mixed list
+invoke analysis.stats --features="fooof_exponent psd_alpha psd_theta"
 
-**What it analyzes:**
-- LZC (Lempel-Ziv Complexity)
-- Entropy measures (permutation, spectral, sample, approximate, SVD)
-- Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
+# Switch to trial-level independent t-test
+invoke analysis.stats --features=psds --no-average-trials
 
-**Outputs:**
-- Topographic figure: `reports/figures/complexity_ttest_{correction}.png`
-- Numerical results: `{data_root}/features/statistics_{space}/complexity_ttest_results.npz`
-
-**Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--space` | string | sensor | Analysis space |
-| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
-| `--alpha` | float | 0.05 | Significance threshold |
-| `--n-permutations` | int | 1000 | Number of permutations (for permutation correction) |
-
-**Examples:**
-```bash
-invoke analysis.stats.complexity
-invoke analysis.stats.complexity --correction=bonferroni
-invoke analysis.stats.complexity --correction=tmax --n-permutations=5000
-invoke analysis.stats.complexity --correction=none --alpha=0.01
-```
-
----
-
-### `invoke analysis.stats.fooof`
-
-Run paired t-tests on FOOOF parameters (IN vs OUT).
-
-**What it analyzes:**
-- Aperiodic exponent (1/f slope)
-- Aperiodic offset
-- Model fit (r_squared)
-
-**Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--space` | string | sensor | Analysis space |
-| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
-| `--alpha` | float | 0.05 | Significance threshold |
-| `--n-permutations` | int | 1000 | Number of permutations (for tmax correction) |
-
-**Examples:**
-```bash
-invoke analysis.stats.fooof
-invoke analysis.stats.fooof --correction=tmax --n-permutations=10000
-invoke analysis.stats.fooof --correction=bonferroni
-```
-
----
-
-### `invoke analysis.stats.psd`
-
-Run paired t-tests on raw PSD band power (IN vs OUT).
-
-**What it analyzes:**
-- Band power for each frequency band (delta, theta, alpha, lobeta, hibeta, gamma1, etc.)
-
-**Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--space` | string | sensor | Analysis space |
-| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
-| `--alpha` | float | 0.05 | Significance threshold |
-| `--n-permutations` | int | 1000 | Number of permutations (for tmax correction) |
-| `--bands` | string | "delta theta alpha lobeta hibeta gamma1" | Space-separated frequency bands to analyze |
-
-**Examples:**
-```bash
-invoke analysis.stats.psd
-invoke analysis.stats.psd --correction=tmax --n-permutations=10000
-invoke analysis.stats.psd --bands="theta alpha"
-```
-
----
-
-### `invoke analysis.stats.psd-corrected`
-
-Run paired t-tests on aperiodic-corrected PSD band power (IN vs OUT).
-
-**What it analyzes:**
-- Band power with 1/f aperiodic component removed (periodic component from FOOOF)
-
-**Arguments:**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--space` | string | sensor | Analysis space |
-| `--correction` | string | fdr | Correction method: `fdr`, `bonferroni`, `tmax`, `none` |
-| `--alpha` | float | 0.05 | Significance threshold |
-| `--n-permutations` | int | 1000 | Number of permutations (for tmax correction) |
-| `--bands` | string | "delta theta alpha lobeta hibeta gamma1" | Space-separated frequency bands to analyze |
-
-**Examples:**
-```bash
-invoke analysis.stats.psd-corrected
-invoke analysis.stats.psd-corrected --correction=tmax --n-permutations=10000
-invoke analysis.stats.psd-corrected --bands="theta alpha"
+# FDR instead of tmax (faster, less stringent)
+invoke analysis.stats --features=complexity --correction=fdr
 ```
 
 ---
 
 ### `invoke analysis.classify`
 
-Run classification analysis (decode IN vs OUT from neural features).
+Run classification analysis (decode IN vs OUT from neural features) on one or more features.
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--features` | string | required | Space-separated feature types |
+| `--features` | string | required | Single feature, space-separated list, or shortcut (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
 | `--clf` | string | lda | Classifier: `lda`, `svm`, `rf`, `logistic` |
-| `--cv` | string | logo | Cross-validation: `logo` (leave-one-group-out), `stratified`, `group` |
-| `--space` | string | sensor | Analysis space |
+| `--cv` | string | logo | Cross-validation: `logo`, `stratified`, `group` |
+| `--space` | string | sensor | Analysis space (sensor or atlas name) |
+| `--mode` | string | univariate | `univariate` (per-channel + tmax) or `multivariate` (pool spatial dim) |
 | `--n-permutations` | int | 1000 | Permutations for significance testing |
 | `--no-balance` | flag | false | Disable class balancing within subjects |
-| `--visualize` | flag | false | Generate visualization figures |
-| `--slurm` | flag | false | Submit to SLURM (not yet implemented) |
-| `--dry-run` | flag | false | Preview without running |
+| `--n-jobs` | int | -1 | Parallel jobs (`-1` = all cores) |
+| `--combine-features` | flag | false | Stack all selected features into a single model (otherwise: one model per feature) |
+| `--importances` | flag | false | Save RF feature importances (use with `--clf=rf`) |
+| `--label` | string | auto | Output label override (only with `--combine-features`) |
+| `--n-chunks` | int | 1 | Spatial-dim chunking (univariate + SLURM only) |
+| `--seed` | int | 42 | Random seed for permutations |
+| `--slurm` | flag | false | Submit each classification as its own SLURM job |
+| `--slurm-time` / `--slurm-mem` / `--slurm-cpus` | string/int | from config | Per-job resource overrides |
+| `--dry-run` | flag | false | Preview SLURM submissions without running |
 
 **Examples:**
 ```bash
-invoke analysis.classify --features=fooof_exponent
-invoke analysis.classify --features="fooof_exponent psd_alpha" --clf=svm
-invoke analysis.classify --features=psd_theta --cv=stratified --visualize
+# Single feature (recommended starting point)
+invoke analysis.classify --features=fooof_exponent --clf=lda
+
+# Whole family — one classification per feature
+invoke analysis.classify --features=psds --space=sensor
+
+# Every feature on disk, each as its own classification (single-feature framework)
+invoke analysis.classify --features=all --space=schaefer_400
+
+# Combine all complexity metrics into one RF model + save feature importances
+invoke analysis.classify --features=complexity --space=schaefer_400 \
+    --clf=rf --combine-features --importances
+
+# Combine + multivariate: one big RF over (n_features × n_spatial)
+invoke analysis.classify --features=all --combine-features \
+    --mode=multivariate --clf=rf --importances
+
+# Fan out to SLURM — one job per feature
+invoke analysis.classify --features=all --slurm
+invoke analysis.classify --features=psds --slurm --n-chunks=8
 ```
 
 ---
@@ -534,7 +479,7 @@ invoke analysis.classify --features=psd_theta --cv=stratified --visualize
 
 Visualize saved statistical results.
 
-Loads previously computed statistics and displays summary. The statistics must have been computed first using `analysis.stats.*` tasks.
+Loads previously computed statistics and displays summary. The statistics must have been computed first using `invoke analysis.stats`.
 
 **Arguments:**
 | Argument | Type | Default | Description |
@@ -829,8 +774,8 @@ invoke pipeline.preprocess --slurm --dry-run
 | `pipeline.features.fooof` | Yes |
 | `pipeline.features.complexity` | Yes |
 | `pipeline.features.all` | Yes |
-| `analysis.statistics` | Not yet |
-| `analysis.classify` | Not yet |
+| `analysis.stats` | Not yet |
+| `analysis.classify` | Yes (`--slurm`) |
 
 ### Configuration
 

@@ -51,20 +51,10 @@ class Metric:
 
 
 def _stats_missing(space: str, feature: str, **kw) -> str:
-    fam = feature.split("_")[0] if "_" in feature else feature
-    family_to_task = {
-        "psd": "psd",
-        "fooof": "fooof",
-        "complexity": "complexity",
-    }
-    if feature.startswith("psd_corrected_"):
-        family_to_task_key = "psd-corrected"
-    else:
-        family_to_task_key = family_to_task.get(fam, "psd")
     return (
         f"I'd like to plot {feature} ({space}), but I can't find the t-test "
         f"results. Run:\n"
-        f"  invoke analysis.stats.{family_to_task_key} --space={space}"
+        f"  invoke analysis.stats --features={feature} --space={space}"
     )
 
 
@@ -72,7 +62,7 @@ def _classification_missing(space: str, feature: str, clf: str = "lda", **kw) ->
     return (
         f"I'd like to plot {feature} ({space}), but I can't find the "
         f"classification scores. Run:\n"
-        f"  invoke analysis.classify --feature={feature} --space={space} "
+        f"  invoke analysis.classify --features={feature} --space={space} "
         f"--clf={clf} --slurm"
     )
 

@@ -194,7 +194,7 @@ def main():
                     print(f"  --feature-type={feat}")
         else:
             print(f"\nNo statistics found in {stats_dir}.")
-            print(f"Run analysis.stats.* tasks first (e.g., invoke analysis.stats.psd --space={args.space})")
+            print(f"Run analysis.stats first (e.g., invoke analysis.stats --features=psds --space={args.space})")
         return
 
     feature_names = extract_feature_names(results_files)

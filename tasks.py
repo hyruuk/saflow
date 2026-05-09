@@ -11,7 +11,8 @@ Usage:
     invoke pipeline.preprocess --subject=04
     invoke pipeline.features.fooof --subject=04
     invoke pipeline.features.all --slurm   # All features on HPC
-    invoke analysis.statistics --feature-type=fooof_exponent
+    invoke analysis.stats --features=all
+    invoke analysis.classify --features=all
 
 Namespaces:
     dev.check           - Data validation (dataset, qc, code)
@@ -20,7 +21,7 @@ Namespaces:
     get                 - Data downloads (atlases)
     pipeline            - Data processing pipeline (bids, preprocess, source-recon, atlas)
     pipeline.features   - Feature extraction (psd, fooof, complexity, all)
-    analysis            - Statistical analysis (statistics, classify)
+    analysis            - Statistical analysis (stats, classify)
     viz                 - Visualization (behavior)
 
 SLURM Support:
@@ -60,6 +61,45 @@ def get_env_with_pythonpath():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT)
     return env
+
+
+# Feature-set shortcuts shared by analysis.stats and analysis.classify so the
+# two CLIs accept identical --features values.
+_FEATURE_SHORTCUTS = {"psds", "psds_corrected", "fooof", "complexity", "all"}
+
+
+def resolve_features(features):
+    """Resolve a `--features` value into a concrete list of feature names.
+
+    Accepts:
+      - A single feature name: "fooof_exponent"
+      - A space-separated list: "fooof_exponent psd_alpha"
+      - A shortcut: "psds", "psds_corrected", "fooof", "complexity", "all"
+      - A mix: "fooof psd_alpha"  (shortcut + extra feature)
+
+    Shortcuts expand via classification.run_classification.expand_feature_set,
+    which reads bands from config.yaml so PSD families track config.
+    """
+    from code.classification.run_classification import expand_feature_set
+    from code.utils.config import load_config
+
+    if not features:
+        raise ValueError("--features is required (single name, list, or shortcut: "
+                         "psds, psds_corrected, fooof, complexity, all)")
+
+    tokens = features.split() if isinstance(features, str) else list(features)
+    config = None
+    resolved = []
+    for tok in tokens:
+        if tok in _FEATURE_SHORTCUTS:
+            if config is None:
+                config = load_config()
+            resolved.extend(expand_feature_set(tok, config))
+        else:
+            resolved.append(tok)
+
+    seen = set()
+    return [f for f in resolved if not (f in seen or seen.add(f))]
 
 
 # ==============================================================================
@@ -731,288 +771,81 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 # ==============================================================================
 
 @task
-def statistics(c, feature_type, space="sensor", test="paired_ttest",
-               corrections="fdr bonferroni", alpha=0.05, n_permutations=10000,
-               visualize=False, average_trials=False, slurm=False, dry_run=False):
-    """Run group-level statistical analysis (IN vs OUT).
+def stats(c, features, space="sensor", test="paired_ttest",
+          correction="tmax", alpha=0.05, n_permutations=10000,
+          n_jobs=1, average_trials=True, visualize=False,
+          continue_on_error=True):
+    """Run group-level statistical analysis (IN vs OUT) on one or more features.
 
-    By default, runs trial-level independent t-test (matching cc_saflow).
-    Use --average-trials for subject-level paired t-test.
+    `--features` accepts:
+      - A single feature name: --features=fooof_exponent
+      - A space-separated list: --features="fooof_exponent psd_alpha"
+      - A shortcut: --features=psds | psds_corrected | fooof | complexity | all
 
-    Feature types:
-    - FOOOF: fooof_exponent, fooof_offset, fooof_knee, fooof_r_squared
-    - PSD: psd_delta, psd_theta, psd_alpha, psd_beta, psd_gamma
-    - Complexity: complexity (uses dedicated script)
+    Each feature is tested independently (single-feature framework). PSD bands
+    are read from config.yaml; "all" expands to FOOOF + PSD + PSD-corrected +
+    complexity. Complexity features automatically use the dedicated complexity
+    stats script; everything else uses run_group_statistics.
+
+    Defaults match the analysis-workflow path (subject-level paired t-test +
+    tmax permutation correction). Pass --no-average-trials for the trial-level
+    independent t-test path.
 
     Examples:
-        invoke analysis.statistics --feature-type=fooof_exponent
-        invoke analysis.statistics --feature-type=psd_alpha --average-trials
-        invoke analysis.statistics --feature-type=complexity
+        invoke analysis.stats --features=fooof_exponent
+        invoke analysis.stats --features=psds --space=schaefer_400
+        invoke analysis.stats --features=all --n-jobs=4
+        invoke analysis.stats --features=complexity --correction=fdr
+        invoke analysis.stats --features="psd_alpha psd_theta" --no-average-trials
     """
+    feature_list = resolve_features(features)
+    test_label = "paired t-test (subject-level)" if average_trials else "independent t-test (trial-level)"
     print("=" * 80)
-    print("Group-Level Statistical Analysis")
+    print(f"analysis.stats | space={space}  correction={correction}  α={alpha}")
+    print(f"               | n_perm={n_permutations}  test={test_label}")
+    print(f"               | features ({len(feature_list)}): {' '.join(feature_list)}")
     print("=" * 80)
-
-    if slurm:
-        print("ERROR: SLURM execution not yet implemented")
-        return
 
     python_exe = get_python_executable()
 
-    # Use dedicated script for complexity features
-    if feature_type == "complexity" or feature_type.startswith("complexity_"):
-        print("Using dedicated complexity statistics script...")
-        cmd = [python_exe, "-m", "code.statistics.run_complexity_stats"]
-        cmd.extend(["--space", space])
-        # Map correction names
-        corr = corrections.split()[0] if corrections else "fdr"
-        cmd.extend(["--correction", corr])
-        cmd.extend(["--alpha", str(alpha)])
-        if "permutation" in corrections:
-            cmd.extend(["--n-permutations", str(n_permutations)])
-    else:
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics"]
-        cmd.extend(["--feature-type", feature_type])
-        cmd.extend(["--space", space])
-        cmd.extend(["--test", test])
-        cmd.extend(["--correction"] + corrections.split())
-        cmd.extend(["--alpha", str(alpha)])
-        cmd.extend(["--n-permutations", str(n_permutations)])
+    # Split into complexity features (use dedicated script) and the rest.
+    complexity_feats = [f for f in feature_list
+                        if f == "complexity" or f.startswith("complexity_")]
+    other_feats = [f for f in feature_list if f not in complexity_feats]
 
+    failures = []
+
+    if other_feats:
+        cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+               "--feature-type", *other_feats,
+               "--space", space, "--test", test,
+               "--correction", correction, "--alpha", str(alpha),
+               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
         if average_trials:
             cmd.append("--average-trials")
         if visualize:
             cmd.append("--visualize")
+        print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s)")
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True,
+                       env=get_env_with_pythonpath(), warn=continue_on_error)
+        if result is not None and getattr(result, "exited", 0) != 0:
+            failures.append(("run_group_statistics", f"exit {result.exited}"))
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
-
-
-@task
-def stats_complexity(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000,
-                     n_jobs=1, average_trials=True):
-    """Run t-tests on complexity measures (IN vs OUT).
-
-    Tests every complexity sub-metric in the same per-feature schema as PSD/
-    FOOOF stats so they share the same unified viz path:
-    - lzc_median
-    - entropy_{permutation,spectral,sample,approximate,svd}
-    - fractal_{higuchi,petrosian,katz,dfa}
-
-    Defaults to subject-level paired t-test (--average-trials). Pass
-    --no-average-trials for the trial-level independent t-test.
-
-    Output: {data_root}/features/statistics_{space}/feature-complexity_*_results.npz
-    """
-    test_label = "Paired T-tests (subject-level)" if average_trials else "Independent T-tests (trial-level)"
-    print("=" * 80)
-    print(f"Complexity Statistics: IN vs OUT ({test_label})")
-    print(f"Space: {space}, Correction: {correction}, Alpha: {alpha}")
-    print("=" * 80)
-
-    metrics = [
-        "lzc_median",
-        "entropy_permutation", "entropy_spectral", "entropy_sample",
-        "entropy_approximate", "entropy_svd",
-        "fractal_higuchi", "fractal_petrosian", "fractal_katz", "fractal_dfa",
-    ]
-    feature_types = [f"complexity_{m}" for m in metrics]
-
-    python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-           "--feature-type", *feature_types,
-           "--space", space, "--test", "paired_ttest",
-           "--correction", correction, "--alpha", str(alpha),
-           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
-    if average_trials:
-        cmd.append("--average-trials")
-
-    print(f"Running: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-
-
-@task
-def stats_fooof(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000,
-                n_jobs=1, average_trials=False):
-    """Run t-tests on FOOOF parameters (IN vs OUT).
-
-    By default, runs trial-level independent t-test.
-    Use --average-trials for subject-level paired t-test.
-
-    Runs t-tests comparing IN vs OUT attentional states for:
-    - Aperiodic exponent (1/f slope)
-    - Aperiodic offset
-    - Model fit (r_squared)
-
-    Examples:
-        invoke analysis.stats.fooof
-        invoke analysis.stats.fooof --average-trials
-        invoke analysis.stats.fooof --correction=tmax --n-permutations=10000
-        invoke analysis.stats.fooof --n-jobs=4
-    """
-    test_label = "Paired T-tests (subject-level)" if average_trials else "Independent T-tests (trial-level)"
-    print("=" * 80)
-    print(f"FOOOF Statistics: IN vs OUT ({test_label})")
-    print(f"Space: {space}, Correction: {correction}, Alpha: {alpha}, n_jobs: {n_jobs}")
-    print("=" * 80)
-
-    python_exe = get_python_executable()
-    feature_types = ["fooof_exponent", "fooof_offset", "fooof_r_squared"]
-
-    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-           "--feature-type", *feature_types,
-           "--space", space, "--test", "paired_ttest",
-           "--correction", correction, "--alpha", str(alpha),
-           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
-    if average_trials:
-        cmd.append("--average-trials")
-
-    print(f"Running: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-
-
-@task
-def stats_psd(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000,
-              bands="theta alpha lobeta hibeta gamma1 gamma2 gamma3", n_jobs=1,
-              average_trials=False):
-    """Run t-tests on raw PSD band power (IN vs OUT).
-
-    By default, runs trial-level independent t-test.
-    Use --average-trials for subject-level paired t-test.
-
-    Default bands: delta, theta, alpha, lobeta, hibeta, gamma1
-
-    Examples:
-        invoke analysis.stats.psd
-        invoke analysis.stats.psd --average-trials
-        invoke analysis.stats.psd --correction=tmax --n-permutations=10000
-        invoke analysis.stats.psd --bands="theta alpha"
-        invoke analysis.stats.psd --n-jobs=4
-    """
-    test_label = "Paired T-tests (subject-level)" if average_trials else "Independent T-tests (trial-level)"
-    print("=" * 80)
-    print(f"PSD Statistics: IN vs OUT ({test_label})")
-    print(f"Space: {space}, Correction: {correction}, Alpha: {alpha}, n_jobs: {n_jobs}")
-    print("=" * 80)
-
-    python_exe = get_python_executable()
-    feature_types = [f"psd_{b}" for b in bands.split()]
-
-    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-           "--feature-type", *feature_types,
-           "--space", space, "--test", "paired_ttest",
-           "--correction", correction, "--alpha", str(alpha),
-           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
-    if average_trials:
-        cmd.append("--average-trials")
-
-    print(f"Running: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-
-
-@task
-def stats_psd_corrected(c, space="sensor", correction="fdr", alpha=0.05, n_permutations=1000,
-                        bands="theta alpha lobeta hibeta gamma1 gamma2 gamma3", n_jobs=1,
-                        average_trials=False):
-    """Run t-tests on aperiodic-corrected PSD band power (IN vs OUT).
-
-    By default, runs trial-level independent t-test.
-    Use --average-trials for subject-level paired t-test.
-
-    Default bands: delta, theta, alpha, lobeta, hibeta, gamma1
-
-    Examples:
-        invoke analysis.stats.psd-corrected
-        invoke analysis.stats.psd-corrected --average-trials
-        invoke analysis.stats.psd-corrected --correction=tmax --n-permutations=10000
-        invoke analysis.stats.psd-corrected --bands="theta alpha"
-        invoke analysis.stats.psd-corrected --n-jobs=4
-    """
-    test_label = "Paired T-tests (subject-level)" if average_trials else "Independent T-tests (trial-level)"
-    print("=" * 80)
-    print(f"PSD Corrected Statistics: IN vs OUT ({test_label})")
-    print(f"Space: {space}, Correction: {correction}, Alpha: {alpha}, n_jobs: {n_jobs}")
-    print("=" * 80)
-
-    python_exe = get_python_executable()
-    feature_types = [f"psd_corrected_{b}" for b in bands.split()]
-
-    cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-           "--feature-type", *feature_types,
-           "--space", space, "--test", "paired_ttest",
-           "--correction", correction, "--alpha", str(alpha),
-           "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
-    if average_trials:
-        cmd.append("--average-trials")
-
-    print(f"Running: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
-
-
-@task
-def stats_all(c, space="sensor", correction="tmax", alpha=0.05,
-              n_permutations=10000,
-              bands="delta theta alpha lobeta hibeta gamma1 gamma2 gamma3",
-              n_jobs=1, average_trials=True,
-              skip_psd=False, skip_psd_corrected=False,
-              skip_fooof=False, skip_complexity=False,
-              continue_on_error=True):
-    """Run every t-test family (PSD, PSD-corrected, FOOOF, complexity).
-
-    Defaults that differ from the per-family tasks:
-      --average-trials=True   (subject-level paired t-test)
-      --correction=tmax       (proper FWER control via permutation)
-      --n-permutations=10000  (matches the classification pipeline)
-      --bands=all 8 bands     (delta → gamma3, full coverage)
-
-    Skip an entire family with --skip-<family>. By default, a family that
-    fails (e.g. its features aren't on disk) just logs and continues to the
-    next; pass --no-continue-on-error to abort on first failure.
-
-    Examples:
-        invoke analysis.stats.all                          # sensor, defaults
-        invoke analysis.stats.all --space=schaefer_400 --skip-complexity
-        invoke analysis.stats.all --no-average-trials      # trial-level instead
-        invoke analysis.stats.all --correction=fdr --n-permutations=1000
-    """
-    families = []
-    if not skip_psd:
-        families.append(("psd",            lambda: stats_psd(
-            c, space=space, correction=correction, alpha=alpha,
-            n_permutations=n_permutations, bands=bands, n_jobs=n_jobs,
-            average_trials=average_trials)))
-    if not skip_psd_corrected:
-        families.append(("psd_corrected",  lambda: stats_psd_corrected(
-            c, space=space, correction=correction, alpha=alpha,
-            n_permutations=n_permutations, bands=bands, n_jobs=n_jobs,
-            average_trials=average_trials)))
-    if not skip_fooof:
-        families.append(("fooof",          lambda: stats_fooof(
-            c, space=space, correction=correction, alpha=alpha,
-            n_permutations=n_permutations, n_jobs=n_jobs,
-            average_trials=average_trials)))
-    if not skip_complexity:
-        families.append(("complexity",     lambda: stats_complexity(
-            c, space=space, correction=correction, alpha=alpha,
-            n_permutations=n_permutations)))
-
-    print("=" * 80)
-    print(f"analysis.stats.all  | space={space}  correction={correction}  "
-          f"α={alpha}  n_perm={n_permutations}")
-    print(f"                    | average_trials={average_trials}  "
-          f"families={[f for f, _ in families]}")
-    print("=" * 80)
-
-    failures = []
-    for fam, runner in families:
-        print(f"\n>>> family: {fam}")
-        try:
-            runner()
-        except Exception as exc:
-            failures.append((fam, str(exc)))
-            print(f"  ! family '{fam}' failed: {exc}")
-            if not continue_on_error:
-                raise
+    if complexity_feats:
+        cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+               "--feature-type", *complexity_feats,
+               "--space", space, "--test", test,
+               "--correction", correction, "--alpha", str(alpha),
+               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
+        if average_trials:
+            cmd.append("--average-trials")
+        print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s)")
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True,
+                       env=get_env_with_pythonpath(), warn=continue_on_error)
+        if result is not None and getattr(result, "exited", 0) != 0:
+            failures.append(("complexity_stats", f"exit {result.exited}"))
 
     print("\n" + "=" * 80)
     if failures:
@@ -1020,62 +853,65 @@ def stats_all(c, space="sensor", correction="tmax", alpha=0.05,
         for fam, msg in failures:
             print(f"  - {fam}: {msg}")
     else:
-        print("All families completed.")
+        print("All features completed.")
     print("=" * 80)
 
 
 @task
-def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
+def classify(c, features, clf="lda", cv="logo",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
              slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
-    """Run classification analysis (IN vs OUT).
+    """Run classification analysis (IN vs OUT) on one or more features.
+
+    `--features` accepts:
+      - A single feature name: --features=fooof_exponent
+      - A space-separated list: --features="fooof_exponent psd_alpha"
+      - A shortcut: --features=psds | psds_corrected | fooof | complexity | all
 
     Spatial mode:
       - univariate (default): per-channel/ROI classifier + shared-permutation t-max
       - multivariate: pool spatial dim, single permutation_test_score
 
     Feature handling:
-      - Default loop: each feature in --feature / --feature-set is run separately.
+      - Default loop: each feature is classified independently (single-feature framework).
       - --combine-features: stack all selected features into a single classification
         (great for RF feature importance with --importances).
 
-    Feature-set shortcuts: psds, psds_corrected, fooof, complexity, all.
-
     Examples:
         # Single feature, per-channel LDA + tmax (recommended for single features)
-        invoke analysis.classify --feature=fooof_exponent --clf=lda
+        invoke analysis.classify --features=fooof_exponent --clf=lda
 
-        # All 8 PSD bands, each as its own job
-        invoke analysis.classify --feature-set=psds --space=sensor
+        # All 8 PSD bands, each as its own classification
+        invoke analysis.classify --features=psds --space=sensor
+
+        # Every feature on disk, each as its own classification
+        invoke analysis.classify --features=all --space=schaefer_400
 
         # Combine all complexity metrics, RF per ROI, save importances
-        invoke analysis.classify --feature-set=complexity --space=schaefer_400 \\
+        invoke analysis.classify --features=complexity --space=schaefer_400 \\
             --clf=rf --combine-features --importances
 
         # Combine + multivariate: one big RF over (n_features × n_spatial)
-        invoke analysis.classify --feature-set=all --combine-features \\
+        invoke analysis.classify --features=all --combine-features \\
             --mode=multivariate --clf=rf --importances
 
         # Submit each feature as a separate SLURM job
-        invoke analysis.classify --feature-set=psds --slurm
+        invoke analysis.classify --features=psds --slurm
     """
     print("=" * 80)
     print("Classification Analysis")
     print("=" * 80)
 
-    if not feature and not feature_set:
-        print("ERROR: pass --feature and/or --feature-set")
-        return
+    feature_list = resolve_features(features)
 
     if slurm:
         _classify_slurm(
             c,
-            feature=feature,
-            feature_set=feature_set,
+            feature_list=feature_list,
             clf=clf,
             cv=cv,
             space=space,
@@ -1099,11 +935,8 @@ def classify(c, feature=None, feature_set=None, clf="lda", cv="logo",
         return
 
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.classification.run_classification"]
-    if feature:
-        cmd.extend(["--feature"] + feature.split())
-    if feature_set:
-        cmd.extend(["--feature-set", feature_set])
+    cmd = [python_exe, "-m", "code.classification.run_classification",
+           "--feature", *feature_list]
     cmd.extend(["--clf", clf])
     cmd.extend(["--cv", cv])
     cmd.extend(["--space", space])
@@ -1719,7 +1552,7 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
         print(f"\n[DRY RUN] Would have submitted {len(subjects) * len(run_list)} jobs")
 
 
-def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
+def _classify_slurm(c, feature_list, clf="lda", cv="logo",
                     space="sensor", mode="univariate", n_permutations=1000,
                     no_balance=False, n_jobs=-1, continue_on_error=False,
                     combine_features=False, importances=False, label=None,
@@ -1736,7 +1569,6 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
         aggregation job (afterok dependency) merges them into the final output.
     """
     from datetime import datetime
-    from code.classification.run_classification import expand_feature_set
     from code.utils.config import load_config
     from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
 
@@ -1757,14 +1589,7 @@ def _classify_slurm(c, feature=None, feature_set=None, clf="lda", cv="logo",
         print("ERROR: --n-chunks requires --mode=univariate (multivariate has no spatial dim to split)")
         return
 
-    # Resolve features the same way the CLI does
-    features = []
-    if feature_set:
-        features.extend(expand_feature_set(feature_set, config))
-    if feature:
-        features.extend(feature.split())
-    seen = set()
-    features = [f for f in features if not (f in seen or seen.add(f))]
+    features = list(feature_list)
     if not features:
         print("ERROR: no features to submit")
         return
@@ -2002,13 +1827,6 @@ pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
 pipeline.add_collection(features)  # Nested: pipeline.features.*
 
-# Statistics subcollection (under analysis)
-stats = Collection("stats")
-stats.add_task(stats_all, name="all")
-stats.add_task(stats_complexity, name="complexity")
-stats.add_task(stats_fooof, name="fooof")
-stats.add_task(stats_psd, name="psd")
-stats.add_task(stats_psd_corrected, name="psd-corrected")
 
 @task
 def slurm_jobs(c, pattern=None, state=None, user=None):
@@ -2130,10 +1948,9 @@ def slurm_cancel(c, pattern=None, job_ids=None, state=None, user=None,
 
 # Analysis tasks
 analysis = Collection("analysis")
-analysis.add_task(statistics)
+analysis.add_task(stats)
 analysis.add_task(classify)
 analysis.add_task(classify_aggregate, name="classify-aggregate")
-analysis.add_collection(stats)  # Nested: analysis.stats.*
 
 # Visualization tasks
 viz = Collection("viz")

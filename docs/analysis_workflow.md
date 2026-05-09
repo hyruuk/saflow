@@ -158,30 +158,82 @@ results for the same feature_type land in different files.
 
 ## CLI
 
-Stats — Path 1 (default) on PSD / corrected / FOOOF features:
+`analysis.stats` and `analysis.classify` share the same `--features` interface.
 
-```
-python -m code.statistics.run_group_statistics \
-    --feature-type psd_alpha psd_corrected_alpha fooof_exponent \
-    --space sensor --correction tmax
-```
+`--features` accepts:
+- a single feature name (`fooof_exponent`, `psd_alpha`, `complexity_lzc_median`, ...)
+- a space-separated list (`"fooof_exponent psd_alpha"`)
+- a shortcut: `psds`, `psds_corrected`, `fooof`, `complexity`, or `all`
+  (where `all` = FOOOF + PSD + PSD-corrected + complexity)
 
-Stats — complexity (must use trial-median sub-mode):
+By default each feature is processed independently (single-feature framework).
 
-```
-python -m code.statistics.run_group_statistics \
-    --feature-type complexity_lzc_median complexity_entropy_permutation \
-    --space sensor --analysis-mode subject-trial-median \
-    --aggregate median --correction tmax
-```
+### Stats — Path 1 (subject-averaged, default)
 
-Classification (Path 2):
-
+Single feature:
 ```
-python -m code.classification.run_classification \
-    --feature psd_corrected_alpha --space sensor \
-    --mode univariate --n-permutations 1000
+invoke analysis.stats --features=fooof_exponent
 ```
 
-Both default to dropping `bad_ar2` trials. Pass `--keep-bad-trials` to
-disable.
+A whole family:
+```
+invoke analysis.stats --features=psds
+invoke analysis.stats --features=psds_corrected --space=schaefer_400
+invoke analysis.stats --features=fooof
+invoke analysis.stats --features=complexity
+```
+
+Every feature on disk (single-feature framework — each tested independently):
+```
+invoke analysis.stats --features=all
+invoke analysis.stats --features=all --space=schaefer_400 --n-jobs=4
+```
+
+Mixed list:
+```
+invoke analysis.stats --features="psd_alpha psd_corrected_alpha fooof_exponent"
+```
+
+Switch to Path 2 (trial-level independent t-test):
+```
+invoke analysis.stats --features=psds --no-average-trials
+```
+
+### Classification (Path 2, default)
+
+Single feature:
+```
+invoke analysis.classify --features=fooof_exponent --clf=lda
+```
+
+A whole family — one classification per feature:
+```
+invoke analysis.classify --features=psds
+```
+
+Every feature, each classified independently (single-feature framework):
+```
+invoke analysis.classify --features=all --space=schaefer_400
+```
+
+Combine all complexity metrics into one model with feature importances:
+```
+invoke analysis.classify --features=complexity --space=schaefer_400 \
+    --clf=rf --combine-features --importances
+```
+
+Fan out to SLURM — one job per feature:
+```
+invoke analysis.classify --features=all --slurm
+```
+
+### Underlying scripts
+
+The invoke tasks shell out to the scripts below; you can call them directly if you need flags not exposed at the invoke layer (e.g. `--keep-bad-trials`):
+
+```
+python -m code.statistics.run_group_statistics --feature-type <name(s)> ...
+python -m code.classification.run_classification --feature <name(s)> ...
+```
+
+Both default to dropping `bad_ar2` trials. Pass `--keep-bad-trials` to disable.
