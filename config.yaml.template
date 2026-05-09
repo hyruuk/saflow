@@ -379,13 +379,13 @@ computing:
 
     source_reconstruction:
       cpus: 1
-      mem: 64G
+      mem: 256G
       time: "2:00:00"
 
     atlas:
       cpus: 1
       mem: 96G
-      time: "0:30:00"
+      time: "02:00:00"
 
     features:
       cpus: 12
