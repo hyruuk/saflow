@@ -979,7 +979,7 @@ def main():
     cv = get_cv_strategy(args.cv, n_splits=args.n_splits)
     data_root = Path(config["paths"]["data_root"])
     output_dir = (
-        data_root / config["paths"]["features"] / f"classification_{args.space}" / "group"
+        data_root / config["paths"]["results"] / f"classification_{args.space}" / "group"
     )
 
     chunked = args.n_chunks > 1

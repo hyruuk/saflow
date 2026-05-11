@@ -58,11 +58,7 @@ def iter_feature_files(
     features_root: Path,
     space_filter: Optional[str] = None,
 ) -> Iterable[Path]:
-    """Yield every feature npz file under ``features_root``.
-
-    Skips ``*_params.json`` sidecars and the per-space ``statistics_*`` and
-    ``classification_*`` output folders.
-    """
+    """Yield every feature npz file under ``features_root``."""
     for pattern in FEATURE_FOLDER_PATTERNS:
         for folder in sorted(features_root.glob(pattern)):
             if not folder.is_dir():

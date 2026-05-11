@@ -1224,7 +1224,7 @@ def main():
 
     # Set up output directory
     data_root = Path(config["paths"]["data_root"])
-    output_dir = data_root / config["paths"]["features"] / f"statistics_{args.space}"
+    output_dir = data_root / config["paths"]["results"] / f"statistics_{args.space}"
 
     feature_types: List[str] = list(args.feature_type)
 
@@ -1352,7 +1352,7 @@ def main():
             plot_effect_size_topomap,
         )
 
-        plots_dir = data_root / config["paths"]["features"] / f"statistics_{args.space}" / "plots"
+        plots_dir = data_root / config["paths"]["results"] / f"statistics_{args.space}" / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate plots (placeholder for now)

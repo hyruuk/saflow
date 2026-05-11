@@ -44,8 +44,16 @@ def get_features_root(config: Dict[str, Any]) -> Path:
     return Path(config["paths"]["features"])
 
 
-# Backward compatibility alias
-get_processed_root = get_features_root
+def get_results_root(config: Dict[str, Any]) -> Path:
+    """Get results data root directory (stats/classification outputs).
+
+    Args:
+        config: Configuration dictionary.
+
+    Returns:
+        Path to results directory.
+    """
+    return Path(config["paths"]["results"])
 
 
 def get_subject_dir(
@@ -193,14 +201,14 @@ def get_features_path(
     Returns:
         Path to feature file.
     """
-    processed_root = get_processed_root(config)
+    features_root = get_features_root(config)
     task_name = config["bids"]["task_name"]
 
     if session is None:
         session = config["bids"]["sessions"][0]
 
     # Features are organized by analysis space
-    feature_dir = processed_root / f"features_{analysis_space}" / feature_type
+    feature_dir = features_root / f"features_{analysis_space}" / feature_type
 
     basename = get_bids_basename(
         subject=subject,
@@ -233,8 +241,8 @@ def get_statistics_path(
     Returns:
         Path to statistics file.
     """
-    processed_root = get_processed_root(config)
-    stats_dir = processed_root / f"statistics_{analysis_space}" / test_type
+    results_root = get_results_root(config)
+    stats_dir = results_root / f"statistics_{analysis_space}" / test_type
 
     filename = f"{feature_type}_{test_type}{extension}"
     return stats_dir / filename
@@ -259,8 +267,8 @@ def get_classification_path(
     Returns:
         Path to classification results file.
     """
-    processed_root = get_processed_root(config)
-    classif_dir = processed_root / f"classification_{analysis_space}" / classifier_type
+    results_root = get_results_root(config)
+    classif_dir = results_root / f"classification_{analysis_space}" / classifier_type
 
     filename = f"{feature_type}_{classifier_type}{extension}"
     return classif_dir / filename

@@ -173,7 +173,7 @@ def main():
     data_root = Path(config["paths"]["data_root"])
     inout_bounds = config["analysis"]["inout_bounds"]
     inout_str = f"{inout_bounds[0]}{inout_bounds[1]}"
-    stats_dir = data_root / "features" / f"statistics_{args.space}"
+    stats_dir = data_root / config["paths"]["results"] / f"statistics_{args.space}"
 
     print("=" * 80)
     print(f"Visualizing {args.feature_type} Statistics (space={args.space})")

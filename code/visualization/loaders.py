@@ -219,7 +219,7 @@ def load_for_metric(
     metric_name: str,
     space: str,
     data_root: Path,
-    features_subpath: str,
+    results_subpath: str,
     feature: Optional[str] = None,
     inout: str = "*",
     correction: str = "auto",
@@ -237,7 +237,7 @@ def load_for_metric(
     metric = METRICS[metric_name]
     results_dir = (
         data_root
-        / features_subpath
+        / results_subpath
         / metric.results_subdir.format(space=space)
     )
     paths = find_results_for_metric(

@@ -150,7 +150,7 @@ def main() -> int:
 
     config = yaml.safe_load(Path(args.config).read_text())
     data_root = Path(config["paths"]["data_root"])
-    features_subpath = config["paths"]["features"]
+    results_subpath = config["paths"]["results"]
     inout_bounds = config["analysis"]["inout_bounds"]
     inout_str = f"{inout_bounds[0]}{inout_bounds[1]}"
 
@@ -192,7 +192,7 @@ def main() -> int:
             metric_name=args.metric,
             space=args.space,
             data_root=data_root,
-            features_subpath=features_subpath,
+            results_subpath=results_subpath,
             feature=feature_glob,
             inout=inout_str,
             correction=args.correction,

@@ -91,7 +91,7 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ConfigurationError(f"Missing required section: {section}")
 
     # Validate paths section
-    required_paths = ["data_root", "raw", "derivatives", "features"]
+    required_paths = ["data_root", "raw", "derivatives", "features", "results"]
     for path_key in required_paths:
         if path_key not in config["paths"]:
             raise ConfigurationError(f"Missing required path: paths.{path_key}")
@@ -147,7 +147,7 @@ def expand_paths(config: Dict[str, Any]) -> Dict[str, Any]:
     config["paths"]["data_root"] = str(data_root)
 
     # Expand paths relative to data_root
-    for key in ["raw", "derivatives", "features"]:
+    for key in ["raw", "derivatives", "features", "results"]:
         path = Path(config["paths"][key])
         if not path.is_absolute():
             path = data_root / path

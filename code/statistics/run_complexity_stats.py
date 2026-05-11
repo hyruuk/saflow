@@ -460,7 +460,7 @@ def main():
     plot_complexity_stats(results, info, output_path, args.correction, args.alpha)
 
     # Save results
-    results_path = data_root / "features" / f"statistics_{args.space}" / "complexity_ttest_results.npz"
+    results_path = data_root / config["paths"]["results"] / f"statistics_{args.space}" / "complexity_ttest_results.npz"
     results_path.parent.mkdir(parents=True, exist_ok=True)
 
     save_dict = {

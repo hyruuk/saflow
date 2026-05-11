@@ -242,7 +242,7 @@ def main():
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
     data_root = Path(config["paths"]["data_root"])
     output_dir = (
-        data_root / config["paths"]["features"] / f"classification_{args.space}" / "group"
+        data_root / config["paths"]["results"] / f"classification_{args.space}" / "group"
     )
 
     aggregate(

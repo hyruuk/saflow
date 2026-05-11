@@ -12,6 +12,7 @@ paths:
   raw: sourcedata/
   derivatives: derivatives/
   features: features/
+  results: results/
 
   # Project-specific paths (in saflow/ project directory)
   reports: ./reports

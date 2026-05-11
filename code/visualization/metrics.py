@@ -22,7 +22,7 @@ class Metric:
     description: str
 
     # Where to look for the result files.
-    # results_subdir is relative to <data_root>/<paths.features>; the {space}
+    # results_subdir is relative to <data_root>/<paths.results>; the {space}
     # placeholder is filled in by the caller.
     results_subdir: str
     # Glob pattern for the score/result files. Placeholders {feature}, {space},
