@@ -837,17 +837,19 @@ def stats(c, features, space="sensor", test="paired_ttest",
 
     failures = []
 
+    other_mode = "subject-spectrum" if average_trials else "single-trials"
+    complexity_mode = "subject-trial-median" if average_trials else "single-trials"
+
     if other_feats:
         cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
                "--feature-type", *other_feats,
                "--space", space, "--test", test,
                "--correction", correction, "--alpha", str(alpha),
-               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
-        if average_trials:
-            cmd.append("--average-trials")
+               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
+               "--analysis-mode", other_mode]
         if visualize:
             cmd.append("--visualize")
-        print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s)")
+        print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s) (mode={other_mode})")
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True,
                        env=get_env_with_pythonpath(), warn=continue_on_error)
@@ -859,10 +861,9 @@ def stats(c, features, space="sensor", test="paired_ttest",
                "--feature-type", *complexity_feats,
                "--space", space, "--test", test,
                "--correction", correction, "--alpha", str(alpha),
-               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs)]
-        if average_trials:
-            cmd.append("--average-trials")
-        print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s)")
+               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
+               "--analysis-mode", complexity_mode]
+        print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s) (mode={complexity_mode})")
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True,
                        env=get_env_with_pythonpath(), warn=continue_on_error)
@@ -1632,6 +1633,12 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
         project_root=str(PROJECT_ROOT),
     )
 
+    def _mode_for(feat: str) -> str:
+        is_complexity = feat == "complexity" or feat.startswith("complexity_")
+        if not average_trials:
+            return "single-trials"
+        return "subject-trial-median" if is_complexity else "subject-spectrum"
+
     all_job_ids = []
     for feat in features:
         job_name = f"stats_{feat}_{space}_{test}"
@@ -1645,7 +1652,7 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             "alpha": alpha,
             "n_permutations": n_permutations,
             "n_jobs": n_jobs,
-            "average_trials": average_trials,
+            "analysis_mode": _mode_for(feat),
             "visualize": visualize,
             "timestamp": timestamp,
         }

@@ -12,6 +12,7 @@ echo "  Test:            {{ test }}"
 echo "  Correction:      {{ correction }}"
 echo "  Alpha:           {{ alpha }}"
 echo "  Permutations:    {{ n_permutations }}"
+echo "  Analysis mode:   {{ analysis_mode }}"
 echo ""
 
 python -m code.statistics.run_group_statistics \
@@ -22,7 +23,7 @@ python -m code.statistics.run_group_statistics \
     --alpha {{ alpha }} \
     --n-permutations {{ n_permutations }} \
     --n-jobs {{ n_jobs }} \
-    {% if average_trials %}--average-trials{% endif %} \
+    --analysis-mode {{ analysis_mode }} \
     {% if visualize %}--visualize{% endif %}
 
 STATS_EXIT=$?
