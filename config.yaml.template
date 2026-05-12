@@ -401,7 +401,7 @@ computing:
     classification:
       cpus: 24
       mem: 32G
-      time: "168:00:00"
+      time: "24:00:00"
 
     report:
       cpus: 2
