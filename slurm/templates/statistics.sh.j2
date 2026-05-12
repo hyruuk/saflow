@@ -13,6 +13,7 @@ echo "  Correction:      {{ correction }}"
 echo "  Alpha:           {{ alpha }}"
 echo "  Permutations:    {{ n_permutations }}"
 echo "  Analysis mode:   {{ analysis_mode }}"
+echo "  Aggregate:       {{ aggregate }}"
 echo ""
 
 python -m code.statistics.run_group_statistics \
@@ -24,6 +25,7 @@ python -m code.statistics.run_group_statistics \
     --n-permutations {{ n_permutations }} \
     --n-jobs {{ n_jobs }} \
     --analysis-mode {{ analysis_mode }} \
+    --aggregate {{ aggregate }} \
     {% if visualize %}--visualize{% endif %}
 
 STATS_EXIT=$?

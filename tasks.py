@@ -773,7 +773,7 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 @task
 def stats(c, features, space="sensor", test="paired_ttest",
           correction="tmax", alpha=0.05, n_permutations=10000,
-          n_jobs=1, average_trials=True, visualize=False,
+          n_jobs=1, average_trials=True, aggregate="median", visualize=False,
           continue_on_error=True,
           slurm_time=None, slurm_mem=None, slurm_cpus=None,
           slurm=False, dry_run=False):
@@ -793,11 +793,17 @@ def stats(c, features, space="sensor", test="paired_ttest",
     tmax permutation correction). Pass --no-average-trials for the trial-level
     independent t-test path.
 
+    --aggregate ('median' default | 'mean') controls the per-subject reducer
+    for the subject-trial-median path (complexity features). It is ignored in
+    subject-spectrum (PSD/FOOOF) and single-trials modes — those force their
+    own reducer.
+
     Examples:
         invoke analysis.stats --features=fooof_exponent
         invoke analysis.stats --features=psds --space=schaefer_400
         invoke analysis.stats --features=all --n-jobs=4
         invoke analysis.stats --features=complexity --correction=fdr
+        invoke analysis.stats --features=complexity --aggregate=mean
         invoke analysis.stats --features="psd_alpha psd_theta" --no-average-trials
         invoke analysis.stats --features=psds --slurm
     """
@@ -820,6 +826,7 @@ def stats(c, features, space="sensor", test="paired_ttest",
             n_permutations=n_permutations,
             n_jobs=n_jobs,
             average_trials=average_trials,
+            aggregate=aggregate,
             visualize=visualize,
             slurm_time=slurm_time,
             slurm_mem=slurm_mem,
@@ -846,7 +853,8 @@ def stats(c, features, space="sensor", test="paired_ttest",
                "--space", space, "--test", test,
                "--correction", correction, "--alpha", str(alpha),
                "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-               "--analysis-mode", other_mode]
+               "--analysis-mode", other_mode,
+               "--aggregate", aggregate]
         if visualize:
             cmd.append("--visualize")
         print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s) (mode={other_mode})")
@@ -862,7 +870,8 @@ def stats(c, features, space="sensor", test="paired_ttest",
                "--space", space, "--test", test,
                "--correction", correction, "--alpha", str(alpha),
                "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-               "--analysis-mode", complexity_mode]
+               "--analysis-mode", complexity_mode,
+               "--aggregate", aggregate]
         print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s) (mode={complexity_mode})")
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True,
@@ -1577,7 +1586,8 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
 
 def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
                  correction="tmax", alpha=0.05, n_permutations=10000,
-                 n_jobs=1, average_trials=True, visualize=False,
+                 n_jobs=1, average_trials=True, aggregate="median",
+                 visualize=False,
                  slurm_time=None, slurm_mem=None, slurm_cpus=None,
                  dry_run=False):
     """Submit one statistics job per feature to SLURM."""
@@ -1653,6 +1663,7 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             "n_permutations": n_permutations,
             "n_jobs": n_jobs,
             "analysis_mode": _mode_for(feat),
+            "aggregate": aggregate,
             "visualize": visualize,
             "timestamp": timestamp,
         }
