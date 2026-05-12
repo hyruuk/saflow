@@ -1,0 +1,37 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Group-level statistics (IN vs OUT) — {{ feature_label }} on {{ space }}
+# =============================================================================
+
+echo "Statistics configuration:"
+echo "  Feature:         {{ feature_label }}"
+echo "  Space:           {{ space }}"
+echo "  Test:            {{ test }}"
+echo "  Correction:      {{ correction }}"
+echo "  Alpha:           {{ alpha }}"
+echo "  Permutations:    {{ n_permutations }}"
+echo ""
+
+python -m code.statistics.run_group_statistics \
+    --feature-type {{ feature_label }} \
+    --space {{ space }} \
+    --test {{ test }} \
+    --correction {{ correction }} \
+    --alpha {{ alpha }} \
+    --n-permutations {{ n_permutations }} \
+    --n-jobs {{ n_jobs }} \
+    {% if average_trials %}--average-trials{% endif %} \
+    {% if visualize %}--visualize{% endif %}
+
+STATS_EXIT=$?
+
+if [ $STATS_EXIT -eq 0 ]; then
+    echo "Statistics completed successfully"
+else
+    echo "Statistics failed with exit code $STATS_EXIT"
+    exit $STATS_EXIT
+fi
+
+{% endblock %}

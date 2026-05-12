@@ -774,7 +774,9 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 def stats(c, features, space="sensor", test="paired_ttest",
           correction="tmax", alpha=0.05, n_permutations=10000,
           n_jobs=1, average_trials=True, visualize=False,
-          continue_on_error=True):
+          continue_on_error=True,
+          slurm_time=None, slurm_mem=None, slurm_cpus=None,
+          slurm=False, dry_run=False):
     """Run group-level statistical analysis (IN vs OUT) on one or more features.
 
     `--features` accepts:
@@ -797,6 +799,7 @@ def stats(c, features, space="sensor", test="paired_ttest",
         invoke analysis.stats --features=all --n-jobs=4
         invoke analysis.stats --features=complexity --correction=fdr
         invoke analysis.stats --features="psd_alpha psd_theta" --no-average-trials
+        invoke analysis.stats --features=psds --slurm
     """
     feature_list = resolve_features(features)
     test_label = "paired t-test (subject-level)" if average_trials else "independent t-test (trial-level)"
@@ -805,6 +808,25 @@ def stats(c, features, space="sensor", test="paired_ttest",
     print(f"               | n_perm={n_permutations}  test={test_label}")
     print(f"               | features ({len(feature_list)}): {' '.join(feature_list)}")
     print("=" * 80)
+
+    if slurm:
+        _stats_slurm(
+            c,
+            feature_list=feature_list,
+            space=space,
+            test=test,
+            correction=correction,
+            alpha=alpha,
+            n_permutations=n_permutations,
+            n_jobs=n_jobs,
+            average_trials=average_trials,
+            visualize=visualize,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
+            dry_run=dry_run,
+        )
+        return
 
     python_exe = get_python_executable()
 
@@ -1550,6 +1572,112 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
         print(f"\n✓ Submitted {len(job_ids)} {feature_type} feature extraction jobs")
     elif dry_run:
         print(f"\n[DRY RUN] Would have submitted {len(subjects) * len(run_list)} jobs")
+
+
+def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
+                 correction="tmax", alpha=0.05, n_permutations=10000,
+                 n_jobs=1, average_trials=True, visualize=False,
+                 slurm_time=None, slurm_mem=None, slurm_cpus=None,
+                 dry_run=False):
+    """Submit one statistics job per feature to SLURM."""
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+
+    print(f"\n[SLURM Mode] Submitting statistics jobs to cluster\n")
+
+    config = load_config()
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+
+    stats_resources = slurm_config.get("statistics", {})
+    if not stats_resources:
+        print("ERROR: No statistics resources in config.yaml (computing.slurm.statistics)")
+        return
+
+    features = list(feature_list)
+    if not features:
+        print("ERROR: no features to submit")
+        return
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "statistics"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "statistics"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Space: {space}  Test: {test}  Correction: {correction}")
+    print(f"n_permutations: {n_permutations}  alpha: {alpha}  average_trials: {average_trials}")
+    print(f"Jobs: {len(features)} (one per feature)")
+
+    cpus_resolved = slurm_cpus if slurm_cpus is not None else stats_resources["cpus"]
+    mem_resolved = slurm_mem if slurm_mem is not None else stats_resources["mem"]
+    time_resolved = slurm_time if slurm_time is not None else stats_resources["time"]
+    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
+
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=cpus_resolved,
+        mem=mem_resolved,
+        time=time_resolved,
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+
+    all_job_ids = []
+    for feat in features:
+        job_name = f"stats_{feat}_{space}_{test}"
+        context = {
+            **base_resources,
+            "job_name": job_name,
+            "feature_label": feat,
+            "space": space,
+            "test": test,
+            "correction": correction,
+            "alpha": alpha,
+            "n_permutations": n_permutations,
+            "n_jobs": n_jobs,
+            "average_trials": average_trials,
+            "visualize": visualize,
+            "timestamp": timestamp,
+        }
+        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+        render_slurm_script("statistics.sh.j2", context, output_path=script_path)
+
+        if dry_run:
+            print(f"[DRY RUN] Would submit: {script_path.name}")
+            continue
+
+        try:
+            jid = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
+            if jid:
+                all_job_ids.append(jid)
+        except Exception as e:
+            print(f"  ✗ Failed to submit {job_name}: {e}")
+
+    if all_job_ids:
+        manifest_path = log_dir / f"statistics_manifest_{timestamp}.json"
+        save_job_manifest(all_job_ids, manifest_path, metadata={
+            "stage": "statistics",
+            "space": space,
+            "test": test,
+            "correction": correction,
+            "alpha": alpha,
+            "n_permutations": n_permutations,
+            "features": features,
+            "timestamp": timestamp,
+        })
+        print(f"\n✓ Submitted {len(all_job_ids)} job(s); manifest: {manifest_path}")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would have submitted {len(features)} job(s)")
 
 
 def _classify_slurm(c, feature_list, clf="lda", cv="logo",
