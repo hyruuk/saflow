@@ -266,7 +266,7 @@ def main() -> int:
         ]
         if "clf" in extra:
             title_bits.insert(2, f"clf={extra['clf']}")
-        fig.suptitle(" | ".join(title_bits), fontsize=11, y=1.005)
+        fig.suptitle(" | ".join(title_bits), fontsize=11, y=0.98)
 
         out = fig_dir / _figure_filename(
             family, args.space, args.metric, args.correction, extra,

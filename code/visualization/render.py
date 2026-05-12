@@ -53,7 +53,12 @@ def compute_vlim(maps: List[MapResult]) -> Tuple[float, float]:
 
 
 def _get_sensor_info(config: Dict, data_root: Path):
-    """Find a representative preprocessed file and return its mag info."""
+    """Find a representative MEG file and return its mag info.
+
+    Tries preprocessed FIFs first; falls back to raw CTF .ds directories under
+    sourcedata when only results were synced (e.g. from HPC) and no
+    preprocessed data is locally available.
+    """
     import mne
 
     derivatives_dir = data_root / config["paths"]["derivatives"]
@@ -62,14 +67,27 @@ def _get_sensor_info(config: Dict, data_root: Path):
     ))
     if not sample_files:
         sample_files = list(derivatives_dir.glob("**/sub-*/meg/*_meg.fif"))
-    if not sample_files:
-        raise FileNotFoundError(
-            "No preprocessed MEG files found to read sensor positions from. "
-            "Run preprocessing first: invoke pipeline.preprocess"
-        )
-    raw = mne.io.read_raw_fif(sample_files[0], preload=False, verbose=False)
-    raw.pick("mag")
-    return raw.info
+    if sample_files:
+        raw = mne.io.read_raw_fif(sample_files[0], preload=False, verbose=False)
+        raw.pick("mag")
+        return raw.info
+
+    raw_dir = data_root / config["paths"]["raw"]
+    ds_files = sorted(raw_dir.glob("**/SA*_SAflow*.ds"))
+    if not ds_files:
+        ds_files = sorted(raw_dir.glob("**/*.ds"))
+    if ds_files:
+        raw = mne.io.read_raw_ctf(str(ds_files[0]), preload=False, verbose=False)
+        raw.pick("mag")
+        return raw.info
+
+    raise FileNotFoundError(
+        "No preprocessed MEG (.fif) or raw CTF (.ds) files found to read "
+        "sensor positions from. Searched: "
+        f"{derivatives_dir}/preprocessed and {raw_dir}. "
+        "Run preprocessing first (invoke pipeline.preprocess) or sync a raw "
+        "CTF .ds under sourcedata/."
+    )
 
 
 def render_sensor_row(
@@ -116,7 +134,7 @@ def render_sensor_row(
     cbar.set_ticks([vmin, midpoint, vmax])
     cbar.set_ticklabels([f"{vmin:.2f}", f"{midpoint:.2f}", f"{vmax:.2f}"])
 
-    fig.subplots_adjust(left=0.02, right=0.88, top=0.85, bottom=0.05, wspace=0.1)
+    fig.subplots_adjust(left=0.02, right=0.88, top=0.80, bottom=0.05, wspace=0.1)
     return fig
 
 
@@ -233,7 +251,7 @@ def render_atlas_row(
     if not feature_images:
         return None
 
-    # Pad all feature panels to a uniform size and lay them out left-to-right.
+    # Pad all feature panels to a uniform size.
     max_h = max(img.shape[0] for img in feature_images)
     max_w = max(img.shape[1] for img in feature_images)
     padded = []
@@ -242,32 +260,53 @@ def render_atlas_row(
         if ph or pw:
             img = np.pad(img, ((0, ph), (0, pw), (0, 0)), constant_values=255)
         padded.append(img)
-    panel = np.concatenate(padded, axis=1)
-
-    dpi = 150
-    fig_w = panel.shape[1] / dpi + 1.0
-    fig_h = panel.shape[0] / dpi + 0.6
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor="white")
-    ax_img = fig.add_axes(
-        [0, 0, panel.shape[1] / (fig_w * dpi), panel.shape[0] / (fig_h * dpi)]
-    )
-    ax_img.imshow(panel)
-    ax_img.axis("off")
-
-    for i, t in enumerate(feature_titles):
-        x_center = (i + 0.5) * max_w / panel.shape[1] * (
-            panel.shape[1] / (fig_w * dpi)
-        )
-        fig.text(x_center, 0.92, t, ha="center", va="bottom", fontsize=10)
 
     import matplotlib.colors as mcolors
+    from matplotlib.gridspec import GridSpec
 
-    cbar_ax = fig.add_axes([0.93, 0.15, 0.02, 0.7])
+    n = len(padded)
+    dpi = 150
+    panel_w_in = max_w / dpi
+    panel_h_in = max_h / dpi
+    # Inch-based margins: suptitle + per-feature titles share the top band.
+    top_margin_in = 1.10
+    bottom_margin_in = 0.25
+    left_margin_in = 0.15
+    right_margin_in = 0.20
+    cbar_slot_in = 0.85       # full slot reserved for colorbar (axis + ticks + label)
+    wspace_frac = 0.04        # of average panel width
+
+    fig_w = (
+        left_margin_in + n * panel_w_in
+        + (n - 1) * panel_w_in * wspace_frac
+        + cbar_slot_in + right_margin_in
+    )
+    fig_h = top_margin_in + panel_h_in + bottom_margin_in
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi, facecolor="white")
+
+    gs = GridSpec(
+        1, n + 1,
+        width_ratios=[panel_w_in] * n + [0.15],  # last column = colorbar
+        left=left_margin_in / fig_w,
+        right=1 - right_margin_in / fig_w,
+        top=1 - top_margin_in / fig_h,
+        bottom=bottom_margin_in / fig_h,
+        wspace=wspace_frac,
+    )
+
+    for i, (img, t) in enumerate(zip(padded, feature_titles)):
+        ax = fig.add_subplot(gs[0, i])
+        ax.imshow(img)
+        ax.axis("off")
+        ax.set_title(t, fontsize=10, pad=4)
+
+    cax = fig.add_subplot(gs[0, n])
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, cax=cbar_ax)
+    cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label(cbar_label, fontsize=10)
+    cbar.ax.tick_params(labelsize=8)
     midpoint = (vmin + vmax) / 2
     cbar.set_ticks([vmin, midpoint, vmax])
     cbar.set_ticklabels([f"{vmin:.2f}", f"{midpoint:.2f}", f"{vmax:.2f}"])
