@@ -258,6 +258,7 @@ def generate_preprocessing_report(
     ar2_bad_channels: list = None,
     rescued_by_ica: list = None,
     new_bad_post_ica: list = None,
+    ar2_flags: np.ndarray = None,
 ) -> mne.Report:
     """Generate HTML report for preprocessing with three-way comparison.
 
@@ -359,9 +360,12 @@ def generate_preprocessing_report(
 
     # Second AutoReject pass (after ICA)
     if reject_log_second is not None:
-        if np.sum(reject_log_second.bad_epochs) > 0:
+        # ar2_flags is padded to match epochs_preproc; reject_log_second.bad_epochs
+        # may be shorter when the pre-AR2 outlier filter dropped epochs.
+        ar2_plot_mask = ar2_flags if ar2_flags is not None else reject_log_second.bad_epochs
+        if np.sum(ar2_plot_mask) > 0 and len(ar2_plot_mask) == len(epochs_preproc):
             try:
-                fig = epochs_preproc[reject_log_second.bad_epochs].plot(show=False)
+                fig = epochs_preproc[ar2_plot_mask].plot(show=False)
                 report.add_figure(fig, title="Bad epochs (2nd AR pass - post-ICA)")
             except Exception as e:
                 logger.warning(f"Could not plot bad epochs: {e}")
@@ -378,11 +382,13 @@ def generate_preprocessing_report(
     # AR1 flags map 1:1 to epochs_preproc (same events, same count)
     ar1_flags = reject_log_first.bad_epochs
 
-    # Second AR pass stats
-    if reject_log_second is not None:
-        ar2_flags = reject_log_second.bad_epochs
-    else:
-        ar2_flags = np.zeros(n_total_preproc, dtype=bool)
+    # Second AR pass stats — prefer caller-padded mask (matches epochs_preproc
+    # length even when the pre-AR2 outlier filter dropped epochs).
+    if ar2_flags is None:
+        if reject_log_second is not None:
+            ar2_flags = reject_log_second.bad_epochs
+        else:
+            ar2_flags = np.zeros(n_total_preproc, dtype=bool)
 
     # --- 3-Way Comparison Figures ---
     # Now direct 1:1 comparison — no mapping needed
@@ -668,7 +674,9 @@ def generate_preprocessing_report(
     eog_ch = "vEOG"  # renamed from EEG057 earlier in pipeline
     if ecg_inds:
         try:
-            ecg_epochs = mne.preprocessing.create_ecg_epochs(raw, ch_name=ecg_ch, verbose=False)
+            # Use filtered raw — unfiltered MEG has 88 pT DC offsets that swamp
+            # the ICA unmixing and saturate the colorscale (see report bug).
+            ecg_epochs = mne.preprocessing.create_ecg_epochs(raw_filt, ch_name=ecg_ch, verbose=False)
             # Compute per-component 99th-percentile of |activation| so the colorscale
             # is not dominated by a handful of extreme epochs.
             ecg_sources = ica.get_sources(ecg_epochs).get_data()  # (n_epochs, n_comps, n_times)
@@ -688,7 +696,7 @@ def generate_preprocessing_report(
             logger.warning(f"Could not plot ECG component properties: {e}")
     if eog_inds:
         try:
-            eog_epochs = mne.preprocessing.create_eog_epochs(raw, ch_name=eog_ch, verbose=False)
+            eog_epochs = mne.preprocessing.create_eog_epochs(raw_filt, ch_name=eog_ch, verbose=False)
             eog_sources = ica.get_sources(eog_epochs).get_data()
             for idx in eog_inds:
                 vabs = float(np.percentile(np.abs(eog_sources[:, idx, :]), 99))
@@ -906,6 +914,7 @@ def save_preprocessing_summary(
     event_counts: dict = None,
     isi_stats: dict = None,
     pre_ar2_stats: dict = None,
+    ar2_flags: np.ndarray = None,
 ):
     """Save text-based preprocessing summary for easy parsing.
 
@@ -949,8 +958,11 @@ ISI Statistics
 
     # Second AR section
     if reject_log_second is not None:
-        n_bad_second = int(np.sum(reject_log_second.bad_epochs))
-        ar2_flags = reject_log_second.bad_epochs
+        # Prefer caller-padded ar2_flags (matches threshold_bad_mask length even
+        # when the pre-AR2 outlier filter dropped epochs).
+        if ar2_flags is None:
+            ar2_flags = reject_log_second.bad_epochs
+        n_bad_second = int(np.sum(ar2_flags))
         both_bad = int(np.sum(ar2_flags & threshold_bad_mask))
         only_ar = int(np.sum(ar2_flags & ~threshold_bad_mask))
         only_thresh = int(np.sum(threshold_bad_mask & ~ar2_flags))
@@ -1538,6 +1550,7 @@ def preprocess_run(
         ar2_bad_channels=ar2_bad_channels,
         rescued_by_ica=rescued_by_ica,
         new_bad_post_ica=new_bad_post_ica,
+        ar2_flags=ar2_flags_full,
     )
 
     # ================================================================
@@ -1648,6 +1661,7 @@ def preprocess_run(
         event_counts=event_counts,
         isi_stats=isi_stats,
         pre_ar2_stats=pre_ar2_stats,
+        ar2_flags=ar2_flags_full,
     )
     logger.info(f"\u2713 Summary: {summary_path}")
 
