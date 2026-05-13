@@ -108,7 +108,7 @@ preprocessing:
 
   ica:
     method: fastica
-    n_components: 0.90  # float 0-1 = explained variance threshold; refine based on cumulative variance plot in run reports
+    n_components: 40  # float 0-1 = explained variance threshold; refine based on cumulative variance plot in run reports
     random_state: 0
     ecg_ctps_threshold: 0.20   # CTPS method threshold (phase-based, specific)
     ecg_corr_threshold: 0.50   # Correlation threshold; component flagged only if CTPS also agrees (intersection)
