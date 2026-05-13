@@ -154,7 +154,7 @@ def aggregate(
     pvals_unc = (np.sum(perm_scores >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )
-    max_perm = perm_scores.max(axis=1)
+    max_perm = np.nanmax(perm_scores, axis=1)
     pvals_tmax = (np.sum(max_perm[:, None] >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )

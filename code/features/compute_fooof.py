@@ -46,6 +46,7 @@ def load_welch_psd(
     run: str,
     space: str,
     config: Dict[str, Any],
+    n_events_window: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """Load pre-computed Welch PSD from processed/ directory.
 
@@ -54,10 +55,12 @@ def load_welch_psd(
         run: Run ID
         space: Analysis space (sensor/source/atlas)
         config: Configuration dictionary
+        n_events_window: Window size used by compute_welch_psd. Determines
+            the desc suffix (``welch`` for 1, ``welchw{N}`` for >=2).
 
     Returns:
         Tuple of:
-        - psd_array: PSD data, shape (n_trials, n_spatial, n_freqs)
+        - psd_array: PSD data, shape (n_epochs, n_spatial, n_freqs)
         - freq_bins: Frequency bins in Hz
         - events_df: Event metadata with trial information
 
@@ -70,7 +73,8 @@ def load_welch_psd(
 
     # Find Welch PSD file (npz format from compute_welch_psd.py)
     task_name = config["bids"]["task_name"]
-    pattern = f"sub-{subject}_*_run-{run}_space-{space}_desc-welch_psds.npz"
+    desc = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
+    pattern = f"sub-{subject}_*_run-{run}_space-{space}_desc-{desc}_psds.npz"
     welch_files = list(welch_dir.glob(pattern))
 
     if not welch_files:
@@ -207,6 +211,7 @@ def process_subject_run(
     space: str,
     config: Dict[str, Any],
     skip_existing: bool = True,
+    n_events_window: int = 1,
 ) -> Optional[Path]:
     """Process one subject/run: fit FOOOF to Welch PSDs.
 
@@ -232,12 +237,19 @@ def process_subject_run(
     features_root = data_root / config["paths"]["features"]
     task_name = config["bids"]["task_name"]
 
-    # FOOOF parameters output
+    # FOOOF parameters output. Window mode uses ``fooofw{N}`` / ``welch-corrw{N}``
+    # desc suffixes so trial-level and window-level features don't collide.
+    fooof_desc = "fooof" if n_events_window <= 1 else f"fooofw{n_events_window}"
+    corrected_desc = (
+        "welch-corrected"
+        if n_events_window <= 1
+        else f"welch-corrw{n_events_window}"
+    )
     fooof_dir = features_root / f"fooof_{space}" / f"sub-{subject}"
     fooof_dir.mkdir(parents=True, exist_ok=True)
     fooof_file = (
         fooof_dir
-        / f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_space-{space}_desc-fooof.npz"
+        / f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_space-{space}_desc-{fooof_desc}.npz"
     )
 
     # Corrected PSDs output (same structure as welch_psds)
@@ -245,16 +257,20 @@ def process_subject_run(
     corrected_dir.mkdir(parents=True, exist_ok=True)
     corrected_file = (
         corrected_dir
-        / f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_space-{space}_desc-welch-corrected_psds.npz"
+        / f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_space-{space}_desc-{corrected_desc}_psds.npz"
     )
 
     if skip_existing and fooof_file.exists() and corrected_file.exists():
         logger.info(f"Output exists, skipping: {fooof_file.name}")
         return fooof_file
 
-    # Load Welch PSD
-    logger.info(f"Processing sub-{subject} run-{run} space-{space}")
-    psd_array, freq_bins, events_df = load_welch_psd(subject, run, space, config)
+    # Load Welch PSD (matches the window suffix used by compute_welch_psd.py)
+    logger.info(
+        f"Processing sub-{subject} run-{run} space-{space} (n_events_window={n_events_window})"
+    )
+    psd_array, freq_bins, events_df = load_welch_psd(
+        subject, run, space, config, n_events_window=n_events_window
+    )
 
     # Get FOOOF parameters from config
     fooof_params_list = config["features"]["fooof"]
@@ -315,6 +331,7 @@ def process_subject_run(
                 "subject": subject,
                 "run": run,
                 "space": space,
+                "n_events_window": int(n_events_window),
                 "n_trials": int(n_trials),
                 "n_spatial": int(n_spatial),
                 "n_freqs": int(len(freq_bins)),
@@ -346,6 +363,7 @@ def process_subject_run(
                 "run": run,
                 "space": space,
                 "description": "Aperiodic-corrected PSDs (1/f removed via FOOOF)",
+                "n_events_window": int(n_events_window),
                 "n_trials": int(n_trials),
                 "n_spatial": int(n_spatial),
                 "n_freqs": int(len(freq_bins)),
@@ -399,6 +417,16 @@ def main():
         dest="skip_existing",
         help="Reprocess even if output exists",
     )
+    parser.add_argument(
+        "--n-events-window",
+        type=int,
+        default=8,
+        help=(
+            "Window size that was used by compute_welch_psd. 1 = single-trial, "
+            "8 = cc_saflow's sliding window (default). Determines which Welch "
+            "output file to load and which desc suffix to write."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -431,6 +459,7 @@ def main():
             space=args.space,
             config=config,
             skip_existing=args.skip_existing,
+            n_events_window=args.n_events_window,
         )
 
         logger.info("=" * 80)

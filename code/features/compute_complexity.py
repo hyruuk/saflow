@@ -257,6 +257,7 @@ def process_subject_run(
     config: Dict[str, Any],
     complexity_types: Optional[List[str]] = None,
     overwrite: bool = False,
+    n_events_window: int = 1,
 ) -> Optional[Path]:
     """
     Process one subject/run: compute all complexity features per epoch.
@@ -290,9 +291,12 @@ def process_subject_run(
     output_dir = output_root / f"sub-{subject}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    desc = (
+        "complexity" if n_events_window <= 1 else f"complexityw{n_events_window}"
+    )
     output_file = output_dir / (
         f"sub-{subject}_ses-recording_task-{task_name}_run-{run}_"
-        f"space-{space}_desc-complexity.npz"
+        f"space-{space}_desc-{desc}.npz"
     )
 
     if output_file.exists() and not overwrite:
@@ -345,7 +349,7 @@ def process_subject_run(
         config=config,
     )
 
-    # Segment data into epochs
+    # Segment data into epochs (per-trial or per-window)
     segmented_data, trial_metadata = segment_spatial_temporal_data(
         data=data,
         events_df=events_df,
@@ -353,6 +357,7 @@ def process_subject_run(
         tmin=tmin,
         tmax=tmax,
         annotations=annotations,
+        n_events_window=n_events_window,
     )
     # Shape: (n_epochs, n_channels, n_samples)
     logger.info(f"Segmented data shape: {segmented_data.shape}")
@@ -433,6 +438,7 @@ def process_subject_run(
         "sfreq": float(sfreq),
         "tmin": tmin,
         "tmax": tmax,
+        "n_events_window": int(n_events_window),
         "n_epochs": int(n_epochs),
         "n_channels": len(ch_names),
         "metrics": list(complexity_results.keys()),
@@ -492,6 +498,15 @@ def main():
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--n-events-window",
+        type=int,
+        default=8,
+        help=(
+            "Number of consecutive stim trials per epoch. 1 = single-trial, "
+            "8 = cc_saflow's sliding window (default)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -538,6 +553,7 @@ def main():
                     config,
                     complexity_types=args.complexity_type,
                     overwrite=args.overwrite,
+                    n_events_window=args.n_events_window,
                 )
             except Exception as e:
                 logger.error(

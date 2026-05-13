@@ -43,6 +43,7 @@ from code.statistics.effect_sizes import (
     compute_hedges_g,
     compute_eta_squared,
 )
+from code.features.utils import select_window_mask
 from code.utils.data_loading import load_features, balance_dataset
 from code.utils.statistics import subject_contrast, simple_contrast
 
@@ -159,25 +160,34 @@ def get_feature_folder(
     return processed / folder_name
 
 
-def get_file_pattern(feature_type: str) -> Tuple[str, str]:
+def get_file_pattern(feature_type: str, n_events_window: int = 1) -> Tuple[str, str]:
     """Get file pattern and data key for a feature type.
+
+    The desc suffix is window-aware: feature scripts append ``w{N}`` to the
+    desc field when ``n_events_window >= 2``, so this function must match
+    that suffix to find the right files.
 
     Returns:
         Tuple of (glob_pattern_suffix, npz_key)
     """
+    w = "" if n_events_window <= 1 else f"w{n_events_window}"
     if feature_type.startswith("fooof_"):
-        return "desc-fooof.npz", feature_type.replace("fooof_", "")
+        return f"desc-fooof{w}.npz", feature_type.replace("fooof_", "")
     elif feature_type.startswith("psd_corrected_"):
-        return "desc-welch-corrected_psds.npz", "psds"  # Corrected PSDs in separate folder
+        corr_desc = (
+            "welch-corrected" if n_events_window <= 1 else f"welch-corrw{n_events_window}"
+        )
+        return f"desc-{corr_desc}_psds.npz", "psds"
     elif feature_type.startswith("psd_"):
-        return "desc-welch_psds.npz", "psds"
+        welch_desc = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
+        return f"desc-{welch_desc}_psds.npz", "psds"
     elif feature_type.startswith("complexity_"):
         # All complexity sub-metrics live in the same desc-complexity.npz file;
         # the npz key is the part after 'complexity_' (e.g. 'lzc_median',
         # 'entropy_permutation', 'fractal_higuchi').
-        return "desc-complexity.npz", feature_type.replace("complexity_", "")
+        return f"desc-complexity{w}.npz", feature_type.replace("complexity_", "")
     else:
-        return f"desc-{feature_type}.npz", feature_type
+        return f"desc-{feature_type}{w}.npz", feature_type
 
 
 def load_all_features_batched(
@@ -187,6 +197,9 @@ def load_all_features_batched(
     config: Dict,
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
+    trial_type: str = "alltrials",
+    zoning: str = "per-subject",
+    n_events_window: int = 1,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
     """Load several features sharing the same source files in one pass.
 
@@ -216,7 +229,8 @@ def load_all_features_batched(
             f"got {len(folders)}: {folders}. Call separately per family."
         )
     feature_folder = folders.pop()
-    file_patterns = {get_file_pattern(ft)[0] for ft in feature_types}
+    file_patterns = {get_file_pattern(ft, n_events_window=n_events_window)[0]
+                     for ft in feature_types}
     if len(file_patterns) != 1:
         raise ValueError(
             f"Batched loading requires a single file pattern; got: {file_patterns}"
@@ -234,7 +248,7 @@ def load_all_features_batched(
     # Per requested feature, what to extract from each npz.
     extract_specs: Dict[str, Tuple[str, Optional[Tuple[str, Tuple[float, float]]]]] = {}
     for ft in feature_types:
-        _, data_key = get_file_pattern(ft)
+        _, data_key = get_file_pattern(ft, n_events_window=n_events_window)
         if ft.startswith("psd_corrected_"):
             band = ft.replace("psd_corrected_", "")
             if band not in freq_bands:
@@ -274,9 +288,11 @@ def load_all_features_batched(
         subj_data: Dict[str, List[np.ndarray]] = {ft: [] for ft in feature_types}
         subj_vtc: List[np.ndarray] = []
         subj_task: List[np.ndarray] = []
+        subj_inc_task: List[List[np.ndarray]] = []
         subj_bad: List[np.ndarray] = []
+        subj_run_idx: List[np.ndarray] = []
 
-        for run in runs:
+        for run_pos, run in enumerate(runs):
             files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_pattern}"))
             if not files:
                 continue
@@ -333,16 +349,26 @@ def load_all_features_batched(
 
                 for ft in feature_types:
                     subj_data[ft].append(feat_blocks[ft])
-                subj_vtc.append(np.array(meta["VTC_filtered"]))
+                # In window mode, anchor VTC = mean of constituent trials
+                if "window_vtc_mean" in meta:
+                    run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
+                else:
+                    run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
+                subj_vtc.append(run_vtc)
                 subj_task.append(np.array(meta["task"]))
+                if "included_task" in meta:
+                    subj_inc_task.append([np.asarray(t) for t in meta["included_task"]])
+                else:
+                    subj_inc_task.append([np.array([t]) for t in meta["task"]])
 
                 # bad_ar2 is an opt-in tag added by the segmenter / backfill.
                 # If absent, treat all trials as good and warn once.
-                run_n = len(meta["VTC_filtered"])
+                run_n = len(run_vtc)
                 if "bad_ar2" in meta:
                     subj_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
                 else:
                     subj_bad.append(np.zeros(run_n, dtype=bool))
+                subj_run_idx.append(np.full(run_n, run_pos, dtype=int))
 
             finally:
                 npz_data.close()
@@ -355,18 +381,43 @@ def load_all_features_batched(
             subj_data[ft] = np.concatenate(subj_data[ft], axis=0)
         subj_vtc_arr = np.concatenate(subj_vtc)
         subj_task_arr = np.concatenate(subj_task)
+        subj_inc_task_flat = [arr for run_list in subj_inc_task for arr in run_list]
         subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.zeros_like(subj_vtc_arr, dtype=bool)
+        subj_run_idx_arr = (
+            np.concatenate(subj_run_idx) if subj_run_idx else np.zeros_like(subj_vtc_arr, dtype=int)
+        )
         if subj_bad_arr.any():
             bad_metadata_present = True
 
-        # Per-subject IN/OUT bounds — computed on ALL trials (including bads)
-        # so the percentile cut is anchored to the full VTC distribution.
-        # Bad trials are dropped *after* masking.
-        inbound = np.nanpercentile(subj_vtc_arr, inout_bounds[0])
-        outbound = np.nanpercentile(subj_vtc_arr, inout_bounds[1])
-        task_mask = subj_task_arr == "correct_commission"
-        in_mask_full = task_mask & (subj_vtc_arr <= inbound)
-        out_mask_full = task_mask & (subj_vtc_arr >= outbound)
+        # IN/OUT bounds — ``per-run`` matches cc_saflow (bounds within each
+        # run); ``per-subject`` pools across runs (saflow's prior behaviour).
+        # Bounds are computed on ALL trials (including bads) so the percentile
+        # cut stays anchored even though noisy trials never enter the t-test.
+        if zoning == "per-run":
+            in_zone = np.zeros_like(subj_vtc_arr, dtype=bool)
+            out_zone = np.zeros_like(subj_vtc_arr, dtype=bool)
+            for rp in np.unique(subj_run_idx_arr):
+                run_sel = subj_run_idx_arr == rp
+                run_v = subj_vtc_arr[run_sel]
+                if np.all(np.isnan(run_v)):
+                    continue
+                rin = np.nanpercentile(run_v, inout_bounds[0])
+                rout = np.nanpercentile(run_v, inout_bounds[1])
+                in_zone[run_sel] = subj_vtc_arr[run_sel] <= rin
+                out_zone[run_sel] = subj_vtc_arr[run_sel] >= rout
+        else:
+            inbound = np.nanpercentile(subj_vtc_arr, inout_bounds[0])
+            outbound = np.nanpercentile(subj_vtc_arr, inout_bounds[1])
+            in_zone = subj_vtc_arr <= inbound
+            out_zone = subj_vtc_arr >= outbound
+
+        task_mask = select_window_mask(
+            included_task_per_epoch=subj_inc_task_flat,
+            task_per_epoch=subj_task_arr,
+            type_how=trial_type,
+        )
+        in_mask_full = task_mask & in_zone
+        out_mask_full = task_mask & out_zone
         mid_mask_full = task_mask & ~in_mask_full & ~out_mask_full
 
         # Bookkeeping before bad-filter
@@ -451,6 +502,8 @@ def load_all_features_batched(
             "feature_type": ft,
             "space": space,
             "inout_bounds": inout_bounds,
+            "trial_type": trial_type,
+            "zoning": zoning,
             "n_subjects": int(len(np.unique(groups))),
             "n_trials": int(len(y)),
             "n_in": total_in,
@@ -484,6 +537,8 @@ def load_all_features(
     config: Dict,
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
+    trial_type: str = "alltrials",
+    zoning: str = "per-subject",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Single-feature wrapper around :func:`load_all_features_batched`.
 
@@ -497,6 +552,8 @@ def load_all_features(
         config=config,
         subjects=subjects,
         drop_bad_trials=drop_bad_trials,
+        trial_type=trial_type,
+        zoning=zoning,
     )
     return blocks[feature_type]
 
@@ -1209,6 +1266,35 @@ def main():
         help="Skip the bad_ar2 filter (keeps trials inside autoreject-rejected "
              "BAD_AR2 windows). Default is to drop them.",
     )
+    parser.add_argument(
+        "--trial-type",
+        default="alltrials",
+        choices=["alltrials", "correct", "rare", "lapse", "correct_commission"],
+        help=(
+            "Trial-type filter applied per epoch (mirrors cc_saflow's "
+            "select_epoch). 'alltrials' (default) = no filter, matches "
+            "cc_saflow's main analysis."
+        ),
+    )
+    parser.add_argument(
+        "--zoning",
+        default="per-run",
+        choices=["per-run", "per-subject"],
+        help=(
+            "How IN/OUT VTC percentile bounds are computed. 'per-run' "
+            "(default, matches cc_saflow); 'per-subject' pools all runs."
+        ),
+    )
+    parser.add_argument(
+        "--n-events-window",
+        type=int,
+        default=8,
+        help=(
+            "Window size used by upstream feature extraction. Used by the "
+            "subject-spectrum loader to pick the right desc-suffixed PSD "
+            "files. Default 8 matches cc_saflow."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1268,6 +1354,9 @@ def main():
             config=config,
             drop_bad_trials=not args.keep_bad_trials,
             n_jobs=args.n_jobs,
+            trial_type=args.trial_type,
+            zoning=args.zoning,
+            n_events_window=args.n_events_window,
         )
     else:
         logger.info("Loading features (batched)...")
@@ -1277,6 +1366,9 @@ def main():
             inout_bounds=inout_bounds,
             config=config,
             drop_bad_trials=not args.keep_bad_trials,
+            trial_type=args.trial_type,
+            zoning=args.zoning,
+            n_events_window=args.n_events_window,
         )
 
     for feat_idx, ft in enumerate(feature_types, start=1):

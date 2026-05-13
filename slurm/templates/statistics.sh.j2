@@ -14,6 +14,8 @@ echo "  Alpha:           {{ alpha }}"
 echo "  Permutations:    {{ n_permutations }}"
 echo "  Analysis mode:   {{ analysis_mode }}"
 echo "  Aggregate:       {{ aggregate }}"
+echo "  Trial type:      {{ trial_type }}"
+echo "  Zoning:          {{ zoning }}"
 echo ""
 
 python -m code.statistics.run_group_statistics \
@@ -26,6 +28,9 @@ python -m code.statistics.run_group_statistics \
     --n-jobs {{ n_jobs }} \
     --analysis-mode {{ analysis_mode }} \
     --aggregate {{ aggregate }} \
+    --trial-type {{ trial_type }} \
+    --zoning {{ zoning }} \
+    --n-events-window {{ n_events_window }} \
     {% if visualize %}--visualize{% endif %}
 
 STATS_EXIT=$?

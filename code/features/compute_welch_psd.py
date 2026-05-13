@@ -56,7 +56,9 @@ def compute_welch_psd_from_continuous(
     tmax: float = 1.278,
     n_jobs: int = -1,
     annotations=None,
-) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    n_events_window: int = 1,
+    average: str = "median",
+) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame, Dict]:
     """Compute Welch PSD from continuous data (space-agnostic).
 
     Parameters
@@ -71,27 +73,32 @@ def compute_welch_psd_from_continuous(
         FFT length for Welch's method. If None, uses min(256, n_samples)
     n_overlap : int, optional
         Number of overlapping samples. If None, uses n_fft // 2
-    tmin : float
-        Epoch start time relative to event
-    tmax : float
-        Epoch end time relative to event
+    tmin, tmax : float
+        Epoch window relative to event (seconds), per single trial.
     n_jobs : int
         Number of parallel jobs
+    n_events_window : int
+        Number of consecutive stim trials per epoch (1 = single-trial,
+        8 = cc_saflow's sliding window). Forwarded to segmenter.
+    average : str
+        Welch averaging mode ('mean' or 'median').
 
     Returns
     -------
     psds : np.ndarray
-        Welch PSDs, shape (n_trials, n_spatial, n_freqs)
+        Welch PSDs, shape (n_epochs, n_spatial, n_freqs)
     freqs : np.ndarray
         Frequency bins
     trial_metadata : pd.DataFrame
-        Metadata for each trial
+        Metadata for each epoch (window-level when n_events_window > 1)
     params : dict
-        Dictionary with 'n_fft' and 'n_overlap' values actually used
+        Dictionary with 'n_fft', 'n_overlap', 'average', 'n_events_window'.
     """
-    logger.info("Computing Welch PSD from continuous data")
+    logger.info(
+        f"Computing Welch PSD from continuous data (n_events_window={n_events_window})"
+    )
 
-    # Segment continuous data into trials
+    # Segment continuous data into epochs (per-trial or per-window)
     segmented_data, trial_metadata = segment_spatial_temporal_data(
         data=data,
         events_df=events_df,
@@ -99,6 +106,7 @@ def compute_welch_psd_from_continuous(
         tmin=tmin,
         tmax=tmax,
         annotations=annotations,
+        n_events_window=n_events_window,
     )
 
     logger.info(f"Segmented data shape: {segmented_data.shape}")
@@ -110,17 +118,20 @@ def compute_welch_psd_from_continuous(
     if n_overlap is None:
         n_overlap = n_fft // 2
 
-    logger.info(f"Computing Welch PSD (n_fft={n_fft}, n_overlap={n_overlap}, n_samples={n_samples})...")
+    logger.info(
+        f"Computing Welch PSD (n_fft={n_fft}, n_overlap={n_overlap}, "
+        f"average={average}, n_samples={n_samples})..."
+    )
 
-    # Compute Welch PSD for all trials
-    # Input: (n_trials, n_spatial, n_times)
-    # Output: (n_trials, n_spatial, n_freqs)
+    # Compute Welch PSD for all epochs
+    # Input: (n_epochs, n_spatial, n_times)
+    # Output: (n_epochs, n_spatial, n_freqs)
     psds, freqs = mne.time_frequency.psd_array_welch(
         segmented_data,
         sfreq=sfreq,
         n_fft=n_fft,
         n_overlap=n_overlap,
-        average="median",
+        average=average,
         n_jobs=n_jobs,
         verbose=False,
     )
@@ -128,7 +139,12 @@ def compute_welch_psd_from_continuous(
     logger.info(f"Welch PSD shape: {psds.shape}")
     logger.info(f"Frequency range: {freqs[0]:.2f} - {freqs[-1]:.2f} Hz ({len(freqs)} bins)")
 
-    params = {"n_fft": n_fft, "n_overlap": n_overlap}
+    params = {
+        "n_fft": n_fft,
+        "n_overlap": n_overlap,
+        "average": average,
+        "n_events_window": n_events_window,
+    }
     return psds, freqs, trial_metadata, params
 
 
@@ -143,6 +159,8 @@ def save_welch_psds(
     config: Dict,
     n_fft: int,
     n_overlap: int,
+    n_events_window: int = 1,
+    average: str = "median",
 ):
     """Save Welch PSDs to disk.
 
@@ -171,14 +189,16 @@ def save_welch_psds(
     """
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Build output filename
+    # Build output filename. Window-mode encodes the window size in desc so
+    # single-trial and windowed outputs don't collide.
+    desc = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
     fname = (
         f"sub-{subject}_"
         f"ses-recording_"
         f"task-gradCPT_"
         f"run-{run}_"
         f"space-{space}_"
-        f"desc-welch_"
+        f"desc-{desc}_"
         f"psds.npz"
     )
 
@@ -217,6 +237,8 @@ def save_welch_psds(
         "method": "welch",
         "n_fft": n_fft,
         "n_overlap": n_overlap,
+        "average": average,
+        "n_events_window": n_events_window,
         "n_trials": psds.shape[0],
         "n_spatial": psds.shape[1],
         "n_freqs": psds.shape[2],
@@ -321,6 +343,18 @@ def parse_args() -> argparse.Namespace:
         help="Number of parallel jobs (default: -1, use all CPUs)",
     )
 
+    parser.add_argument(
+        "--n-events-window",
+        type=int,
+        default=8,
+        help=(
+            "Number of consecutive stim trials per epoch. 1 = single-trial, "
+            "8 = cc_saflow's sliding window (default). When >=2, Welch params "
+            "are taken from the 'window8' config profile (n_fft=2044, "
+            "overlap=0.75, average='mean')."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -369,10 +403,11 @@ def main() -> int:
     features_root = data_root / config["paths"]["features"]
     output_root = features_root / f"welch_psds_{args.space}" / f"sub-{args.subject}"
 
-    # Check if output already exists
+    # Check if output already exists (matches save_welch_psds filename logic)
+    desc = "welch" if args.n_events_window <= 1 else f"welchw{args.n_events_window}"
     output_file = (
         output_root
-        / f"sub-{args.subject}_ses-recording_task-{task_name}_run-{args.run}_space-{args.space}_desc-welch_psds.npz"
+        / f"sub-{args.subject}_ses-recording_task-{task_name}_run-{args.run}_space-{args.space}_desc-{desc}_psds.npz"
     )
 
     if args.skip_existing and output_file.exists():
@@ -424,21 +459,28 @@ def main() -> int:
         config=config,
     )
 
-    # Resolve Welch parameters from config if not given on CLI
+    # Resolve Welch parameters from config if not given on CLI.
+    # Window-mode (n_events_window >= 2) auto-selects the "window8" profile,
+    # which mirrors cc_saflow's hardcoded n_fft=2044, n_overlap=1533, mean.
     sfreq = spatial_data.sfreq
     n_fft = cli_n_fft
     n_overlap = cli_n_overlap
 
-    if n_fft is None or n_overlap is None:
-        welch_cfg = config.get("features", {}).get("welch_psd", [{}])
-        # Use the first (default) welch_psd config entry
-        default_welch = welch_cfg[0] if welch_cfg else {}
-        if n_fft is None and "window_sec" in default_welch:
-            n_fft = int(default_welch["window_sec"] * sfreq)
-            logger.info(f"n_fft from config: window_sec={default_welch['window_sec']}s -> n_fft={n_fft}")
-        if n_overlap is None and "overlap" in default_welch and n_fft is not None:
-            n_overlap = int(default_welch["overlap"] * n_fft)
-            logger.info(f"n_overlap from config: overlap={default_welch['overlap']} -> n_overlap={n_overlap}")
+    welch_cfg = config.get("features", {}).get("welch_psd", [{}])
+    profile_name = "window8" if args.n_events_window >= 2 else "default"
+    profile = next(
+        (p for p in welch_cfg if p.get("name") == profile_name),
+        welch_cfg[0] if welch_cfg else {},
+    )
+    logger.info(f"Welch profile: {profile.get('name', '?')}")
+    average = profile.get("average", "median")
+
+    if n_fft is None and "window_sec" in profile:
+        n_fft = int(profile["window_sec"] * sfreq)
+        logger.info(f"n_fft from config: window_sec={profile['window_sec']}s -> n_fft={n_fft}")
+    if n_overlap is None and "overlap" in profile and n_fft is not None:
+        n_overlap = int(profile["overlap"] * n_fft)
+        logger.info(f"n_overlap from config: overlap={profile['overlap']} -> n_overlap={n_overlap}")
 
     # Compute Welch PSD
     psds, freqs, trial_metadata, welch_params = compute_welch_psd_from_continuous(
@@ -451,6 +493,8 @@ def main() -> int:
         tmax=tmax,
         n_jobs=args.n_jobs,
         annotations=annotations,
+        n_events_window=args.n_events_window,
+        average=average,
     )
 
     # Save PSDs
@@ -466,6 +510,8 @@ def main() -> int:
         config=config,
         n_fft=welch_params["n_fft"],
         n_overlap=welch_params["n_overlap"],
+        n_events_window=welch_params["n_events_window"],
+        average=welch_params["average"],
     )
 
     logger.info("✓ Stage 1 complete: Welch PSDs computed and saved!")

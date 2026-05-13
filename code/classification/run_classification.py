@@ -41,6 +41,7 @@ from sklearn.model_selection import (
 from tqdm import tqdm
 
 from code.classification.classifiers import get_classifier
+from code.features.utils import select_window_mask
 from code.statistics.corrections import (
     apply_bonferroni_correction,
     apply_fdr_correction,
@@ -129,31 +130,43 @@ def expand_feature_set(name: str, config: Dict) -> List[str]:
     )
 
 
-def parse_feature(feature: str) -> Tuple[str, str, Optional[str]]:
+def parse_feature(
+    feature: str, n_events_window: int = 1
+) -> Tuple[str, str, Optional[str]]:
     """Map a feature name to (folder_prefix, file_suffix, sub_key).
+
+    The file desc suffix is window-aware (``w{N}`` appended when
+    ``n_events_window >= 2``) so the classifier loads the right artifacts.
 
     Returns:
         (folder_prefix, file_pattern_suffix, sub_key)
 
     Examples:
-        fooof_exponent          -> ("fooof", "desc-fooof.npz", "exponent")
-        psd_alpha               -> ("welch_psds", "desc-welch_psds.npz", "alpha")
-        psd_corrected_alpha     -> ("welch_psds_corrected",
-                                    "desc-welch-corrected_psds.npz", "alpha")
-        complexity_lzc_median   -> ("complexity", "desc-complexity.npz", "lzc_median")
+        fooof_exponent (w=1)    -> ("fooof", "desc-fooof.npz", "exponent")
+        fooof_exponent (w=8)    -> ("fooof", "desc-fooofw8.npz", "exponent")
+        psd_alpha (w=8)         -> ("welch_psds", "desc-welchw8_psds.npz", "alpha")
+        psd_corrected_alpha (w=8) -> ("welch_psds_corrected",
+                                      "desc-welch-corrw8_psds.npz", "alpha")
+        complexity_lzc_median (w=8) -> ("complexity", "desc-complexityw8.npz",
+                                        "lzc_median")
     """
+    w = "" if n_events_window <= 1 else f"w{n_events_window}"
     if feature.startswith("fooof_"):
-        return "fooof", "desc-fooof.npz", feature[len("fooof_"):]
+        return "fooof", f"desc-fooof{w}.npz", feature[len("fooof_"):]
     if feature.startswith("psd_corrected_"):
+        corr_desc = (
+            "welch-corrected" if n_events_window <= 1 else f"welch-corrw{n_events_window}"
+        )
         return (
             "welch_psds_corrected",
-            "desc-welch-corrected_psds.npz",
+            f"desc-{corr_desc}_psds.npz",
             feature[len("psd_corrected_"):],
         )
     if feature.startswith("psd_"):
-        return "welch_psds", "desc-welch_psds.npz", feature[len("psd_"):]
+        welch_desc = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
+        return "welch_psds", f"desc-{welch_desc}_psds.npz", feature[len("psd_"):]
     if feature.startswith("complexity_"):
-        return "complexity", "desc-complexity.npz", feature[len("complexity_"):]
+        return "complexity", f"desc-complexity{w}.npz", feature[len("complexity_"):]
     raise ValueError(
         f"Unknown feature '{feature}'. Expected one of: fooof_*, psd_*, "
         f"psd_corrected_*, complexity_*"
@@ -167,13 +180,15 @@ def load_classification_data(
     config: Dict,
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
+    trial_type: str = "alltrials",
+    zoning: str = "per-subject",
+    n_events_window: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
-    """Load per-trial feature data, split into IN/OUT using per-subject VTC.
+    """Load per-epoch feature data, split into IN/OUT using VTC quartiles.
 
-    IN/OUT thresholds are computed per subject from VTC over **all** trials
-    (including those flagged ``bad_ar2``). Trials flagged ``bad_ar2`` by the
-    autoreject second pass are dropped after masking when
-    ``drop_bad_trials=True`` (default).
+    IN/OUT thresholds are computed from VTC over **all** epochs (including
+    those flagged ``bad_ar2``). Epochs flagged ``bad_ar2`` by the autoreject
+    second pass are dropped after masking when ``drop_bad_trials=True``.
 
     Args:
         feature: feature name (see parse_feature).
@@ -181,7 +196,14 @@ def load_classification_data(
         inout_bounds: (low_pct, high_pct) for IN/OUT VTC zones.
         config: loaded config.yaml dictionary.
         subjects: list of subject IDs; defaults to config["bids"]["subjects"].
-        drop_bad_trials: drop trials flagged ``bad_ar2`` (default True).
+        drop_bad_trials: drop epochs flagged ``bad_ar2`` (default True).
+        trial_type: filter mode applied per epoch (mirrors cc_saflow's
+            ``select_epoch``). One of ``alltrials`` (default, matches
+            cc_saflow's main analysis), ``correct``, ``rare``, ``lapse``,
+            or ``correct_commission`` (saflow's previous single-trial default).
+        zoning: how IN/OUT VTC percentiles are computed. ``per-subject``
+            pools all of a subject's epochs (saflow's previous behaviour),
+            ``per-run`` computes bounds within each run (matches cc_saflow).
 
     Returns:
         X        : (n_trials, n_spatial)
@@ -189,7 +211,9 @@ def load_classification_data(
         groups   : (n_trials,) subject indices
         metadata : dict with shape, retention, and provenance info.
     """
-    folder_prefix, file_suffix, sub_key = parse_feature(feature)
+    folder_prefix, file_suffix, sub_key = parse_feature(
+        feature, n_events_window=n_events_window
+    )
 
     data_root = Path(config["paths"]["data_root"])
     feature_root = data_root / config["paths"]["features"] / f"{folder_prefix}_{space}"
@@ -228,9 +252,11 @@ def load_classification_data(
         subj_data = []
         subj_vtc = []
         subj_task = []
+        subj_inc_task: List[List[np.ndarray]] = []  # length-N per-epoch task arrays
         subj_bad: List[np.ndarray] = []
+        subj_run_idx: List[np.ndarray] = []  # per-epoch run index (for per-run zoning)
 
-        for run in runs:
+        for run_pos, run in enumerate(runs):
             files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_suffix}"))
             if not files:
                 continue
@@ -275,14 +301,29 @@ def load_classification_data(
                 spatial_names = list(npz["ch_names"])
 
             subj_data.append(feat)
-            subj_vtc.append(np.asarray(meta["VTC_filtered"], dtype=float))
+            # In windowed mode the per-epoch VTC anchor is window_vtc_mean
+            # (mean of the constituent trial VTCs). Fall back to the scalar
+            # VTC_filtered for single-trial mode.
+            if "window_vtc_mean" in meta:
+                run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
+            else:
+                run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
+            subj_vtc.append(run_vtc)
             subj_task.append(np.asarray(meta["task"]))
 
-            run_n = len(meta["VTC_filtered"])
+            # included_task: length-N arrays per epoch (windowed mode) or
+            # singletons (single-trial fallback)
+            if "included_task" in meta:
+                subj_inc_task.append([np.asarray(t) for t in meta["included_task"]])
+            else:
+                subj_inc_task.append([np.array([t]) for t in meta["task"]])
+
+            run_n = len(run_vtc)
             if "bad_ar2" in meta:
                 subj_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
             else:
                 subj_bad.append(np.zeros(run_n, dtype=bool))
+            subj_run_idx.append(np.full(run_n, run_pos, dtype=int))
 
         if not subj_data:
             continue
@@ -290,17 +331,40 @@ def load_classification_data(
         subj_data = np.concatenate(subj_data, axis=0)
         subj_vtc = np.concatenate(subj_vtc)
         subj_task = np.concatenate(subj_task)
+        subj_inc_task_flat = [arr for run_list in subj_inc_task for arr in run_list]
         subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.zeros_like(subj_vtc, dtype=bool)
+        subj_run_idx_arr = np.concatenate(subj_run_idx) if subj_run_idx else np.zeros_like(subj_vtc, dtype=int)
         if subj_bad_arr.any():
             bad_metadata_present = True
 
-        # IN/OUT thresholds anchored to the full VTC distribution (incl. bads)
-        inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
-        outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
+        # IN/OUT thresholds. ``per-run`` matches cc_saflow (bounds computed
+        # within each run); ``per-subject`` pools all runs for this subject.
+        if zoning == "per-run":
+            inbound_arr = np.full_like(subj_vtc, np.nan, dtype=float)
+            outbound_arr = np.full_like(subj_vtc, np.nan, dtype=float)
+            for rp in np.unique(subj_run_idx_arr):
+                run_sel = subj_run_idx_arr == rp
+                run_v = subj_vtc[run_sel]
+                if np.all(np.isnan(run_v)):
+                    continue
+                inbound_arr[run_sel] = np.nanpercentile(run_v, inout_bounds[0])
+                outbound_arr[run_sel] = np.nanpercentile(run_v, inout_bounds[1])
+            in_zone = subj_vtc <= inbound_arr
+            out_zone = subj_vtc >= outbound_arr
+        else:
+            inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
+            outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
+            in_zone = subj_vtc <= inbound
+            out_zone = subj_vtc >= outbound
 
-        task_mask = subj_task == "correct_commission"
-        in_mask_full = task_mask & (subj_vtc <= inbound)
-        out_mask_full = task_mask & (subj_vtc >= outbound)
+        # Trial-type filter (mirrors cc_saflow's select_epoch)
+        task_mask = select_window_mask(
+            included_task_per_epoch=subj_inc_task_flat,
+            task_per_epoch=subj_task,
+            type_how=trial_type,
+        )
+        in_mask_full = task_mask & in_zone
+        out_mask_full = task_mask & out_zone
         mid_mask_full = task_mask & ~in_mask_full & ~out_mask_full
 
         n_bad_in = int((in_mask_full & subj_bad_arr).sum()) if drop_bad_trials else 0
@@ -359,6 +423,8 @@ def load_classification_data(
         "feature": feature,
         "space": space,
         "inout_bounds": list(inout_bounds),
+        "trial_type": trial_type,
+        "zoning": zoning,
         "n_subjects": int(len(np.unique(groups))),
         "n_trials": int(len(y)),
         "n_spatial": int(X.shape[1]),
@@ -387,6 +453,9 @@ def load_combined_features(
     config: Dict,
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
+    trial_type: str = "alltrials",
+    zoning: str = "per-subject",
+    n_events_window: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load multiple features and stack along a new feature axis.
 
@@ -412,6 +481,9 @@ def load_combined_features(
             config=config,
             subjects=subjects,
             drop_bad_trials=drop_bad_trials,
+            trial_type=trial_type,
+            zoning=zoning,
+            n_events_window=n_events_window,
         )
         if y_ref is None:
             y_ref = y_f
@@ -438,6 +510,8 @@ def load_combined_features(
         "features": list(features),
         "space": space,
         "inout_bounds": list(inout_bounds),
+        "trial_type": trial_type,
+        "zoning": zoning,
         "n_subjects": int(len(np.unique(groups_ref))),
         "n_trials": int(len(y_ref)),
         "n_spatial": int(X.shape[1]),
@@ -615,7 +689,7 @@ def run_univariate_with_tmax(
     pvals_unc = (np.sum(perm_scores >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )
-    max_perm = perm_scores.max(axis=1)
+    max_perm = np.nanmax(perm_scores, axis=1)
     pvals_tmax = (np.sum(max_perm[:, None] >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )
@@ -933,7 +1007,8 @@ def main():
         help="univariate = per-channel/ROI + t-max; multivariate = pooled features.",
     )
     parser.add_argument(
-        "--clf", default="lda", choices=["lda", "svm", "rf", "logistic"]
+        "--clf", default="logistic", choices=["lda", "svm", "rf", "logistic"],
+        help="Classifier. Default 'logistic' matches cc_saflow's run_classifs.py."
     )
     parser.add_argument(
         "--cv", default="logo", choices=["logo", "stratified", "group"]
@@ -950,6 +1025,39 @@ def main():
         default=False,
         help="Skip the bad_ar2 filter (keeps trials inside autoreject-rejected "
              "BAD_AR2 windows). Default is to drop them.",
+    )
+    parser.add_argument(
+        "--trial-type",
+        default="alltrials",
+        choices=["alltrials", "correct", "rare", "lapse", "correct_commission"],
+        help=(
+            "Trial-type filter applied per epoch (mirrors cc_saflow's "
+            "select_epoch). 'alltrials' (default) = no filter, matches "
+            "cc_saflow's main analysis. 'correct' = window contains only "
+            "CC+CO. 'rare' = window contains a rare-stim outcome. 'lapse' = "
+            "window contains a commission error. 'correct_commission' = "
+            "saflow's previous default (all trials must be CC)."
+        ),
+    )
+    parser.add_argument(
+        "--zoning",
+        default="per-run",
+        choices=["per-run", "per-subject"],
+        help=(
+            "How IN/OUT VTC percentile bounds are computed. 'per-run' "
+            "(default, matches cc_saflow) computes within each run; "
+            "'per-subject' pools all runs (saflow's previous behaviour)."
+        ),
+    )
+    parser.add_argument(
+        "--n-events-window",
+        type=int,
+        default=8,
+        help=(
+            "Window size used by upstream feature extraction. Determines "
+            "which desc-suffixed feature files to load. Default 8 matches "
+            "cc_saflow's sliding window."
+        ),
     )
     args = parser.parse_args()
 
@@ -1069,6 +1177,9 @@ def main():
                 inout_bounds=inout_bounds,
                 config=config,
                 drop_bad_trials=not args.keep_bad_trials,
+                trial_type=args.trial_type,
+                zoning=args.zoning,
+                n_events_window=args.n_events_window,
             )
             _run_one(label, features, X, y, groups, metadata)
         except Exception as exc:
@@ -1088,6 +1199,9 @@ def main():
                     inout_bounds=inout_bounds,
                     config=config,
                     drop_bad_trials=not args.keep_bad_trials,
+                    trial_type=args.trial_type,
+                    zoning=args.zoning,
+                    n_events_window=args.n_events_window,
                 )
                 _run_one(feat, [feat], X, y, groups, metadata)
             except Exception as exc:

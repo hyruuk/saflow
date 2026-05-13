@@ -35,6 +35,8 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from code.features.utils import select_window_mask
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,6 +161,9 @@ def load_subject_spectrum_features(
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
     n_jobs: int = -1,
+    trial_type: str = "alltrials",
+    zoning: str = "per-subject",
+    n_events_window: int = 8,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
     """Load PSD-derived features through Path 1 (subject-spectrum FOOOF).
 
@@ -207,6 +212,9 @@ def load_subject_spectrum_features(
     input_git_hashes: set = set()
     bad_metadata_present = False
 
+    # File desc suffix depends on the window size used by compute_welch_psd
+    desc_suffix = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
+
     for subj_idx, subject in enumerate(
         tqdm(subjects, desc="Loading subjects (subject-spectrum)", unit="subj")
     ):
@@ -214,17 +222,19 @@ def load_subject_spectrum_features(
         if not subj_dir.exists():
             continue
 
-        run_payloads = []  # list of (psd_block, freqs, bad, in_mask, out_mask)
-        run_ids = []
-        # First pass: collect VTC + tasks + bads from every run to compute
-        # per-subject IN/OUT thresholds on ALL trials (matches Path-2 default).
+        # First pass: collect VTC + tasks + included_task + bads from every run
+        # so per-subject (or per-run) IN/OUT thresholds can be computed on ALL
+        # epochs (matches Path-2 default).
         all_vtc: List[np.ndarray] = []
         all_task: List[np.ndarray] = []
+        all_inc_task: List[List[np.ndarray]] = []
         all_bad: List[np.ndarray] = []
         run_psd_files: List[Path] = []
 
         for run in runs:
-            files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_desc-welch_psds.npz"))
+            files = list(
+                subj_dir.glob(f"sub-{subject}_*_run-{run}_*_desc-{desc_suffix}_psds.npz")
+            )
             if not files:
                 continue
             file_path = files[0]
@@ -241,38 +251,63 @@ def load_subject_spectrum_features(
 
             with np.load(file_path, allow_pickle=True) as npz:
                 meta = npz["trial_metadata"].item()
-                all_vtc.append(np.asarray(meta["VTC_filtered"], dtype=float))
+                # Use window_vtc_mean as the anchor in window mode, else
+                # per-trial VTC_filtered.
+                if "window_vtc_mean" in meta:
+                    run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
+                else:
+                    run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
+                all_vtc.append(run_vtc)
                 all_task.append(np.asarray(meta["task"]))
+                if "included_task" in meta:
+                    all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
+                else:
+                    all_inc_task.append([np.array([t]) for t in meta["task"]])
                 if "bad_ar2" in meta:
                     all_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
                 else:
-                    all_bad.append(np.zeros(len(meta["VTC_filtered"]), dtype=bool))
+                    all_bad.append(np.zeros(len(run_vtc), dtype=bool))
 
         if not run_psd_files:
             continue
 
         subj_vtc = np.concatenate(all_vtc)
         subj_task = np.concatenate(all_task)
+        subj_inc_flat = [arr for run_list in all_inc_task for arr in run_list]
         subj_bad = np.concatenate(all_bad) if all_bad else np.zeros_like(subj_vtc, dtype=bool)
         if subj_bad.any():
             bad_metadata_present = True
 
-        # Per-subject IN/OUT thresholds on ALL trials (Path-1/Path-2 share this rule)
-        inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
-        outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
+        # Pooled (subject-level) thresholds; per-run bounds applied below.
+        pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
+        pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
 
-        # Now walk runs again, splitting each run's trials by VTC + task,
+        # Now walk runs again, splitting each run's epochs by VTC + trial-type,
         # applying the bad filter, computing the median PSD + FOOOF fit.
         run_blocks: List[Dict[str, Dict[str, np.ndarray]]] = []
-        cursor = 0
         n_in_total, n_out_total, n_bad_in, n_bad_out = 0, 0, 0, 0
 
-        for file_path, vtc, task, bad in zip(run_psd_files, all_vtc, all_task, all_bad):
+        for file_path, vtc, task, inc_task_run, bad in zip(
+            run_psd_files, all_vtc, all_task, all_inc_task, all_bad
+        ):
             with np.load(file_path, allow_pickle=True) as npz:
-                psd_block = np.asarray(npz["psds"])  # (n_trials, n_chans, n_freqs)
+                psd_block = np.asarray(npz["psds"])  # (n_epochs, n_chans, n_freqs)
                 freqs = np.asarray(npz["freqs"])
 
-            task_mask = task == "correct_commission"
+            if zoning == "per-run":
+                if np.all(np.isnan(vtc)):
+                    continue
+                inbound = np.nanpercentile(vtc, inout_bounds[0])
+                outbound = np.nanpercentile(vtc, inout_bounds[1])
+            else:
+                inbound = pooled_inbound
+                outbound = pooled_outbound
+
+            task_mask = select_window_mask(
+                included_task_per_epoch=inc_task_run,
+                task_per_epoch=task,
+                type_how=trial_type,
+            )
             in_mask_full = task_mask & (vtc <= inbound)
             out_mask_full = task_mask & (vtc >= outbound)
             n_bad_in += int((in_mask_full & bad).sum()) if drop_bad_trials else 0

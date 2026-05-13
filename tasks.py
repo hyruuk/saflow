@@ -631,7 +631,8 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
 # ==============================================================================
 
 @task
-def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False):
+def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False,
+          n_events_window=8):
     """Extract FOOOF aperiodic parameters and corrected PSDs.
 
     Computes:
@@ -641,17 +642,24 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
 
     FOOOF parameters (freq_range, aperiodic_mode) come from config.yaml.
 
+    Args:
+        n_events_window: Window size used by upstream Welch (1 = single-trial,
+            8 = cc_saflow's sliding window, default). Determines which Welch
+            file to load and which desc suffix to write.
+
     Examples:
         invoke pipeline.features.fooof --subject=04
         invoke pipeline.features.fooof --subject=04 --space=aparc.a2009s
         invoke pipeline.features.fooof --slurm  # All subjects on cluster
+        invoke pipeline.features.fooof --n-events-window=1  # single-trial mode
     """
     print("=" * 80)
     print("Feature Extraction - FOOOF")
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "fooof", subject, runs, space, skip_existing=skip_existing, dry_run=dry_run)
+        _features_slurm(c, "fooof", subject, runs, space, skip_existing=skip_existing,
+                        dry_run=dry_run, n_events_window=n_events_window)
         return
 
     from code.utils.config import load_config
@@ -659,29 +667,37 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
     subjects = [subject] if subject else config["bids"]["subjects"]
     print(f"Processing {len(subjects)} subject(s)\n")
     for subj in subjects:
-        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing)
+        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing,
+                        n_events_window=n_events_window)
     print(f"\n✓ FOOOF extraction complete")
 
 
 @task
-def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False):
+def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False,
+        n_events_window=8):
     """Extract power spectral density features.
 
     Computes:
-    - Welch PSD estimates per trial
+    - Welch PSD estimates per epoch
     - Saves with IN/OUT classification metadata
+
+    Args:
+        n_events_window: Number of consecutive stim trials per epoch.
+            1 = single-trial, 8 = cc_saflow's sliding window (default).
 
     Examples:
         invoke pipeline.features.psd --subject=04
         invoke pipeline.features.psd --subject=04 --space=aparc.a2009s
         invoke pipeline.features.psd --slurm  # All subjects on cluster
+        invoke pipeline.features.psd --n-events-window=1  # single-trial mode
     """
     print("=" * 80)
     print("Feature Extraction - PSD")
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "psd", subject, runs, space, skip_existing=skip_existing, dry_run=dry_run)
+        _features_slurm(c, "psd", subject, runs, space, skip_existing=skip_existing,
+                        dry_run=dry_run, n_events_window=n_events_window)
         return
 
     from code.utils.config import load_config
@@ -689,19 +705,24 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
     subjects = [subject] if subject else config["bids"]["subjects"]
     print(f"Processing {len(subjects)} subject(s)\n")
     for subj in subjects:
-        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing)
+        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing,
+                        n_events_window=n_events_window)
     print(f"\n✓ PSD extraction complete")
 
 
 @task
 def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc entropy fractal",
-               overwrite=False, slurm=False, dry_run=False):
+               overwrite=False, slurm=False, dry_run=False, n_events_window=8):
     """Extract complexity and entropy measures.
 
     Computes:
     - Lempel-Ziv Complexity (LZC)
     - Entropy measures (permutation, spectral, sample, approximate, SVD)
     - Fractal dimensions (Higuchi, Petrosian, Katz, DFA)
+
+    Args:
+        n_events_window: Number of consecutive stim trials per epoch.
+            1 = single-trial, 8 = cc_saflow's sliding window (default).
 
     Examples:
         invoke pipeline.features.complexity --subject=04
@@ -714,7 +735,8 @@ def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc 
 
     if slurm:
         _features_slurm(c, "complexity", subject, runs, space, skip_existing=not overwrite,
-                        complexity_types=complexity_type, dry_run=dry_run)
+                        complexity_types=complexity_type, dry_run=dry_run,
+                        n_events_window=n_events_window)
         return
 
     from code.utils.config import load_config
@@ -723,27 +745,34 @@ def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc 
     print(f"Processing {len(subjects)} subject(s)\n")
     for subj in subjects:
         _features_local(c, "complexity", subj, runs, space, skip_existing=not overwrite,
-                        complexity_types=complexity_type)
+                        complexity_types=complexity_type, n_events_window=n_events_window)
     print(f"\n✓ Complexity extraction complete")
 
 
 @task
-def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slurm=False, dry_run=False):
+def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slurm=False, dry_run=False,
+                n_events_window=8):
     """Extract all feature types (PSD, FOOOF, complexity).
 
     Order: PSD -> FOOOF -> Complexity (FOOOF depends on PSD)
+
+    Args:
+        n_events_window: Number of consecutive stim trials per epoch.
+            1 = single-trial, 8 = cc_saflow's sliding window (default).
 
     Examples:
         invoke pipeline.features.all --subject=04
         invoke pipeline.features.all --subject=04 --space=aparc.a2009s
         invoke pipeline.features.all --slurm  # All subjects on cluster
+        invoke pipeline.features.all --n-events-window=1  # single-trial mode
     """
     print("=" * 80)
-    print(f"Feature Extraction - All Features (space={space})")
+    print(f"Feature Extraction - All Features (space={space}, window={n_events_window})")
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "all", subject, runs, space, skip_existing=not overwrite, dry_run=dry_run)
+        _features_slurm(c, "all", subject, runs, space, skip_existing=not overwrite,
+                        dry_run=dry_run, n_events_window=n_events_window)
         return
 
     from code.utils.config import load_config
@@ -755,11 +784,14 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
     for subj in subjects:
         print(f"\n{'='*40}\nSubject: {subj}\n{'='*40}")
         print("\n[1/3] Extracting PSD features...")
-        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing)
+        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing,
+                        n_events_window=n_events_window)
         print("\n[2/3] Extracting FOOOF features...")
-        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing)
+        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing,
+                        n_events_window=n_events_window)
         print("\n[3/3] Extracting Complexity features...")
-        _features_local(c, "complexity", subj, runs, space, skip_existing=skip_existing)
+        _features_local(c, "complexity", subj, runs, space, skip_existing=skip_existing,
+                        n_events_window=n_events_window)
 
     print("\n" + "=" * 80)
     print("✓ All feature extraction complete!")
@@ -775,6 +807,7 @@ def stats(c, features, space="sensor", test="paired_ttest",
           correction="tmax", alpha=0.05, n_permutations=10000,
           n_jobs=1, average_trials=True, aggregate="median", visualize=False,
           continue_on_error=True,
+          trial_type="alltrials", zoning="per-run", n_events_window=8,
           slurm_time=None, slurm_mem=None, slurm_cpus=None,
           slurm=False, dry_run=False):
     """Run group-level statistical analysis (IN vs OUT) on one or more features.
@@ -828,6 +861,9 @@ def stats(c, features, space="sensor", test="paired_ttest",
             average_trials=average_trials,
             aggregate=aggregate,
             visualize=visualize,
+            trial_type=trial_type,
+            zoning=zoning,
+            n_events_window=n_events_window,
             slurm_time=slurm_time,
             slurm_mem=slurm_mem,
             slurm_cpus=slurm_cpus,
@@ -854,7 +890,10 @@ def stats(c, features, space="sensor", test="paired_ttest",
                "--correction", correction, "--alpha", str(alpha),
                "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
                "--analysis-mode", other_mode,
-               "--aggregate", aggregate]
+               "--aggregate", aggregate,
+               "--trial-type", trial_type,
+               "--zoning", zoning,
+               "--n-events-window", str(n_events_window)]
         if visualize:
             cmd.append("--visualize")
         print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s) (mode={other_mode})")
@@ -871,7 +910,10 @@ def stats(c, features, space="sensor", test="paired_ttest",
                "--correction", correction, "--alpha", str(alpha),
                "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
                "--analysis-mode", complexity_mode,
-               "--aggregate", aggregate]
+               "--aggregate", aggregate,
+               "--trial-type", trial_type,
+               "--zoning", zoning,
+               "--n-events-window", str(n_events_window)]
         print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s) (mode={complexity_mode})")
         print(f"Running: {' '.join(cmd)}\n")
         result = c.run(" ".join(cmd), pty=True,
@@ -890,11 +932,12 @@ def stats(c, features, space="sensor", test="paired_ttest",
 
 
 @task
-def classify(c, features, clf="lda", cv="logo",
+def classify(c, features, clf="logistic", cv="logo",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
+             trial_type="alltrials", zoning="per-run", n_events_window=8,
              slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT) on one or more features.
@@ -959,6 +1002,9 @@ def classify(c, features, clf="lda", cv="logo",
             seed=seed,
             aggregate=aggregate,
             delete_chunks=delete_chunks,
+            trial_type=trial_type,
+            zoning=zoning,
+            n_events_window=n_events_window,
             slurm_time=slurm_time,
             slurm_mem=slurm_mem,
             slurm_cpus=slurm_cpus,
@@ -975,6 +1021,9 @@ def classify(c, features, clf="lda", cv="logo",
     cmd.extend(["--mode", mode])
     cmd.extend(["--n-permutations", str(n_permutations)])
     cmd.extend(["--n-jobs", str(n_jobs)])
+    cmd.extend(["--trial-type", trial_type])
+    cmd.extend(["--zoning", zoning])
+    cmd.extend(["--n-events-window", str(n_events_window)])
 
     cmd.extend(["--seed", str(seed)])
     if no_balance:
@@ -1453,7 +1502,8 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
 
 
 def _features_local(c, feature_type, subject, runs=None, space="sensor",
-                    skip_existing=True, complexity_types=None, log_level="INFO"):
+                    skip_existing=True, complexity_types=None, log_level="INFO",
+                    n_events_window=8):
     """Run feature extraction locally."""
     from code.utils.config import load_config
 
@@ -1467,18 +1517,21 @@ def _features_local(c, feature_type, subject, runs=None, space="sensor",
         if feature_type == "psd":
             cmd = [python_exe, "-m", "code.features.compute_welch_psd"]
             cmd.extend(["--subject", subject, "--run", run, "--space", space])
+            cmd.extend(["--n-events-window", str(n_events_window)])
             cmd.extend(["--log-level", log_level])
             cmd.append("--skip-existing" if skip_existing else "--no-skip-existing")
 
         elif feature_type == "fooof":
             cmd = [python_exe, "-m", "code.features.compute_fooof"]
             cmd.extend(["--subject", subject, "--run", run, "--space", space])
+            cmd.extend(["--n-events-window", str(n_events_window)])
             cmd.extend(["--log-level", log_level])
             cmd.append("--skip-existing" if skip_existing else "--no-skip-existing")
 
         elif feature_type == "complexity":
             cmd = [python_exe, "-m", "code.features.compute_complexity"]
             cmd.extend(["--subject", subject, "--run", run, "--space", space])
+            cmd.extend(["--n-events-window", str(n_events_window)])
             if complexity_types:
                 cmd.extend(["--complexity-type"] + complexity_types.split())
             if not skip_existing:
@@ -1495,7 +1548,8 @@ def _features_local(c, feature_type, subject, runs=None, space="sensor",
 
 
 def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
-                    skip_existing=True, complexity_types=None, log_level="INFO", dry_run=False):
+                    skip_existing=True, complexity_types=None, log_level="INFO", dry_run=False,
+                    n_events_window=8):
     """Submit feature extraction jobs to SLURM."""
     from datetime import datetime
     from code.utils.config import load_config
@@ -1553,6 +1607,7 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
                 "log_level": log_level,
                 "skip_existing": skip_existing,
                 "complexity_types": complexity_types,
+                "n_events_window": n_events_window,
                 "timestamp": timestamp,
             }
 
@@ -1588,6 +1643,8 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
                  correction="tmax", alpha=0.05, n_permutations=10000,
                  n_jobs=1, average_trials=True, aggregate="median",
                  visualize=False,
+                 trial_type="alltrials", zoning="per-run",
+                 n_events_window=8,
                  slurm_time=None, slurm_mem=None, slurm_cpus=None,
                  dry_run=False):
     """Submit one statistics job per feature to SLURM."""
@@ -1665,6 +1722,9 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             "analysis_mode": _mode_for(feat),
             "aggregate": aggregate,
             "visualize": visualize,
+            "trial_type": trial_type,
+            "zoning": zoning,
+            "n_events_window": n_events_window,
             "timestamp": timestamp,
         }
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
@@ -1698,11 +1758,13 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
         print(f"\n[DRY RUN] Would have submitted {len(features)} job(s)")
 
 
-def _classify_slurm(c, feature_list, clf="lda", cv="logo",
+def _classify_slurm(c, feature_list, clf="logistic", cv="logo",
                     space="sensor", mode="univariate", n_permutations=1000,
                     no_balance=False, n_jobs=-1, continue_on_error=False,
                     combine_features=False, importances=False, label=None,
                     n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
+                    trial_type="alltrials", zoning="per-run",
+                    n_events_window=8,
                     slurm_time=None, slurm_mem=None, slurm_cpus=None,
                     dry_run=False):
     """Submit classification jobs to SLURM.
@@ -1811,6 +1873,9 @@ def _classify_slurm(c, feature_list, clf="lda", cv="logo",
                 "n_chunks": n_chunks,
                 "chunk_idx": chunk_idx,
                 "seed": seed,
+                "trial_type": trial_type,
+                "zoning": zoning,
+                "n_events_window": n_events_window,
                 "timestamp": timestamp,
             }
             script_path = script_dir / f"{job_name}_{timestamp}.sh"

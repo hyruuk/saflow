@@ -301,8 +301,8 @@ features:
   # FOOOF parameters
   fooof:
     - name: "default"
-      freq_range: [2, 40]   # Frequency range for fitting
-      peak_width_limits: [0.5, 12.0]
+      freq_range: [2, 120]   # Frequency range for fitting
+      peak_width_limits: [2, 12.0]
       max_n_peaks: 8
       min_peak_height: 0.0
       peak_threshold: 2.0

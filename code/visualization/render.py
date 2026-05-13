@@ -118,13 +118,34 @@ def render_sensor_row(
     im = None
     for ax, mp in zip(axes, maps):
         title = f"{mp.label}\n(n={mp.n_significant} sig)" if mp.mask is not None else mp.label
+        # MNE's topomap interpolator propagates NaN: a single NaN sensor turns
+        # the entire surface white. Drop NaN channels from values + mask + info.
+        valid = ~np.isnan(mp.values)
+        if not valid.any():
+            ax.text(0.5, 0.5, "no data\n(all NaN)", ha="center", va="center",
+                    transform=ax.transAxes, fontsize=10, color="gray")
+            ax.set_axis_off()
+            ax.set_title(title, fontsize=10)
+            continue
+        if not valid.all():
+            vals_plot = mp.values[valid]
+            mask_plot = mp.mask[valid] if mp.mask is not None else None
+            info_plot = mne.pick_info(info, np.where(valid)[0])
+        else:
+            vals_plot = mp.values
+            mask_plot = mp.mask
+            info_plot = info
         im = mne.viz.plot_topomap(
-            mp.values, info, axes=ax, show=False, cmap=cmap,
-            mask=mp.mask, mask_params=mask_params,
+            vals_plot, info_plot, axes=ax, show=False, cmap=cmap,
+            mask=mask_plot, mask_params=mask_params,
             vlim=(vmin, vmax), extrapolate="local",
             outlines="head", sphere=0.15, contours=0,
         )
         ax.set_title(title, fontsize=10)
+
+    if im is None:
+        plt.close(fig)
+        return None
 
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(im[0], cax=cbar_ax)

@@ -10,6 +10,7 @@ echo "  Feature type:   {{ feature_type }}"
 echo "  Subject:        {{ subject }}"
 echo "  Run:            {{ run }}"
 echo "  Space:          {{ space }}"
+echo "  Window size:    {{ n_events_window }} trial(s)"
 echo "  Log level:      {{ log_level }}"
 echo "  Skip existing:  {{ skip_existing }}"
 echo ""
@@ -20,6 +21,7 @@ python -m code.features.compute_welch_psd \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
+    --n-events-window {{ n_events_window }} \
     --log-level {{ log_level }} \
     {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
 
@@ -29,6 +31,7 @@ python -m code.features.compute_fooof \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
+    --n-events-window {{ n_events_window }} \
     --log-level {{ log_level }} \
     {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
 
@@ -38,6 +41,7 @@ python -m code.features.compute_complexity \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
+    --n-events-window {{ n_events_window }} \
     {% if complexity_types %}--complexity-type "{{ complexity_types }}"{% endif %} \
     {% if not skip_existing %}--overwrite{% endif %}
 
@@ -51,6 +55,7 @@ python -m code.features.compute_welch_psd \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
+    --n-events-window {{ n_events_window }} \
     --log-level {{ log_level }} \
     {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
 
@@ -67,6 +72,7 @@ python -m code.features.compute_fooof \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
+    --n-events-window {{ n_events_window }} \
     --log-level {{ log_level }} \
     {% if skip_existing %}--skip-existing{% else %}--no-skip-existing{% endif %}
 
@@ -83,6 +89,7 @@ python -m code.features.compute_complexity \
     --subject {{ subject }} \
     --run {{ run }} \
     --space {{ space }} \
+    --n-events-window {{ n_events_window }} \
     {% if not skip_existing %}--overwrite{% endif %}
 
 COMPLEXITY_EXIT=$?
