@@ -574,9 +574,22 @@ def _is_group_cv(cv) -> bool:
 # ---------------------------------------------------------------------------
 
 def _score_one_spatial(clf, X_slice, y, cv, groups, scoring="roc_auc"):
-    """Score one spatial unit. X_slice is (n_trials,) or (n_trials, n_features)."""
+    """Score one spatial unit. X_slice is (n_trials,) or (n_trials, n_features).
+
+    Trials with a NaN in this spatial unit (e.g. failed FOOOF fits in fooof /
+    psd_corrected features) are dropped before CV — sklearn estimators reject
+    NaN. The NaN positions depend only on X, not on labels, so the same rows are
+    dropped for observed and permuted runs, keeping the permutation test valid.
+    """
     if X_slice.ndim == 1:
         X_slice = X_slice.reshape(-1, 1)
+    finite = ~np.isnan(X_slice).any(axis=1)
+    if not finite.all():
+        X_slice, y, groups = X_slice[finite], y[finite], groups[finite]
+    if len(y) < 2 or len(np.unique(y)) < 2:
+        return float("nan")
+    if _is_group_cv(cv) and len(np.unique(groups)) < 2:
+        return float("nan")
     kw = {"groups": groups} if _is_group_cv(cv) else {}
     scores = cross_val_score(
         clf, X_slice, y, cv=cv, scoring=scoring, n_jobs=1, **kw
@@ -693,6 +706,16 @@ def run_univariate_with_tmax(
     pvals_tmax = (np.sum(max_perm[:, None] >= observed[None, :], axis=0) + 1) / (
         n_permutations + 1
     )
+    # Channels with no finite observed score (all trials NaN) carry no signal —
+    # NaN >= NaN is False, which would otherwise yield a spuriously small pval.
+    nan_obs = np.isnan(observed)
+    if nan_obs.any():
+        pvals_unc[nan_obs] = 1.0
+        pvals_tmax[nan_obs] = 1.0
+        logger.warning(
+            f"{int(nan_obs.sum())}/{n_spatial} spatial units had no finite "
+            f"score (all-NaN feature); their p-values set to 1.0"
+        )
     pvals_fdr = apply_fdr_correction(pvals_unc, alpha=0.05, method="bh")
     pvals_bonf = apply_bonferroni_correction(pvals_unc, alpha=0.05)
 
@@ -717,7 +740,7 @@ def run_univariate_with_tmax(
     logger.info(
         f"Significant @ alpha=0.05 — t-max: {n_sig_tmax}/{n_spatial}, "
         f"FDR-BH: {n_sig_fdr}/{n_spatial}, "
-        f"max observed: {observed.max():.3f}"
+        f"max observed: {np.nanmax(observed):.3f}"
     )
 
     out = {

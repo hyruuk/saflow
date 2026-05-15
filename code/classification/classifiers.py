@@ -193,7 +193,6 @@ def get_logistic_regression(
     solver: str = "lbfgs",
     max_iter: int = 1000,
     random_state: int = 42,
-    n_jobs: int = -1,
     **kwargs,
 ) -> LogisticRegression:
     """Get Logistic Regression classifier.
@@ -207,7 +206,6 @@ def get_logistic_regression(
         solver: Optimization algorithm ('lbfgs', 'liblinear', 'saga').
         max_iter: Maximum iterations for convergence.
         random_state: Random seed.
-        n_jobs: Number of jobs for parallel processing (-1 = all cores).
         **kwargs: Additional parameters for LogisticRegression.
 
     Returns:
@@ -217,17 +215,14 @@ def get_logistic_regression(
         >>> clf = get_logistic_regression()
         >>> clf = get_logistic_regression(C=10.0, penalty='l1', solver='saga')
     """
-    clf = LogisticRegression(
-        C=C,
-        penalty=penalty,
-        solver=solver,
-        max_iter=max_iter,
-        random_state=random_state,
-        n_jobs=n_jobs,
-        **kwargs,
-    )
-
-    return clf
+    # `penalty` is deprecated in sklearn >=1.8 and `n_jobs` has no effect for
+    # binary LogisticRegression. Only pass `penalty` when it differs from the
+    # default to avoid flooding stderr with FutureWarnings (one per fit).
+    params = dict(C=C, solver=solver, max_iter=max_iter, random_state=random_state)
+    if penalty != "l2":
+        params["penalty"] = penalty
+    params.update(kwargs)
+    return LogisticRegression(**params)
 
 
 def get_default_hyperparameters(clf_name: str) -> Dict:
