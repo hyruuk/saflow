@@ -42,6 +42,7 @@ from tqdm import tqdm
 
 from code.classification.classifiers import get_classifier
 from code.features.utils import select_window_mask
+from code.utils.bad_trials import compute_run_bad_mask
 from code.statistics.corrections import (
     apply_bonferroni_correction,
     apply_fdr_correction,
@@ -215,6 +216,10 @@ def load_classification_data(
         feature, n_events_window=n_events_window
     )
 
+    analysis_cfg = config.get("analysis", {})
+    bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
+    interp_reject_threshold = int(analysis_cfg.get("interp_reject_threshold", 0) or 0)
+
     data_root = Path(config["paths"]["data_root"])
     feature_root = data_root / config["paths"]["features"] / f"{folder_prefix}_{space}"
     if not feature_root.exists():
@@ -319,10 +324,9 @@ def load_classification_data(
                 subj_inc_task.append([np.array([t]) for t in meta["task"]])
 
             run_n = len(run_vtc)
-            if "bad_ar2" in meta:
-                subj_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
-            else:
-                subj_bad.append(np.zeros(run_n, dtype=bool))
+            subj_bad.append(
+                compute_run_bad_mask(meta, run_n, bad_trial_rule, interp_reject_threshold)
+            )
             subj_run_idx.append(np.full(run_n, run_pos, dtype=int))
 
         if not subj_data:
@@ -432,6 +436,8 @@ def load_classification_data(
         "n_out": int(n_out_total),
         "n_bad_excluded": int(n_bad_excluded),
         "drop_bad_trials": bool(drop_bad_trials),
+        "bad_trial_rule": bad_trial_rule,
+        "interp_reject_threshold": interp_reject_threshold,
         "bad_ar2_metadata_present": bool(bad_metadata_present),
         "per_subject": per_subject,
         "input_git_hashes": sorted(input_git_hashes),

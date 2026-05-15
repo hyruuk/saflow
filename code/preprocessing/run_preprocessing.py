@@ -1504,9 +1504,16 @@ def preprocess_run(
     )
 
     # ================================================================
-    # ADD BAD_AR2 ANNOTATIONS TO CONTINUOUS RAW
+    # ADD BAD_AR1 / BAD_AR2 ANNOTATIONS TO CONTINUOUS RAW
     # ================================================================
+    # AR2 (post-ICA) is the default rejection verdict. AR1 (pre-ICA) is also
+    # annotated so analyses can opt into a stricter rule (ar1 / union) without
+    # re-running preprocessing. reject_log_first.bad_epochs is computed on
+    # epochs_filt, which is 1:1 with epochs_preproc (same create_epochs call).
     add_bad_epoch_annotations(cleaned_raw, epochs_preproc, ar2_flags_full, "BAD_AR2")
+    add_bad_epoch_annotations(
+        cleaned_raw, epochs_preproc, np.asarray(reject_log_first.bad_epochs, dtype=bool), "BAD_AR1"
+    )
 
     # Also add event annotations
     event_annots = mne.annotations_from_events(

@@ -239,6 +239,17 @@ analysis:
   #   [33, 67] - Tertile split
   inout_bounds: [25, 75]  # Default: focus on quartile split
 
+  # Bad-trial rejection rule applied by stats + classification loaders.
+  #   ar2    - autoreject second pass (post-ICA) only. Default.
+  #   ar1    - autoreject first pass (pre-ICA) only. Matches cc_saflow.
+  #   union  - AR1 OR AR2. Most conservative.
+  # interp_reject_threshold > 0 also drops trials where AR2 interpolated at
+  # least that many channels (0 = off). bad_ar1 is added to existing feature
+  # files by code.utils.backfill_ar1; n_interp requires a fresh preprocessing
+  # + feature-extraction pass.
+  bad_trial_rule: ar2          # ar2 | ar1 | union
+  interp_reject_threshold: 0   # 0 = off
+
   # Epoch timing relative to stimulus event marker (t=0 = 0% intensity, stimulus onset)
   # In gradCPT, stimuli gradually fade in (0%→100%) then fade out (100%→0%) over ~800ms each.
   # The event marker is placed at stimulus onset (0% intensity, start of fade-in).

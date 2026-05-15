@@ -44,6 +44,7 @@ from code.statistics.effect_sizes import (
     compute_eta_squared,
 )
 from code.features.utils import select_window_mask
+from code.utils.bad_trials import compute_run_bad_mask
 from code.utils.data_loading import load_features, balance_dataset
 from code.utils.statistics import subject_contrast, simple_contrast
 
@@ -221,6 +222,10 @@ def load_all_features_batched(
     if not feature_types:
         raise ValueError("feature_types must be non-empty")
 
+    analysis_cfg = config.get("analysis", {})
+    bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
+    interp_reject_threshold = int(analysis_cfg.get("interp_reject_threshold", 0) or 0)
+
     # All requested types must share folder + file suffix.
     folders = {get_feature_folder(config, ft, space) for ft in feature_types}
     if len(folders) != 1:
@@ -361,13 +366,14 @@ def load_all_features_batched(
                 else:
                     subj_inc_task.append([np.array([t]) for t in meta["task"]])
 
-                # bad_ar2 is an opt-in tag added by the segmenter / backfill.
-                # If absent, treat all trials as good and warn once.
+                # Per-run bad-trial mask follows the configured rule
+                # (ar2 / ar1 / union, plus optional interpolation threshold).
                 run_n = len(run_vtc)
-                if "bad_ar2" in meta:
-                    subj_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
-                else:
-                    subj_bad.append(np.zeros(run_n, dtype=bool))
+                subj_bad.append(
+                    compute_run_bad_mask(
+                        meta, run_n, bad_trial_rule, interp_reject_threshold
+                    )
+                )
                 subj_run_idx.append(np.full(run_n, run_pos, dtype=int))
 
             finally:
@@ -510,6 +516,8 @@ def load_all_features_batched(
             "n_out": total_out,
             "n_bad_excluded": total_bad_excluded,
             "drop_bad_trials": bool(drop_bad_trials),
+            "bad_trial_rule": bad_trial_rule,
+            "interp_reject_threshold": interp_reject_threshold,
             "bad_ar2_metadata_present": bool(bad_metadata_present),
             "per_subject": per_subject,
             "input_git_hashes": sorted(input_git_hashes),

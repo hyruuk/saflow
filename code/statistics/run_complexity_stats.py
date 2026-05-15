@@ -33,6 +33,7 @@ import numpy as np
 from scipy import stats
 from scipy.stats import false_discovery_control
 
+from code.utils.bad_trials import compute_run_bad_mask
 from code.utils.config import load_config
 
 logging.basicConfig(
@@ -51,13 +52,15 @@ METRICS = [
 def load_subject_data(
     npz_path: Path,
     metrics: List[str],
+    bad_trial_rule: str = "ar2",
+    interp_reject_threshold: int = 0,
 ) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Load data from a single NPZ file efficiently.
 
     Returns:
-        Tuple of (data_dict, vtc, task, bad_ar2). When the npz predates
-        the bad-trial flag, ``bad_ar2`` is an all-False array of the
-        right length.
+        Tuple of (data_dict, vtc, task, bad). ``bad`` follows the configured
+        bad-trial rule (ar2 / ar1 / union, plus optional interpolation
+        threshold); trials are all-good when the relevant flags are absent.
     """
     data = np.load(npz_path, allow_pickle=True)
     meta = data["trial_metadata"].item()
@@ -65,10 +68,9 @@ def load_subject_data(
     data_dict = {m: data[m] for m in metrics}
     vtc = np.array(meta["VTC_filtered"])
     task = np.array(meta["task"])
-    if "bad_ar2" in meta:
-        bad = np.asarray(meta["bad_ar2"], dtype=bool)
-    else:
-        bad = np.zeros(len(vtc), dtype=bool)
+    bad = compute_run_bad_mask(
+        meta, len(vtc), bad_trial_rule, interp_reject_threshold
+    )
 
     return data_dict, vtc, task, bad
 
@@ -82,6 +84,8 @@ def compute_subject_aggregates(
     metrics: List[str],
     drop_bad_trials: bool = True,
     aggregate: str = "median",
+    bad_trial_rule: str = "ar2",
+    interp_reject_threshold: int = 0,
 ) -> Tuple[
     Optional[Dict[str, np.ndarray]],
     Optional[Dict[str, np.ndarray]],
@@ -123,7 +127,9 @@ def compute_subject_aggregates(
         if not files:
             continue
 
-        data_dict, vtc, task, bad = load_subject_data(files[0], metrics)
+        data_dict, vtc, task, bad = load_subject_data(
+            files[0], metrics, bad_trial_rule, interp_reject_threshold
+        )
 
         all_vtc.append(vtc)
         all_task.append(task)
@@ -396,12 +402,15 @@ def main():
     runs = config["bids"]["task_runs"]
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
     metrics = args.metrics if args.metrics else METRICS
+    analysis_cfg = config.get("analysis", {})
+    bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
+    interp_reject_threshold = int(analysis_cfg.get("interp_reject_threshold", 0) or 0)
 
     logger.info(f"Space: {args.space}")
     logger.info(f"Correction: {args.correction}")
     logger.info(f"Alpha: {args.alpha}")
     logger.info(f"Aggregate: {args.aggregate}")
-    logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
+    logger.info(f"Drop bad trials: {not args.keep_bad_trials} (rule={bad_trial_rule})")
     logger.info(f"Subjects: {len(subjects)}")
 
     # Process subjects
@@ -416,6 +425,8 @@ def main():
             data_root, subject, runs, args.space, inout_bounds, metrics,
             drop_bad_trials=not args.keep_bad_trials,
             aggregate=args.aggregate,
+            bad_trial_rule=bad_trial_rule,
+            interp_reject_threshold=interp_reject_threshold,
         )
         per_subject[subject] = counts
         if agg_in is not None:
@@ -472,6 +483,8 @@ def main():
         "n_bad_excluded": total_bad_excluded,
         "aggregate": args.aggregate,
         "drop_bad_trials": not args.keep_bad_trials,
+        "bad_trial_rule": bad_trial_rule,
+        "interp_reject_threshold": interp_reject_threshold,
     }
     for metric in results:
         save_dict[f"{metric}_tvals"] = results[metric]["tvals"]
@@ -491,6 +504,8 @@ def main():
                 "alpha": args.alpha,
                 "aggregate": args.aggregate,
                 "drop_bad_trials": not args.keep_bad_trials,
+                "bad_trial_rule": bad_trial_rule,
+                "interp_reject_threshold": interp_reject_threshold,
                 "inout_bounds": list(inout_bounds),
                 "n_subjects": len(subj_means_in),
                 "n_trials_in": int(total_in),

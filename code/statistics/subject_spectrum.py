@@ -36,6 +36,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from code.features.utils import select_window_mask
+from code.utils.bad_trials import compute_run_bad_mask
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,10 @@ def load_subject_spectrum_features(
         raise ValueError("feature_types must be non-empty")
     parsed = [(ft, *_classify_feature(ft)) for ft in feature_types]
 
+    analysis_cfg = config.get("analysis", {})
+    bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
+    interp_reject_threshold = int(analysis_cfg.get("interp_reject_threshold", 0) or 0)
+
     # Where the raw welch PSDs live
     data_root = Path(config["paths"]["data_root"])
     welch_root = data_root / config["paths"]["features"] / f"welch_psds_{space}"
@@ -263,10 +268,11 @@ def load_subject_spectrum_features(
                     all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
                 else:
                     all_inc_task.append([np.array([t]) for t in meta["task"]])
-                if "bad_ar2" in meta:
-                    all_bad.append(np.asarray(meta["bad_ar2"], dtype=bool))
-                else:
-                    all_bad.append(np.zeros(len(run_vtc), dtype=bool))
+                all_bad.append(
+                    compute_run_bad_mask(
+                        meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
+                    )
+                )
 
         if not run_psd_files:
             continue
@@ -435,6 +441,8 @@ def load_subject_spectrum_features(
             "n_out": total_out,
             "n_bad_excluded": total_bad,
             "drop_bad_trials": bool(drop_bad_trials),
+            "bad_trial_rule": bad_trial_rule,
+            "interp_reject_threshold": interp_reject_threshold,
             "bad_ar2_metadata_present": bool(bad_metadata_present),
             "analysis_mode": "subject-spectrum",
             "fooof_freq_range": list(freq_range),

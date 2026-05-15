@@ -147,15 +147,28 @@ def segment_spatial_temporal_data(
     )
     logger.info(f"Found {len(stim_trials)} stimulus trials")
 
-    # Pre-compute bad_ar2 for ALL stim trials so windowed mode can aggregate
+    # Pre-compute bad_ar1 / bad_ar2 for ALL stim trials so windowed mode can
+    # aggregate. The masks are matched by annotation prefix: AR2 is the
+    # post-ICA verdict (BAD_AR2), AR1 the pre-ICA pass (BAD_AR1). BAD_AR1
+    # annotations are only present on raws preprocessed after that change;
+    # when absent the AR1 mask is simply all-False.
     all_onsets = stim_trials["onset"].to_numpy(dtype=float) if len(stim_trials) else np.empty(0)
     per_trial_bad = compute_bad_trial_mask(
         onsets=all_onsets,
         tmin=tmin,
         tmax=tmax,
         annotations=annotations,
+        bad_prefix="BAD_AR2",
+    )
+    per_trial_bad_ar1 = compute_bad_trial_mask(
+        onsets=all_onsets,
+        tmin=tmin,
+        tmax=tmax,
+        annotations=annotations,
+        bad_prefix="BAD_AR1",
     )
     stim_trials["bad_ar2"] = per_trial_bad
+    stim_trials["bad_ar1"] = per_trial_bad_ar1
 
     segmented_array = []
     metadata_rows = []
@@ -195,29 +208,36 @@ def segment_spatial_temporal_data(
                 else np.full(n_events_window, "", dtype=object)
             )
             inc_bad = included["bad_ar2"].to_numpy(dtype=bool)
+            inc_bad_ar1 = included["bad_ar1"].to_numpy(dtype=bool)
             row["included_VTC"] = inc_vtc
             row["included_task"] = inc_task
             row["included_bad_ar2"] = inc_bad
+            row["included_bad_ar1"] = inc_bad_ar1
             row["window_vtc_mean"] = (
                 float(np.nanmean(inc_vtc)) if not np.all(np.isnan(inc_vtc)) else np.nan
             )
             row["window_any_bad"] = bool(inc_bad.any())
+            row["window_any_bad_ar1"] = bool(inc_bad_ar1.any())
             row["window_n_cc"] = int(np.sum(inc_task == "correct_commission"))
             row["window_n_co"] = int(np.sum(inc_task == "correct_omission"))
             row["window_n_ce"] = int(np.sum(inc_task == "commission_error"))
             row["window_n_oe"] = int(np.sum(inc_task == "omission_error"))
-            # bad_ar2 → window-level so downstream drop_bad_trials still works
+            # AR flags → window-level (ANY of N trials bad) so downstream
+            # drop_bad_trials still works on a per-window basis.
             row["bad_ar2"] = row["window_any_bad"]
+            row["bad_ar1"] = row["window_any_bad_ar1"]
 
         metadata_rows.append(row)
 
     segmented_array = np.array(segmented_array)
     trial_metadata = pd.DataFrame(metadata_rows).reset_index(drop=True)
 
-    # Single-trial mode: bad_ar2 column already populated for surviving trials.
-    # (Already in metadata_rows via per_trial_bad threaded through stim_trials.)
+    # Single-trial mode: bad_ar1/bad_ar2 columns already populated for
+    # surviving trials (threaded through stim_trials into each row dict).
     if "bad_ar2" not in trial_metadata.columns:
         trial_metadata["bad_ar2"] = False
+    if "bad_ar1" not in trial_metadata.columns:
+        trial_metadata["bad_ar1"] = False
 
     n_bad = int(trial_metadata["bad_ar2"].sum()) if len(trial_metadata) else 0
     logger.info(
