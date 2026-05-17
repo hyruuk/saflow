@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import subprocess
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -558,6 +559,39 @@ def balance_within_subject(
 
 
 # ---------------------------------------------------------------------------
+# Trial averaging (collapse each subject to one mean vector per class)
+# ---------------------------------------------------------------------------
+
+def average_within_subject(
+    X: np.ndarray, y: np.ndarray, groups: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Collapse each subject's trials to one mean feature vector per class.
+
+    Each subject contributes exactly two rows (mean of its IN trials, mean of
+    its OUT trials). ``groups`` stays the subject index so GroupKFold/LOSO keep
+    a subject's IN and OUT samples together in the same fold. Works for 2D or
+    3D X. NaN-aware: a NaN in a spatial unit for some trials does not poison
+    that subject's average (handled by np.nanmean; downstream code drops any
+    spatial unit that ends up all-NaN).
+    """
+    Xa: List[np.ndarray] = []
+    ya: List[int] = []
+    ga: List[int] = []
+    for g in np.unique(groups):
+        for c in np.unique(y):
+            sel = (groups == g) & (y == c)
+            if not sel.any():
+                continue
+            with warnings.catch_warnings():
+                # All-NaN slices for a dropped spatial unit are expected.
+                warnings.simplefilter("ignore", RuntimeWarning)
+                Xa.append(np.nanmean(X[sel], axis=0))
+            ya.append(int(c))
+            ga.append(int(g))
+    return np.stack(Xa), np.array(ya), np.array(ga)
+
+
+# ---------------------------------------------------------------------------
 # CV strategy
 # ---------------------------------------------------------------------------
 
@@ -1040,9 +1074,25 @@ def main():
         help="Classifier. Default 'logistic' matches cc_saflow's run_classifs.py."
     )
     parser.add_argument(
-        "--cv", default="logo", choices=["logo", "stratified", "group"]
+        "--cv", default="auto", choices=["auto", "logo", "stratified", "group"],
+        help=(
+            "Cross-validation strategy. 'auto' (default) derives it from "
+            "trial averaging: GroupKFold(k=6) over subjects when trials are "
+            "averaged, leave-one-subject-out for single trials. 'logo', "
+            "'stratified', 'group' force a specific splitter."
+        ),
     )
-    parser.add_argument("--n-splits", type=int, default=5)
+    parser.add_argument("--n-splits", type=int, default=5,
+                        help="n_splits for an explicit --cv group/stratified. "
+                             "Ignored when --cv=auto (auto uses k=6).")
+    parser.add_argument(
+        "--no-average-trials", dest="average_trials", action="store_false",
+        default=True,
+        help=(
+            "Classify single trials instead of per-subject IN/OUT averages. "
+            "With --cv=auto this switches the splitter to leave-one-subject-out."
+        ),
+    )
     parser.add_argument("--n-permutations", type=int, default=1000)
     parser.add_argument("--no-balance", action="store_true")
     parser.add_argument("--n-jobs", type=int, default=-1)
@@ -1105,15 +1155,28 @@ def main():
     if not features:
         raise SystemExit("Must pass --feature and/or --feature-set")
 
+    # Resolve CV strategy. 'auto' derives the splitter from trial averaging:
+    # averaged trials -> GroupKFold(k=6) over subjects; single trials -> LOSO.
+    if args.cv == "auto":
+        cv_name = "group" if args.average_trials else "logo"
+        n_splits = 6 if cv_name == "group" else args.n_splits
+    else:
+        cv_name = args.cv
+        n_splits = args.n_splits
+
     logger.info("=" * 78)
     logger.info("CLASSIFICATION (IN vs OUT)")
     logger.info("=" * 78)
     logger.info(f"features ({len(features)}): {features}")
-    logger.info(f"space={args.space}  mode={args.mode}  clf={args.clf}  cv={args.cv}")
+    logger.info(f"space={args.space}  mode={args.mode}  clf={args.clf}")
+    logger.info(
+        f"average_trials={args.average_trials}  cv={cv_name}"
+        + (f"(k={n_splits})" if cv_name in ("group", "stratified") else "")
+    )
     logger.info(f"inout={inout_bounds}  n_permutations={args.n_permutations}")
     logger.info("=" * 78)
 
-    cv = get_cv_strategy(args.cv, n_splits=args.n_splits)
+    cv = get_cv_strategy(cv_name, n_splits=n_splits)
     data_root = Path(config["paths"]["data_root"])
     output_dir = (
         data_root / config["paths"]["results"] / f"classification_{args.space}" / "group"
@@ -1124,6 +1187,19 @@ def main():
         raise SystemExit("--n-chunks only applies to mode=univariate")
 
     def _run_one(label: str, feature_list: List[str], X, y, groups, metadata):
+        if args.average_trials:
+            X, y, groups = average_within_subject(X, y, groups)
+            metadata["average_trials"] = True
+            metadata["n_trials"] = int(len(y))
+            metadata["n_in"] = int((y == 0).sum())
+            metadata["n_out"] = int((y == 1).sum())
+            logger.info(
+                f"Averaged within subject×class: {len(y)} samples "
+                f"({metadata['n_subjects']} subjects × IN/OUT)"
+            )
+        else:
+            metadata["average_trials"] = False
+
         if not args.no_balance:
             X_b, y_b, g_b = balance_within_subject(X, y, groups, seed=args.seed)
             logger.info(
@@ -1180,7 +1256,7 @@ def main():
             space=args.space,
             inout_bounds=inout_bounds,
             clf_name=args.clf,
-            cv_name=args.cv,
+            cv_name=cv_name,
             mode=args.mode,
             combined=args.combine_features,
             feature_list=feature_list,

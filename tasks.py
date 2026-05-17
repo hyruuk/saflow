@@ -932,12 +932,13 @@ def stats(c, features, space="sensor", test="paired_ttest",
 
 
 @task
-def classify(c, features, clf="logistic", cv="logo",
+def classify(c, features, clf="logistic", cv="auto",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
              trial_type="alltrials", zoning="per-run", n_events_window=8,
+             average_trials=True,
              slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT) on one or more features.
@@ -950,6 +951,13 @@ def classify(c, features, clf="logistic", cv="logo",
     Spatial mode:
       - univariate (default): per-channel/ROI classifier + shared-permutation t-max
       - multivariate: pool spatial dim, single permutation_test_score
+
+    Trial averaging & CV:
+      - Default: each subject's trials are averaged to one IN + one OUT vector,
+        and --cv=auto resolves to GroupKFold(k=6) over subjects.
+      - --no-average-trials: classify single trials; --cv=auto resolves to
+        leave-one-subject-out instead.
+      - --cv (logo|stratified|group) forces a specific splitter regardless.
 
     Feature handling:
       - Default loop: each feature is classified independently (single-feature framework).
@@ -976,6 +984,9 @@ def classify(c, features, clf="logistic", cv="logo",
 
         # Submit each feature as a separate SLURM job
         invoke analysis.classify --features=psds --slurm
+
+        # Single-trial classification with leave-one-subject-out CV
+        invoke analysis.classify --features=fooof_exponent --no-average-trials
     """
     print("=" * 80)
     print("Classification Analysis")
@@ -1005,6 +1016,7 @@ def classify(c, features, clf="logistic", cv="logo",
             trial_type=trial_type,
             zoning=zoning,
             n_events_window=n_events_window,
+            average_trials=average_trials,
             slurm_time=slurm_time,
             slurm_mem=slurm_mem,
             slurm_cpus=slurm_cpus,
@@ -1026,6 +1038,8 @@ def classify(c, features, clf="logistic", cv="logo",
     cmd.extend(["--n-events-window", str(n_events_window)])
 
     cmd.extend(["--seed", str(seed)])
+    if not average_trials:
+        cmd.append("--no-average-trials")
     if no_balance:
         cmd.append("--no-balance")
     if continue_on_error:
@@ -1145,6 +1159,55 @@ def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
         cmd.extend(["--cmap", cmap])
     if output_subdir:
         cmd.extend(["--output-subdir", output_subdir])
+
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def spectra(c, space="sensor", stat_feature="fooof_exponent", select_by="corrected",
+            subject=None, n_events_window=8, show=False, save=True,
+            config="config.yaml"):
+    """Reproduce Figure 3 C-F: the FOOOF spectral decomposition panel.
+
+    Selects the most significant sensor/region from the FOOOF exponent
+    group-statistics map, then renders, at that unit, the four-panel FOOOF
+    figure for IN vs OUT:
+
+        C  Raw spectrum (PSD)
+        D  Aperiodic component
+        E  Corrected spectrum (PSDc)
+        F  Periodic components
+
+    The selected unit name is written into panel C (plus an exponent t-map
+    inset for sensor space). Curves are group means +/- SEM unless --subject
+    pins a single subject (the manuscript's example-subject case).
+
+    Args:
+        space: 'sensor' or atlas name (e.g. 'schaefer_400').
+        stat_feature: statistics map used to pick the unit (default fooof_exponent).
+        select_by: rank by 'corrected' or 'uncorrected' p-values.
+        subject: restrict spectra to one subject (default: group average).
+        n_events_window: trials per welch window (welch desc suffix).
+        show: display the figure interactively.
+        save: write the figure to reports/figures/statistics/.
+
+    Examples:
+        invoke viz.spectra
+        invoke viz.spectra --space=sensor --select-by=uncorrected
+        invoke viz.spectra --subject=07
+    """
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.visualization.run_viz_spectra",
+           "--space", space, "--stat-feature", stat_feature,
+           "--select-by", select_by, "--n-events-window", str(n_events_window),
+           "--config", config]
+    if subject:
+        cmd.extend(["--subject", str(subject)])
+    if show:
+        cmd.append("--show")
+    if not save:
+        cmd.append("--no-save")
 
     print(f"Running: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -1758,13 +1821,13 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
         print(f"\n[DRY RUN] Would have submitted {len(features)} job(s)")
 
 
-def _classify_slurm(c, feature_list, clf="logistic", cv="logo",
+def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                     space="sensor", mode="univariate", n_permutations=1000,
                     no_balance=False, n_jobs=-1, continue_on_error=False,
                     combine_features=False, importances=False, label=None,
                     n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
                     trial_type="alltrials", zoning="per-run",
-                    n_events_window=8,
+                    n_events_window=8, average_trials=True,
                     slurm_time=None, slurm_mem=None, slurm_cpus=None,
                     dry_run=False):
     """Submit classification jobs to SLURM.
@@ -1781,6 +1844,12 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="logo",
     from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
 
     print(f"\n[SLURM Mode] Submitting classification jobs to cluster\n")
+
+    # run_classification resolves --cv=auto from trial averaging; mirror that
+    # here so the chunk-aggregation job builds the matching output filename.
+    cv_resolved = cv
+    if cv == "auto":
+        cv_resolved = "group" if average_trials else "logo"
 
     config = load_config()
     slurm_config = config["computing"]["slurm"]
@@ -1823,8 +1892,9 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="logo",
     else:
         classifications = [(feat, f"--feature {feat}", [feat]) for feat in features]
 
-    print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv}")
-    print(f"n_permutations: {n_permutations}  combine_features: {combine_features}")
+    print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv_resolved}")
+    print(f"n_permutations: {n_permutations}  combine_features: {combine_features}  "
+          f"average_trials: {average_trials}")
     print(f"Classifications: {len(classifications)}  chunks per classification: {n_chunks}")
 
     # Resolve resources: per-invocation overrides win over config defaults
@@ -1863,6 +1933,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="logo",
                 "mode": mode,
                 "clf": clf,
                 "cv": cv,
+                "average_trials": average_trials,
                 "n_permutations": n_permutations,
                 "n_jobs": n_jobs,
                 "no_balance": no_balance,
@@ -1907,7 +1978,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="logo",
                 "space": space,
                 "mode": mode,
                 "clf": clf,
-                "cv": cv,
+                "cv": cv_resolved,
                 "combined": combine_features,
                 "delete_chunks": delete_chunks,
                 "timestamp": timestamp,
@@ -2167,6 +2238,7 @@ analysis.add_task(classify_aggregate, name="classify-aggregate")
 viz = Collection("viz")
 viz.add_task(viz_stats, name="stats")
 viz.add_task(viz_maps, name="maps")
+viz.add_task(spectra)
 viz.add_task(behavior)
 
 # SLURM job-management tasks

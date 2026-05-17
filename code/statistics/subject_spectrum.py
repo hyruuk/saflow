@@ -458,3 +458,266 @@ def load_subject_spectrum_features(
         f"(bad excluded {total_bad})"
     )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Single-channel spectra (for the FOOOF C-D-E-F panel figure)
+# ---------------------------------------------------------------------------
+
+# Full-range log10 curves vs. fit-range log10 curves — kept apart because the
+# aperiodic/corrected curves are extrapolated over every PSD bin while the
+# FOOOF periodic model only exists inside the fit range.
+_FULL_CURVE_KEYS = ("raw", "aperiodic", "corrected")
+_FIT_CURVE_KEYS = ("periodic", "full_model")
+_SCALAR_KEYS = ("exponent", "offset")
+
+
+def _fit_fooof_single_curve(
+    psd_1d: np.ndarray,
+    freqs: np.ndarray,
+    freq_range: Tuple[float, float],
+    fooof_params: Dict[str, Any],
+) -> Optional[Dict[str, np.ndarray]]:
+    """FOOOF-decompose one channel's spectrum into the panel-C..F curves.
+
+    Returns a dict with full-range log10 curves (``raw``, ``aperiodic``,
+    ``corrected``) plus the fit-range FOOOF model (``periodic`` = summed
+    Gaussian peaks, ``full_model`` = aperiodic + peaks), and the aperiodic
+    scalars. ``None`` if the model failed to fit.
+    """
+    from fooof import FOOOF
+
+    fm = FOOOF(
+        peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
+        max_n_peaks=fooof_params.get("max_n_peaks", 4),
+        min_peak_height=fooof_params.get("min_peak_height", 0.10),
+        peak_threshold=fooof_params.get("peak_threshold", 2.0),
+        aperiodic_mode=fooof_params.get("aperiodic_mode", "fixed"),
+        verbose=False,
+    )
+    try:
+        fm.fit(freqs, psd_1d, freq_range=freq_range)
+    except Exception:
+        return None
+    if not getattr(fm, "has_model", False):
+        return None
+
+    offset = float(fm.aperiodic_params_[0])
+    exponent = float(fm.aperiodic_params_[-1])  # knee mode adds a knee before it
+
+    safe_freqs = np.where(freqs > 0, freqs, np.nan)
+    raw_log = np.log10(np.where(psd_1d > 0, psd_1d, np.nan))
+    aperiodic_full = offset - np.log10(safe_freqs ** exponent)
+
+    return dict(
+        raw=raw_log,                                       # (n_freqs,)
+        aperiodic=aperiodic_full,                          # (n_freqs,)
+        corrected=raw_log - aperiodic_full,                # (n_freqs,)
+        fit_freqs=np.asarray(fm.freqs, dtype=float),       # (n_freqs_fit,)
+        periodic=np.asarray(fm._peak_fit, dtype=float),    # (n_freqs_fit,)
+        full_model=np.asarray(fm.fooofed_spectrum_, float),# (n_freqs_fit,)
+        exponent=exponent,
+        offset=offset,
+    )
+
+
+def load_channel_spectra(
+    channel_index: int,
+    space: str,
+    inout_bounds: Tuple[int, int],
+    config: Dict[str, Any],
+    *,
+    subjects: Optional[List[str]] = None,
+    drop_bad_trials: bool = True,
+    bad_trial_rule: str = "ar2",
+    interp_reject_threshold: int = 0,
+    trial_type: str = "alltrials",
+    zoning: str = "per-subject",
+    n_events_window: int = 8,
+) -> Dict[str, Any]:
+    """Per-subject IN/OUT spectra + FOOOF decomposition for one spatial unit.
+
+    Mirrors the aggregation of :func:`load_subject_spectrum_features` (median
+    PSD across good trials per ``(subject, run, condition)``, then mean across
+    runs) but keeps the *full curves* — raw spectrum, aperiodic fit, corrected
+    spectrum and FOOOF periodic model — for a single channel/region so the
+    Figure-3 C..F panel can be reproduced.
+
+    Args:
+        channel_index: index into the spatial axis of the welch PSD arrays
+            (same ordering as the saved statistics maps).
+        space: 'sensor' or atlas name (selects the welch_psds_<space> folder).
+        inout_bounds: (low_pct, high_pct) VTC percentiles for IN/OUT.
+        config: loaded config dict.
+        subjects: subject list (default: config.bids.subjects).
+        drop_bad_trials: exclude bad trials before the median PSD.
+        bad_trial_rule: 'ar2' | 'ar1' | 'union' (pass the value the matching
+            statistics run used so the spectra line up with the stats map).
+        interp_reject_threshold: extra n_interp-based rejection (0 disables).
+        trial_type: window/trial selection passed to ``select_window_mask``.
+        zoning: 'per-subject' (pooled VTC thresholds) or 'per-run'.
+        n_events_window: trials per welch window (selects the desc suffix).
+
+    Returns:
+        dict with ``freqs`` (full vector), ``freqs_fit`` (FOOOF fit range),
+        ``subjects`` (kept ids), ``channel_index``, and ``IN``/``OUT`` blocks.
+        Each block maps ``raw``/``aperiodic``/``corrected`` -> arrays of shape
+        ``(n_subjects, n_freqs)``, ``periodic``/``full_model`` -> arrays of
+        shape ``(n_subjects, n_freqs_fit)``, and ``exponent``/``offset`` ->
+        arrays of shape ``(n_subjects,)``.
+    """
+    data_root = Path(config["paths"]["data_root"])
+    welch_root = data_root / config["paths"]["features"] / f"welch_psds_{space}"
+    if not welch_root.exists():
+        raise FileNotFoundError(f"Welch PSD folder not found: {welch_root}")
+
+    if subjects is None:
+        subjects = list(config["bids"]["subjects"])
+    runs = list(config["bids"]["task_runs"])
+
+    fooof_cfg_list = config.get("features", {}).get("fooof", [{}])
+    fooof_params = fooof_cfg_list[0] if isinstance(fooof_cfg_list, list) else fooof_cfg_list
+    freq_range = tuple(fooof_params.get("freq_range", [2.0, 40.0]))
+
+    desc_suffix = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
+
+    # Per-subject per-condition mean curves, keyed by curve name.
+    subj_blocks: Dict[str, Dict[str, Dict[str, np.ndarray]]] = {}
+    freqs_full: Optional[np.ndarray] = None
+    freqs_fit: Optional[np.ndarray] = None
+
+    for subject in tqdm(subjects, desc="Loading subjects (channel spectra)", unit="subj"):
+        subj_dir = welch_root / f"sub-{subject}"
+        if not subj_dir.exists():
+            continue
+
+        # First pass: collect VTC + task metadata so IN/OUT thresholds can be
+        # computed on every epoch (matches load_subject_spectrum_features).
+        all_vtc: List[np.ndarray] = []
+        all_task: List[np.ndarray] = []
+        all_inc_task: List[List[np.ndarray]] = []
+        all_bad: List[np.ndarray] = []
+        run_psd_files: List[Path] = []
+
+        for run in runs:
+            files = list(
+                subj_dir.glob(f"sub-{subject}_*_run-{run}_*_desc-{desc_suffix}_psds.npz")
+            )
+            if not files:
+                continue
+            file_path = files[0]
+            run_psd_files.append(file_path)
+            with np.load(file_path, allow_pickle=True) as npz:
+                meta = npz["trial_metadata"].item()
+                if "window_vtc_mean" in meta:
+                    run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
+                else:
+                    run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
+                all_vtc.append(run_vtc)
+                all_task.append(np.asarray(meta["task"]))
+                if "included_task" in meta:
+                    all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
+                else:
+                    all_inc_task.append([np.array([t]) for t in meta["task"]])
+                all_bad.append(
+                    compute_run_bad_mask(
+                        meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
+                    )
+                )
+
+        if not run_psd_files:
+            continue
+
+        subj_vtc = np.concatenate(all_vtc)
+        pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
+        pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
+
+        # Second pass: median good-trial PSD per (run, condition) at the
+        # selected channel, FOOOF fit, then mean across runs.
+        run_curves: Dict[str, List[Dict[str, np.ndarray]]] = {"IN": [], "OUT": []}
+
+        for file_path, vtc, task, inc_task_run, bad in zip(
+            run_psd_files, all_vtc, all_task, all_inc_task, all_bad
+        ):
+            with np.load(file_path, allow_pickle=True) as npz:
+                psd_block = np.asarray(npz["psds"])  # (n_epochs, n_chans, n_freqs)
+                freqs = np.asarray(npz["freqs"], dtype=float)
+            if freqs_full is None:
+                freqs_full = freqs
+            if channel_index >= psd_block.shape[1]:
+                raise IndexError(
+                    f"channel_index {channel_index} out of range "
+                    f"(welch PSD has {psd_block.shape[1]} channels)"
+                )
+
+            if zoning == "per-run":
+                if np.all(np.isnan(vtc)):
+                    continue
+                inbound = np.nanpercentile(vtc, inout_bounds[0])
+                outbound = np.nanpercentile(vtc, inout_bounds[1])
+            else:
+                inbound, outbound = pooled_inbound, pooled_outbound
+
+            task_mask = select_window_mask(
+                included_task_per_epoch=inc_task_run,
+                task_per_epoch=task,
+                type_how=trial_type,
+            )
+            good_mask = ~bad if drop_bad_trials else np.ones_like(bad, dtype=bool)
+            in_mask = task_mask & (vtc <= inbound) & good_mask
+            out_mask = task_mask & (vtc >= outbound) & good_mask
+            if not in_mask.any() or not out_mask.any():
+                continue  # keep IN/OUT paired per run
+
+            in_psd = np.median(psd_block[in_mask, channel_index, :], axis=0)
+            out_psd = np.median(psd_block[out_mask, channel_index, :], axis=0)
+            in_fit = _fit_fooof_single_curve(in_psd, freqs, freq_range, fooof_params)
+            out_fit = _fit_fooof_single_curve(out_psd, freqs, freq_range, fooof_params)
+            if in_fit is None or out_fit is None:
+                continue  # FOOOF failed: skip the run to keep IN/OUT paired
+            if freqs_fit is None:
+                freqs_fit = in_fit["fit_freqs"]
+            run_curves["IN"].append(in_fit)
+            run_curves["OUT"].append(out_fit)
+
+        if not run_curves["IN"] or not run_curves["OUT"]:
+            continue
+
+        cond_block: Dict[str, Dict[str, np.ndarray]] = {}
+        for label in ("IN", "OUT"):
+            curves = run_curves[label]
+            block: Dict[str, np.ndarray] = {}
+            for key in _FULL_CURVE_KEYS + _FIT_CURVE_KEYS:
+                block[key] = np.nanmean(np.stack([c[key] for c in curves]), axis=0)
+            for key in _SCALAR_KEYS:
+                block[key] = float(np.nanmean([c[key] for c in curves]))
+            cond_block[label] = block
+        subj_blocks[subject] = cond_block
+
+    if not subj_blocks:
+        raise ValueError(
+            f"No data loaded for channel {channel_index} in space '{space}'. "
+            f"Are the welch PSDs present under {welch_root}?"
+        )
+
+    kept = list(subj_blocks.keys())
+    out: Dict[str, Any] = {
+        "freqs": freqs_full,
+        "freqs_fit": freqs_fit,
+        "subjects": kept,
+        "channel_index": int(channel_index),
+        "n_subjects": len(kept),
+    }
+    for label in ("IN", "OUT"):
+        block: Dict[str, np.ndarray] = {}
+        for key in _FULL_CURVE_KEYS + _FIT_CURVE_KEYS:
+            block[key] = np.stack([subj_blocks[s][label][key] for s in kept], axis=0)
+        for key in _SCALAR_KEYS:
+            block[key] = np.array([subj_blocks[s][label][key] for s in kept], dtype=float)
+        out[label] = block
+
+    logger.info(
+        f"Channel-spectra load done: channel {channel_index}, space '{space}', "
+        f"{len(kept)} subjects"
+    )
+    return out
