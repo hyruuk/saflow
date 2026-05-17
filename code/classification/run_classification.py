@@ -861,11 +861,12 @@ def build_base_name(
     cv_name: str,
     mode: str,
     combined: bool,
+    trial_type: str = "alltrials",
 ) -> str:
     base = (
         f"feature-{feature_label}_space-{space}"
         f"_inout-{inout_bounds_to_string(inout_bounds)}"
-        f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}"
+        f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}_type-{trial_type}"
     )
     if combined:
         base += "_combined"
@@ -885,6 +886,7 @@ def save_results(
     results: Dict,
     metadata: Dict,
     chunk_info: Optional[Dict] = None,
+    trial_type: str = "alltrials",
 ) -> Path:
     """Save NPZ scores + JSON metadata with provenance.
 
@@ -895,7 +897,8 @@ def save_results(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     base = build_base_name(
-        feature_label, space, inout_bounds, clf_name, cv_name, mode, combined
+        feature_label, space, inout_bounds, clf_name, cv_name, mode, combined,
+        trial_type=trial_type,
     )
     if chunk_info is not None:
         base += f"_chunk-{chunk_info['chunk_idx']}of{chunk_info['n_chunks']}"
@@ -1263,6 +1266,7 @@ def main():
             results=results,
             metadata=metadata,
             chunk_info=chunk_info,
+            trial_type=args.trial_type,
         )
 
     failures: List[Tuple[str, str]] = []

@@ -73,7 +73,7 @@ METRICS: Dict[str, Metric] = {
         name="tval",
         description="Paired t-statistic (OUT - IN), symmetric diverging.",
         results_subdir="statistics_{space}",
-        results_glob="feature-{feature}_inout-{inout}_test-{test}_path-{path}_results.npz",
+        results_glob="feature-{feature}_inout-{inout}_test-{test}_path-{path}_type-{type}_results.npz",
         value_key="tvals",
         pval_keys=["pvals_corrected_tmax", "pvals_corrected_fdr_bh",
                    "pvals_corrected_bonferroni", "pvals"],
@@ -86,7 +86,7 @@ METRICS: Dict[str, Metric] = {
         name="contrast",
         description="Normalised contrast (OUT - IN) / |IN|, diverging.",
         results_subdir="statistics_{space}",
-        results_glob="feature-{feature}_inout-{inout}_test-{test}_path-{path}_results.npz",
+        results_glob="feature-{feature}_inout-{inout}_test-{test}_path-{path}_type-{type}_results.npz",
         value_key="contrast",
         pval_keys=["pvals_corrected_tmax", "pvals_corrected_fdr_bh",
                    "pvals_corrected_bonferroni", "pvals"],
@@ -103,7 +103,7 @@ METRICS: Dict[str, Metric] = {
         results_subdir="classification_{space}/group",
         results_glob=(
             "feature-{feature}_space-{space}_inout-{inout}"
-            "_clf-{clf}_cv-{cv}_mode-{mode}_scores.npz"
+            "_clf-{clf}_cv-{cv}_mode-{mode}_type-{type}_scores.npz"
         ),
         value_key="observed",
         pval_keys=["pvals_tmax", "pvals_fdr_bh", "pvals_bonferroni", "pvals_uncorrected"],

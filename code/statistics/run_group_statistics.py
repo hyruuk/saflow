@@ -1085,6 +1085,7 @@ def save_statistical_results(
     metadata: Dict,
     config: Dict,
     analysis_mode: str = "subject-trial-median",
+    trial_type: str = "alltrials",
 ) -> None:
     """Save statistical results with provenance metadata.
 
@@ -1108,12 +1109,14 @@ def save_statistical_results(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     inout_str = inout_bounds_to_string(inout_bounds)
-    # Bake the analysis path into the filename so Path-1 (subject-spectrum)
-    # and Path-2 (subject-trial-median / single-trials) results never
-    # overwrite each other for the same feature_type.
+    # Bake the analysis path and the trial-type filter into the filename so
+    # Path-1 (subject-spectrum) / Path-2 (subject-trial-median / single-
+    # trials) and the alltrials / correct / lapse variants never overwrite
+    # each other for the same feature_type.
     mode_tag = analysis_mode.replace("subject-", "subj-")
     base_name = (
-        f"feature-{feature_type}_inout-{inout_str}_test-{test_type}_path-{mode_tag}"
+        f"feature-{feature_type}_inout-{inout_str}_test-{test_type}"
+        f"_path-{mode_tag}_type-{trial_type}"
     )
 
     # Build dictionary of all numerical results
@@ -1240,11 +1243,11 @@ def main():
         choices=["subject-spectrum", "subject-trial-median", "single-trials"],
         help=(
             "Analysis path:\n"
-            "  subject-spectrum (default, Path 1): per (subj, run, cond) "
-            "median PSD across good trials, fit FOOOF on the aggregated "
-            "spectrum, derive psd_<band> / psd_corrected_<band> / "
-            "fooof_<param>; mean across runs; paired t-test. Cleaner FOOOF "
-            "fits than per-trial. Required for psd_corrected_*.\n"
+            "  subject-spectrum (default, Path 1): pool all good trials of "
+            "each (subj, cond) across runs, mean PSD, fit FOOOF once per "
+            "condition (2 fits/subject), derive psd_<band> / "
+            "psd_corrected_<band> / fooof_<param>; paired t-test. Cleaner "
+            "FOOOF fits than per-trial. Required for psd_corrected_*.\n"
             "  subject-trial-median: per-trial features (precomputed), "
             "median-aggregate per subject × condition, paired t-test. Use "
             "for complexity (always) and for cross-checking PSD-derived "
@@ -1333,8 +1336,9 @@ def main():
     elif args.analysis_mode == "subject-trial-median":
         logger.info(f"  per-subject {args.aggregate} of per-trial features → paired {args.test}")
     elif args.analysis_mode == "subject-spectrum":
-        logger.info("  per (subj, run, cond) median PSD → FOOOF on aggregate → mean across runs → paired t-test")
+        logger.info("  pooled (subj, cond) mean PSD → FOOOF on aggregate (2 fits/subj) → paired t-test")
     logger.info(f"IN/OUT bounds: {inout_bounds}")
+    logger.info(f"Trial-type filter: {args.trial_type}")
     logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
     logger.info(f"Corrections: {args.correction}")
     logger.info(f"Alpha: {args.alpha}")
@@ -1427,6 +1431,7 @@ def main():
             "ttest_ind" if eff_single_trials else args.test
         )
         metadata["drop_bad_trials"] = bool(not args.keep_bad_trials)
+        metadata["trial_type"] = args.trial_type
 
         save_statistical_results(
             output_dir=output_dir,
@@ -1441,6 +1446,7 @@ def main():
             metadata=metadata,
             config=config,
             analysis_mode=args.analysis_mode,
+            trial_type=args.trial_type,
         )
 
     # Visualization

@@ -102,6 +102,26 @@ def resolve_features(features):
     return [f for f in resolved if not (f in seen or seen.add(f))]
 
 
+# Trial-type shortcut shared by analysis.stats and analysis.classify. "all"
+# expands to the three variants we report on: every window, baseline-only
+# (no errors) and lapse windows (>=1 commission error).
+_TRIAL_TYPE_SETS = {"all": ["alltrials", "correct", "lapse"]}
+
+
+def resolve_trial_types(trial_type):
+    """Resolve a `--trial-type` value into a concrete list.
+
+    Accepts a single type ('alltrials', 'correct', 'rare', 'lapse',
+    'correct_commission') or the shortcut 'all' → alltrials + correct
+    (baseline) + lapse.
+    """
+    if not trial_type:
+        return list(_TRIAL_TYPE_SETS["all"])
+    if trial_type in _TRIAL_TYPE_SETS:
+        return list(_TRIAL_TYPE_SETS[trial_type])
+    return [trial_type]
+
+
 # ==============================================================================
 # dev.check.* Tasks - Validation & Quality Checks
 # ==============================================================================
@@ -803,19 +823,27 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 # ==============================================================================
 
 @task
-def stats(c, features, space="sensor", test="paired_ttest",
+def stats(c, features="all", space="sensor", test="paired_ttest",
           correction="tmax", alpha=0.05, n_permutations=10000,
           n_jobs=1, average_trials=True, aggregate="median", visualize=False,
           continue_on_error=True,
-          trial_type="alltrials", zoning="per-run", n_events_window=8,
+          trial_type="all", zoning="per-run", n_events_window=8,
           slurm_time=None, slurm_mem=None, slurm_cpus=None,
           slurm=False, dry_run=False):
     """Run group-level statistical analysis (IN vs OUT) on one or more features.
 
-    `--features` accepts:
+    With no arguments, runs every feature through every trial-type variant
+    (`--features=all --trial-type=all`).
+
+    `--features` accepts (default: 'all'):
       - A single feature name: --features=fooof_exponent
       - A space-separated list: --features="fooof_exponent psd_alpha"
       - A shortcut: --features=psds | psds_corrected | fooof | complexity | all
+
+    `--trial-type` accepts (default: 'all'):
+      - A single type: alltrials | correct | rare | lapse | correct_commission
+      - The shortcut 'all' → alltrials + correct (baseline) + lapse, each run
+        separately into its own `_type-<...>` result files.
 
     Each feature is tested independently (single-feature framework). PSD bands
     are read from config.yaml; "all" expands to FOOOF + PSD + PSD-corrected +
@@ -841,34 +869,38 @@ def stats(c, features, space="sensor", test="paired_ttest",
         invoke analysis.stats --features=psds --slurm
     """
     feature_list = resolve_features(features)
+    trial_types = resolve_trial_types(trial_type)
     test_label = "paired t-test (subject-level)" if average_trials else "independent t-test (trial-level)"
     print("=" * 80)
     print(f"analysis.stats | space={space}  correction={correction}  α={alpha}")
     print(f"               | n_perm={n_permutations}  test={test_label}")
     print(f"               | features ({len(feature_list)}): {' '.join(feature_list)}")
+    print(f"               | trial-types ({len(trial_types)}): {' '.join(trial_types)}")
     print("=" * 80)
 
     if slurm:
-        _stats_slurm(
-            c,
-            feature_list=feature_list,
-            space=space,
-            test=test,
-            correction=correction,
-            alpha=alpha,
-            n_permutations=n_permutations,
-            n_jobs=n_jobs,
-            average_trials=average_trials,
-            aggregate=aggregate,
-            visualize=visualize,
-            trial_type=trial_type,
-            zoning=zoning,
-            n_events_window=n_events_window,
-            slurm_time=slurm_time,
-            slurm_mem=slurm_mem,
-            slurm_cpus=slurm_cpus,
-            dry_run=dry_run,
-        )
+        for tt in trial_types:
+            print(f"\n{'#' * 80}\n# SLURM submit | trial-type: {tt}\n{'#' * 80}")
+            _stats_slurm(
+                c,
+                feature_list=feature_list,
+                space=space,
+                test=test,
+                correction=correction,
+                alpha=alpha,
+                n_permutations=n_permutations,
+                n_jobs=n_jobs,
+                average_trials=average_trials,
+                aggregate=aggregate,
+                visualize=visualize,
+                trial_type=tt,
+                zoning=zoning,
+                n_events_window=n_events_window,
+                slurm_time=slurm_time,
+                slurm_mem=slurm_mem,
+                slurm_cpus=slurm_cpus,
+                dry_run=dry_run,
+            )
         return
 
     python_exe = get_python_executable()
@@ -883,43 +915,46 @@ def stats(c, features, space="sensor", test="paired_ttest",
     other_mode = "subject-spectrum" if average_trials else "single-trials"
     complexity_mode = "subject-trial-median" if average_trials else "single-trials"
 
-    if other_feats:
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-               "--feature-type", *other_feats,
-               "--space", space, "--test", test,
-               "--correction", correction, "--alpha", str(alpha),
-               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-               "--analysis-mode", other_mode,
-               "--aggregate", aggregate,
-               "--trial-type", trial_type,
-               "--zoning", zoning,
-               "--n-events-window", str(n_events_window)]
-        if visualize:
-            cmd.append("--visualize")
-        print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s) (mode={other_mode})")
-        print(f"Running: {' '.join(cmd)}\n")
-        result = c.run(" ".join(cmd), pty=True,
-                       env=get_env_with_pythonpath(), warn=continue_on_error)
-        if result is not None and getattr(result, "exited", 0) != 0:
-            failures.append(("run_group_statistics", f"exit {result.exited}"))
+    for tt in trial_types:
+        print(f"\n{'#' * 80}\n# trial-type: {tt}\n{'#' * 80}")
 
-    if complexity_feats:
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-               "--feature-type", *complexity_feats,
-               "--space", space, "--test", test,
-               "--correction", correction, "--alpha", str(alpha),
-               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-               "--analysis-mode", complexity_mode,
-               "--aggregate", aggregate,
-               "--trial-type", trial_type,
-               "--zoning", zoning,
-               "--n-events-window", str(n_events_window)]
-        print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s) (mode={complexity_mode})")
-        print(f"Running: {' '.join(cmd)}\n")
-        result = c.run(" ".join(cmd), pty=True,
-                       env=get_env_with_pythonpath(), warn=continue_on_error)
-        if result is not None and getattr(result, "exited", 0) != 0:
-            failures.append(("complexity_stats", f"exit {result.exited}"))
+        if other_feats:
+            cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+                   "--feature-type", *other_feats,
+                   "--space", space, "--test", test,
+                   "--correction", correction, "--alpha", str(alpha),
+                   "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
+                   "--analysis-mode", other_mode,
+                   "--aggregate", aggregate,
+                   "--trial-type", tt,
+                   "--zoning", zoning,
+                   "--n-events-window", str(n_events_window)]
+            if visualize:
+                cmd.append("--visualize")
+            print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s) (mode={other_mode})")
+            print(f"Running: {' '.join(cmd)}\n")
+            result = c.run(" ".join(cmd), pty=True,
+                           env=get_env_with_pythonpath(), warn=continue_on_error)
+            if result is not None and getattr(result, "exited", 0) != 0:
+                failures.append((f"run_group_statistics[{tt}]", f"exit {result.exited}"))
+
+        if complexity_feats:
+            cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+                   "--feature-type", *complexity_feats,
+                   "--space", space, "--test", test,
+                   "--correction", correction, "--alpha", str(alpha),
+                   "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
+                   "--analysis-mode", complexity_mode,
+                   "--aggregate", aggregate,
+                   "--trial-type", tt,
+                   "--zoning", zoning,
+                   "--n-events-window", str(n_events_window)]
+            print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s) (mode={complexity_mode})")
+            print(f"Running: {' '.join(cmd)}\n")
+            result = c.run(" ".join(cmd), pty=True,
+                           env=get_env_with_pythonpath(), warn=continue_on_error)
+            if result is not None and getattr(result, "exited", 0) != 0:
+                failures.append((f"complexity_stats[{tt}]", f"exit {result.exited}"))
 
     print("\n" + "=" * 80)
     if failures:
@@ -932,21 +967,29 @@ def stats(c, features, space="sensor", test="paired_ttest",
 
 
 @task
-def classify(c, features, clf="logistic", cv="auto",
+def classify(c, features="all", clf="logistic", cv="auto",
              space="sensor", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
-             trial_type="alltrials", zoning="per-run", n_events_window=8,
+             trial_type="all", zoning="per-run", n_events_window=8,
              average_trials=True,
              slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT) on one or more features.
 
-    `--features` accepts:
+    With no arguments, runs every feature through every trial-type variant
+    (`--features=all --trial-type=all`).
+
+    `--features` accepts (default: 'all'):
       - A single feature name: --features=fooof_exponent
       - A space-separated list: --features="fooof_exponent psd_alpha"
       - A shortcut: --features=psds | psds_corrected | fooof | complexity | all
+
+    `--trial-type` accepts (default: 'all'):
+      - A single type: alltrials | correct | rare | lapse | correct_commission
+      - The shortcut 'all' → alltrials + correct (baseline) + lapse, each run
+        separately into its own `_type-<...>` score files.
 
     Spatial mode:
       - univariate (default): per-channel/ROI classifier + shared-permutation t-max
@@ -993,63 +1036,42 @@ def classify(c, features, clf="logistic", cv="auto",
     print("=" * 80)
 
     feature_list = resolve_features(features)
+    trial_types = resolve_trial_types(trial_type)
+    print(f"Features ({len(feature_list)}): {' '.join(feature_list)}")
+    print(f"Trial-types ({len(trial_types)}): {' '.join(trial_types)}")
 
     if slurm:
-        _classify_slurm(
-            c,
-            feature_list=feature_list,
-            clf=clf,
-            cv=cv,
-            space=space,
-            mode=mode,
-            n_permutations=n_permutations,
-            no_balance=no_balance,
-            n_jobs=n_jobs,
-            continue_on_error=continue_on_error,
-            combine_features=combine_features,
-            importances=importances,
-            label=label,
-            n_chunks=n_chunks,
-            seed=seed,
-            aggregate=aggregate,
-            delete_chunks=delete_chunks,
-            trial_type=trial_type,
-            zoning=zoning,
-            n_events_window=n_events_window,
-            average_trials=average_trials,
-            slurm_time=slurm_time,
-            slurm_mem=slurm_mem,
-            slurm_cpus=slurm_cpus,
-            dry_run=dry_run,
-        )
+        for tt in trial_types:
+            print(f"\n{'#' * 80}\n# SLURM submit | trial-type: {tt}\n{'#' * 80}")
+            _classify_slurm(
+                c,
+                feature_list=feature_list,
+                clf=clf,
+                cv=cv,
+                space=space,
+                mode=mode,
+                n_permutations=n_permutations,
+                no_balance=no_balance,
+                n_jobs=n_jobs,
+                continue_on_error=continue_on_error,
+                combine_features=combine_features,
+                importances=importances,
+                label=label,
+                n_chunks=n_chunks,
+                seed=seed,
+                aggregate=aggregate,
+                delete_chunks=delete_chunks,
+                trial_type=tt,
+                zoning=zoning,
+                n_events_window=n_events_window,
+                average_trials=average_trials,
+                slurm_time=slurm_time,
+                slurm_mem=slurm_mem,
+                slurm_cpus=slurm_cpus,
+                dry_run=dry_run,
+            )
         return
 
-    python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.classification.run_classification",
-           "--feature", *feature_list]
-    cmd.extend(["--clf", clf])
-    cmd.extend(["--cv", cv])
-    cmd.extend(["--space", space])
-    cmd.extend(["--mode", mode])
-    cmd.extend(["--n-permutations", str(n_permutations)])
-    cmd.extend(["--n-jobs", str(n_jobs)])
-    cmd.extend(["--trial-type", trial_type])
-    cmd.extend(["--zoning", zoning])
-    cmd.extend(["--n-events-window", str(n_events_window)])
-
-    cmd.extend(["--seed", str(seed)])
-    if not average_trials:
-        cmd.append("--no-average-trials")
-    if no_balance:
-        cmd.append("--no-balance")
-    if continue_on_error:
-        cmd.append("--continue-on-error")
-    if combine_features:
-        cmd.append("--combine-features")
-    if importances:
-        cmd.append("--importances")
-    if label:
-        cmd.extend(["--label", label])
     if n_chunks > 1:
         print(
             f"NOTE: --n-chunks={n_chunks} requires running each chunk separately. "
@@ -1058,8 +1080,36 @@ def classify(c, features, clf="logistic", cv="auto",
         )
         return
 
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+    python_exe = get_python_executable()
+    for tt in trial_types:
+        print(f"\n{'#' * 80}\n# trial-type: {tt}\n{'#' * 80}")
+        cmd = [python_exe, "-m", "code.classification.run_classification",
+               "--feature", *feature_list]
+        cmd.extend(["--clf", clf])
+        cmd.extend(["--cv", cv])
+        cmd.extend(["--space", space])
+        cmd.extend(["--mode", mode])
+        cmd.extend(["--n-permutations", str(n_permutations)])
+        cmd.extend(["--n-jobs", str(n_jobs)])
+        cmd.extend(["--trial-type", tt])
+        cmd.extend(["--zoning", zoning])
+        cmd.extend(["--n-events-window", str(n_events_window)])
+        cmd.extend(["--seed", str(seed)])
+        if not average_trials:
+            cmd.append("--no-average-trials")
+        if no_balance:
+            cmd.append("--no-balance")
+        if continue_on_error:
+            cmd.append("--continue-on-error")
+        if combine_features:
+            cmd.append("--combine-features")
+        if importances:
+            cmd.append("--importances")
+        if label:
+            cmd.extend(["--label", label])
+
+        print(f"\nRunning: {' '.join(cmd)}\n")
+        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 # ==============================================================================
@@ -1981,6 +2031,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                 "cv": cv_resolved,
                 "combined": combine_features,
                 "delete_chunks": delete_chunks,
+                "trial_type": trial_type,
                 "timestamp": timestamp,
             }
             agg_script = script_dir / f"{agg_job_name}_{timestamp}.sh"
@@ -2035,7 +2086,8 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 @task
 def classify_aggregate(c, feature, space, clf="lda", cv="logo",
                        mode="univariate", combined=False,
-                       delete_chunks=False, config="config.yaml"):
+                       delete_chunks=False, trial_type="alltrials",
+                       config="config.yaml"):
     """Manually aggregate per-chunk classification outputs.
 
     Use this if --aggregate=False was used at submission, or if the afterok
@@ -2053,6 +2105,7 @@ def classify_aggregate(c, feature, space, clf="lda", cv="logo",
         "--mode", mode,
         "--clf", clf,
         "--cv", cv,
+        "--trial-type", trial_type,
         "--config", config,
     ]
     if combined:

@@ -66,11 +66,21 @@ def _get_sensor_info(config: Dict, data_root: Path):
         "preprocessed/sub-*/meg/*_proc-clean_meg.fif"
     ))
     if not sample_files:
+        bids_dir = data_root / config["paths"].get("bids", "bids")
+        sample_files = list(bids_dir.glob("sub-*/meg/*_task-*_meg.fif"))
+    if not sample_files:
         sample_files = list(derivatives_dir.glob("**/sub-*/meg/*_meg.fif"))
-    if sample_files:
-        raw = mne.io.read_raw_fif(sample_files[0], preload=False, verbose=False)
-        raw.pick("mag")
-        return raw.info
+    for sample in sample_files:
+        # Files may be continuous raw or epoched; both expose a mag `info`.
+        try:
+            obj = mne.io.read_raw_fif(sample, preload=False, verbose=False)
+        except ValueError:
+            try:
+                obj = mne.read_epochs(sample, preload=False, verbose=False)
+            except Exception:
+                continue
+        obj.pick("mag")
+        return obj.info
 
     raw_dir = data_root / config["paths"]["raw"]
     ds_files = sorted(raw_dir.glob("**/SA*_SAflow*.ds"))

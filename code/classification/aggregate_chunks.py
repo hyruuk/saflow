@@ -71,9 +71,11 @@ def aggregate(
     mode: str,
     combined: bool,
     delete_chunks: bool = False,
+    trial_type: str = "alltrials",
 ) -> Path:
     base = build_base_name(
-        feature_label, space, inout_bounds, clf_name, cv_name, mode, combined
+        feature_label, space, inout_bounds, clf_name, cv_name, mode, combined,
+        trial_type=trial_type,
     )
     chunks = find_chunks(output_dir, base)
     if not chunks:
@@ -233,6 +235,11 @@ def main():
     parser.add_argument("--cv", default="logo")
     parser.add_argument("--combined", action="store_true",
                         help="Set if the original run used --combine-features.")
+    parser.add_argument("--trial-type", default="alltrials",
+                        choices=["alltrials", "correct", "rare", "lapse",
+                                 "correct_commission"],
+                        help="Trial-type filter the original run used "
+                             "(must match the chunk filenames).")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--delete-chunks", action="store_true",
                         help="Remove per-chunk score/metadata files after merging.")
@@ -255,6 +262,7 @@ def main():
         mode=args.mode,
         combined=args.combined,
         delete_chunks=args.delete_chunks,
+        trial_type=args.trial_type,
     )
 
 

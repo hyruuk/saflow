@@ -2,14 +2,14 @@
 
 This module implements the "fit FOOOF on aggregated spectra" path for
 PSD-derived features (raw band power, FOOOF-corrected band power, FOOOF
-aperiodic parameters). Aggregation is done per ``(subject, run, condition)``
-on **good trials only** using the median PSD across trials, then averaged
-across the 6 runs of a subject (arithmetic mean) to give one value per
-``(subject, condition)`` per spatial unit.
+aperiodic parameters). Aggregation pools **all good trials** of a
+``(subject, condition)`` across the subject's runs into a single mean PSD
+(arithmetic mean of the per-epoch Welch PSDs), then fits FOOOF **once per
+condition** — exactly two fits per subject (IN, OUT) per spatial unit.
 
 Trade-offs vs the per-trial path:
 
-- FOOOF is fit once per ``(subject, run, condition, channel)`` on a clean,
+- FOOOF is fit once per ``(subject, condition, channel)`` on a clean,
   trial-averaged spectrum — much more robust than fitting per 0.852 s
   trial. Aperiodic params and corrected PSDs are correspondingly less
   noisy.
@@ -117,43 +117,6 @@ def _fit_fooof_group_on_psd(
     return exponent, offset, r_squared, corrected
 
 
-def _compute_run_condition_block(
-    psd_block: np.ndarray,
-    bad_mask: np.ndarray,
-    in_mask: np.ndarray,
-    out_mask: np.ndarray,
-    freqs: np.ndarray,
-    freq_range: Tuple[float, float],
-    fooof_params: Dict[str, Any],
-) -> Optional[Dict[str, Dict[str, np.ndarray]]]:
-    """Run-level: median PSD per condition (good trials), then FOOOF.
-
-    Returns a dict ``{"IN": {...}, "OUT": {...}}`` where each inner dict
-    has keys ``mean_psd``, ``corrected_psd``, ``exponent``, ``offset``,
-    ``r_squared``. Returns ``None`` if either condition has zero good
-    trials in this run (run is skipped).
-    """
-    good_mask = ~bad_mask
-    out: Dict[str, Dict[str, np.ndarray]] = {}
-    for label, cond_mask in (("IN", in_mask), ("OUT", out_mask)):
-        cond_good = cond_mask & good_mask
-        if not cond_good.any():
-            return None
-        # Median across good trials of this condition → (n_chans, n_freqs)
-        cond_psd = np.median(psd_block[cond_good], axis=0)
-        exp, offs, r2, corr = _fit_fooof_group_on_psd(
-            cond_psd, freqs, freq_range, fooof_params
-        )
-        out[label] = dict(
-            mean_psd=cond_psd,
-            corrected_psd=corr,
-            exponent=exp,
-            offset=offs,
-            r_squared=r2,
-        )
-    return out
-
-
 def load_subject_spectrum_features(
     feature_types: List[str],
     space: str,
@@ -168,9 +131,10 @@ def load_subject_spectrum_features(
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
     """Load PSD-derived features through Path 1 (subject-spectrum FOOOF).
 
-    Per ``(subject, run, condition)``: median PSD across good trials, FOOOF
-    fit on that median, then derive each requested feature. Per
-    ``(subject, condition)``: arithmetic mean across runs.
+    Per ``(subject, condition)``: pool every good epoch's Welch PSD across
+    the subject's runs, take the arithmetic mean to get one spectrum, fit
+    FOOOF once on it, then derive each requested feature. Exactly two FOOOF
+    fits per subject (IN, OUT).
 
     Returns a dict mapping ``feature_type -> (X, y, groups, metadata)``,
     matching the shape contract of :func:`load_all_features_batched`. ``X``
@@ -181,8 +145,8 @@ def load_subject_spectrum_features(
 
     Only feature_types from the PSD/FOOOF families are supported. Mix of
     ``psd_*``, ``psd_corrected_*`` and ``fooof_*`` is fine — the FOOOF fit
-    is computed once per ``(subject, run, condition)`` and reused across
-    every requested feature.
+    is computed once per ``(subject, condition)`` and reused across every
+    requested feature.
     """
     if not feature_types:
         raise ValueError("feature_types must be non-empty")
@@ -288,10 +252,13 @@ def load_subject_spectrum_features(
         pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
         pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
 
-        # Now walk runs again, splitting each run's epochs by VTC + trial-type,
-        # applying the bad filter, computing the median PSD + FOOOF fit.
-        run_blocks: List[Dict[str, Dict[str, np.ndarray]]] = []
+        # Walk runs again: collect every good IN / OUT epoch PSD, then pool
+        # them across the subject's runs into a single mean spectrum per
+        # condition (pooled grand mean — one FOOOF fit per condition).
+        in_epoch_psds: List[np.ndarray] = []
+        out_epoch_psds: List[np.ndarray] = []
         n_in_total, n_out_total, n_bad_in, n_bad_out = 0, 0, 0, 0
+        freqs: Optional[np.ndarray] = None
 
         for file_path, vtc, task, inc_task_run, bad in zip(
             run_psd_files, all_vtc, all_task, all_inc_task, all_bad
@@ -314,48 +281,39 @@ def load_subject_spectrum_features(
                 task_per_epoch=task,
                 type_how=trial_type,
             )
-            in_mask_full = task_mask & (vtc <= inbound)
-            out_mask_full = task_mask & (vtc >= outbound)
-            n_bad_in += int((in_mask_full & bad).sum()) if drop_bad_trials else 0
-            n_bad_out += int((out_mask_full & bad).sum()) if drop_bad_trials else 0
+            in_zone = task_mask & (vtc <= inbound)
+            out_zone = task_mask & (vtc >= outbound)
+            n_bad_in += int((in_zone & bad).sum()) if drop_bad_trials else 0
+            n_bad_out += int((out_zone & bad).sum()) if drop_bad_trials else 0
 
-            block = _compute_run_condition_block(
-                psd_block=psd_block,
-                bad_mask=bad if drop_bad_trials else np.zeros_like(bad, dtype=bool),
-                in_mask=in_mask_full,
-                out_mask=out_mask_full,
-                freqs=freqs,
-                freq_range=freq_range,
-                fooof_params=fooof_params,
-            )
-            if block is None:
-                continue
-
-            # Bookkeeping (counts of good IN/OUT trials retained in this run)
             good_mask = ~bad if drop_bad_trials else np.ones_like(bad, dtype=bool)
-            n_in_total += int((in_mask_full & good_mask).sum())
-            n_out_total += int((out_mask_full & good_mask).sum())
-            run_blocks.append(block)
+            in_mask = in_zone & good_mask
+            out_mask = out_zone & good_mask
+            if in_mask.any():
+                in_epoch_psds.append(psd_block[in_mask])
+                n_in_total += int(in_mask.sum())
+            if out_mask.any():
+                out_epoch_psds.append(psd_block[out_mask])
+                n_out_total += int(out_mask.sum())
 
-        if not run_blocks:
+        # Need both conditions populated somewhere across the runs.
+        if not in_epoch_psds or not out_epoch_psds or freqs is None:
             continue
 
-        # Average the per-run aggregates → one value per (subj, cond) per channel.
-        per_cond_runs: Dict[str, Dict[str, List[np.ndarray]]] = {
-            "IN": {k: [] for k in ("mean_psd", "corrected_psd", "exponent", "offset", "r_squared")},
-            "OUT": {k: [] for k in ("mean_psd", "corrected_psd", "exponent", "offset", "r_squared")},
-        }
-        for block in run_blocks:
-            for cond in ("IN", "OUT"):
-                for k in per_cond_runs[cond]:
-                    per_cond_runs[cond][k].append(block[cond][k])
-
+        # Pooled grand-mean PSD per condition → one FOOOF fit each.
         cond_agg: Dict[str, Dict[str, np.ndarray]] = {}
-        for cond in ("IN", "OUT"):
-            cond_agg[cond] = {
-                k: np.mean(np.stack(per_cond_runs[cond][k], axis=0), axis=0)
-                for k in per_cond_runs[cond]
-            }
+        for cond, epoch_psds in (("IN", in_epoch_psds), ("OUT", out_epoch_psds)):
+            mean_psd = np.nanmean(np.concatenate(epoch_psds, axis=0), axis=0)
+            exp, offs, r2, corr = _fit_fooof_group_on_psd(
+                mean_psd, freqs, freq_range, fooof_params
+            )
+            cond_agg[cond] = dict(
+                mean_psd=mean_psd,
+                corrected_psd=corr,
+                exponent=exp,
+                offset=offs,
+                r_squared=r2,
+            )
         # Now derive the requested features from the run-mean aggregates.
         cond_features: Dict[str, Dict[str, np.ndarray]] = {"IN": {}, "OUT": {}}
         # Cache band masks once per call
@@ -366,10 +324,8 @@ def load_subject_spectrum_features(
                         f"Band '{sub_key}' not in config.features.frequency_bands"
                     )
                 fmin, fmax = freq_bands[sub_key]
-                # We need band mask aligned to the frequency vector. Use the
-                # run-level freqs by reading one of the run's PSD files.
-                with np.load(run_psd_files[0], allow_pickle=True) as npz:
-                    freqs = np.asarray(npz["freqs"])
+                # Band mask aligned to the run-level frequency vector
+                # (identical across runs; captured in the pooling loop above).
                 fmask = (freqs >= fmin) & (freqs <= fmax)
                 for cond in ("IN", "OUT"):
                     if family == "psd":
@@ -537,11 +493,11 @@ def load_channel_spectra(
 ) -> Dict[str, Any]:
     """Per-subject IN/OUT spectra + FOOOF decomposition for one spatial unit.
 
-    Mirrors the aggregation of :func:`load_subject_spectrum_features` (median
-    PSD across good trials per ``(subject, run, condition)``, then mean across
-    runs) but keeps the *full curves* — raw spectrum, aperiodic fit, corrected
-    spectrum and FOOOF periodic model — for a single channel/region so the
-    Figure-3 C..F panel can be reproduced.
+    Mirrors the aggregation of :func:`load_subject_spectrum_features` (pooled
+    mean PSD across all good trials of a ``(subject, condition)``, one FOOOF
+    fit per condition) but keeps the *full curves* — raw spectrum, aperiodic
+    fit, corrected spectrum and FOOOF periodic model — for a single
+    channel/region so the Figure-3 C..F panel can be reproduced.
 
     Args:
         channel_index: index into the spatial axis of the welch PSD arrays
@@ -632,9 +588,10 @@ def load_channel_spectra(
         pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
         pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
 
-        # Second pass: median good-trial PSD per (run, condition) at the
-        # selected channel, FOOOF fit, then mean across runs.
-        run_curves: Dict[str, List[Dict[str, np.ndarray]]] = {"IN": [], "OUT": []}
+        # Second pass: pool every good IN / OUT epoch at the selected channel
+        # across runs, mean into one spectrum per condition, FOOOF fit once.
+        in_chan_psds: List[np.ndarray] = []
+        out_chan_psds: List[np.ndarray] = []
 
         for file_path, vtc, task, inc_task_run, bad in zip(
             run_psd_files, all_vtc, all_task, all_inc_task, all_bad
@@ -666,31 +623,30 @@ def load_channel_spectra(
             good_mask = ~bad if drop_bad_trials else np.ones_like(bad, dtype=bool)
             in_mask = task_mask & (vtc <= inbound) & good_mask
             out_mask = task_mask & (vtc >= outbound) & good_mask
-            if not in_mask.any() or not out_mask.any():
-                continue  # keep IN/OUT paired per run
+            if in_mask.any():
+                in_chan_psds.append(psd_block[in_mask, channel_index, :])
+            if out_mask.any():
+                out_chan_psds.append(psd_block[out_mask, channel_index, :])
 
-            in_psd = np.median(psd_block[in_mask, channel_index, :], axis=0)
-            out_psd = np.median(psd_block[out_mask, channel_index, :], axis=0)
-            in_fit = _fit_fooof_single_curve(in_psd, freqs, freq_range, fooof_params)
-            out_fit = _fit_fooof_single_curve(out_psd, freqs, freq_range, fooof_params)
-            if in_fit is None or out_fit is None:
-                continue  # FOOOF failed: skip the run to keep IN/OUT paired
-            if freqs_fit is None:
-                freqs_fit = in_fit["fit_freqs"]
-            run_curves["IN"].append(in_fit)
-            run_curves["OUT"].append(out_fit)
-
-        if not run_curves["IN"] or not run_curves["OUT"]:
+        if not in_chan_psds or not out_chan_psds:
             continue
 
+        in_psd = np.nanmean(np.concatenate(in_chan_psds, axis=0), axis=0)
+        out_psd = np.nanmean(np.concatenate(out_chan_psds, axis=0), axis=0)
+        in_fit = _fit_fooof_single_curve(in_psd, freqs_full, freq_range, fooof_params)
+        out_fit = _fit_fooof_single_curve(out_psd, freqs_full, freq_range, fooof_params)
+        if in_fit is None or out_fit is None:
+            continue  # FOOOF failed: skip the subject to keep IN/OUT paired
+        if freqs_fit is None:
+            freqs_fit = in_fit["fit_freqs"]
+
         cond_block: Dict[str, Dict[str, np.ndarray]] = {}
-        for label in ("IN", "OUT"):
-            curves = run_curves[label]
+        for label, fit in (("IN", in_fit), ("OUT", out_fit)):
             block: Dict[str, np.ndarray] = {}
             for key in _FULL_CURVE_KEYS + _FIT_CURVE_KEYS:
-                block[key] = np.nanmean(np.stack([c[key] for c in curves]), axis=0)
+                block[key] = np.asarray(fit[key], dtype=float)
             for key in _SCALAR_KEYS:
-                block[key] = float(np.nanmean([c[key] for c in curves]))
+                block[key] = float(fit[key])
             cond_block[label] = block
         subj_blocks[subject] = cond_block
 

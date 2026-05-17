@@ -38,11 +38,16 @@ def get_band_index(feat_name: str) -> int:
 
 
 def find_results(stats_dir: Path, feature_type: str, inout_str: str):
-    """Find matching result files, supporting partial matching."""
-    exact = stats_dir / f"feature-{feature_type}_inout-{inout_str}_test-paired_ttest_results.npz"
-    if exact.exists():
-        return [exact]
-    pattern = f"feature-{feature_type}_*_inout-{inout_str}_test-paired_ttest_results.npz"
+    """Find matching result files, supporting partial matching.
+
+    Result filenames carry trailing ``_path-<mode>_type-<trial_type>`` tokens;
+    the trailing ``*`` below matches them. NOTE: this legacy entry point does
+    not filter by analysis path or trial-type — prefer ``run_viz`` (which
+    exposes ``--trial-type``) when several variants coexist.
+    """
+    pattern = (
+        f"feature-{feature_type}*_inout-{inout_str}_test-paired_ttest*_results.npz"
+    )
     return sorted(stats_dir.glob(pattern))
 
 

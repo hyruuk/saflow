@@ -87,6 +87,8 @@ def _figure_filename(
     pieces = [f"{metric}", f"{family}", f"space-{space}"]
     if "clf" in extra:
         pieces.append(f"clf-{extra['clf']}")
+    if extra.get("type") and extra["type"] != "alltrials":
+        pieces.append(f"type-{extra['type']}")
     pieces.append(f"correction-{correction}")
     return "_".join(pieces) + ".png"
 
@@ -134,6 +136,13 @@ def main() -> int:
         help="Statistical test filter (statistics only). Default: paired_ttest.",
     )
     parser.add_argument(
+        "--trial-type", default="alltrials",
+        choices=["alltrials", "correct", "rare", "lapse", "correct_commission"],
+        help="Trial-type filter the statistics were run with (statistics "
+             "only). 'correct' = baseline windows, 'lapse' = windows with a "
+             "commission error. Default: alltrials.",
+    )
+    parser.add_argument(
         "--correction", default="auto",
         choices=["auto", "tmax", "fdr_bh", "bonferroni", "uncorrected"],
         help="Which p-value correction to use for the significance mask. "
@@ -177,6 +186,8 @@ def main() -> int:
         extra["test"] = args.test
     if "space" in metric.results_glob:
         extra["space"] = args.space
+    if "{type}" in metric.results_glob:
+        extra["type"] = args.trial_type
 
     print("=" * 78)
     print(f"viz | metric={args.metric} | space={args.space}")
@@ -266,6 +277,8 @@ def main() -> int:
         ]
         if "clf" in extra:
             title_bits.insert(2, f"clf={extra['clf']}")
+        if extra.get("type") and extra["type"] != "alltrials":
+            title_bits.insert(2, f"trials={extra['type']}")
         fig.suptitle(" | ".join(title_bits), fontsize=11, y=0.98)
 
         out = fig_dir / _figure_filename(

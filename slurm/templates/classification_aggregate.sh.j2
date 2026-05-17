@@ -14,6 +14,7 @@ python -m code.classification.aggregate_chunks \
     --mode {{ mode }} \
     --clf {{ clf }} \
     --cv {{ cv }} \
+    --trial-type {{ trial_type }} \
     {% if combined %}--combined{% endif %} \
     {% if delete_chunks %}--delete-chunks{% endif %}
 
