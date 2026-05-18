@@ -144,6 +144,82 @@ def submit_slurm_job(
         return None
 
 
+def submit_job_array(
+    task_scripts: List[Path],
+    array_name: str,
+    resources: Dict,
+    script_dir: Path,
+    timestamp: str,
+    max_concurrent: int = 0,
+    dependencies: Optional[List[str]] = None,
+    dep_type: str = "afterok",
+    dry_run: bool = False,
+) -> Optional[str]:
+    """Submit a list of per-task scripts as a single SLURM job array.
+
+    Instead of calling ``sbatch`` once per work item (hundreds of jobs), this
+    writes a manifest listing every per-task script and submits ONE array job
+    whose tasks each ``bash`` the manifest line indexed by
+    ``$SLURM_ARRAY_TASK_ID``.
+
+    Args:
+        task_scripts: per-task scripts already rendered to disk (one per work
+            item). Each is run verbatim by one array task.
+        array_name: base name for the array job, manifest, and wrapper script.
+        resources: SBATCH resource dict shared by every array task — must
+            contain ``account``, ``partition``, ``cpus``, ``mem``, ``time``,
+            ``log_dir``, ``venv_path``, ``project_root``.
+        script_dir: directory to write the manifest and wrapper script into.
+        timestamp: run timestamp (used in filenames).
+        max_concurrent: cap on simultaneously-running array tasks (the
+            ``%N`` modifier). 0 = no cap.
+        dependencies: SLURM job IDs this whole array waits on.
+        dep_type: dependency type ("afterok" / "afterany").
+        dry_run: if True, render files but do not submit.
+
+    Returns:
+        The array job ID (e.g. "12345"), or None on dry-run / failure /
+        empty input.
+    """
+    if not task_scripts:
+        logger.warning(f"submit_job_array({array_name}): no task scripts — nothing to submit")
+        return None
+
+    script_dir.mkdir(parents=True, exist_ok=True)
+    n = len(task_scripts)
+
+    # Manifest: one absolute per-task script path per line.
+    manifest_path = script_dir / f"{array_name}_{timestamp}.manifest"
+    manifest_path.write_text(
+        "\n".join(str(Path(p).resolve()) for p in task_scripts) + "\n"
+    )
+
+    array_spec = f"0-{n - 1}"
+    if max_concurrent and max_concurrent > 0:
+        array_spec += f"%{max_concurrent}"
+
+    context = {
+        **resources,
+        "job_name": array_name,
+        "array": array_spec,
+        "manifest_path": str(manifest_path),
+        "timestamp": timestamp,
+    }
+    array_script = script_dir / f"{array_name}_{timestamp}_array.sh"
+    render_slurm_script("array.sh.j2", context, output_path=array_script)
+
+    print(
+        f"  Job array '{array_name}': {n} task(s) [--array={array_spec}] "
+        f"-> {array_script.name}"
+    )
+    return submit_slurm_job(
+        array_script,
+        dependencies=dependencies,
+        dep_type=dep_type,
+        dry_run=dry_run,
+    )
+
+
 def check_job_status(job_id: str) -> Optional[Dict]:
     """Check status of a SLURM job.
 

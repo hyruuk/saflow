@@ -1,0 +1,36 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# SLURM job array dispatch
+# =============================================================================
+# This single array job replaces N individually-submitted jobs. Each array
+# task reads one line from the manifest below and runs that per-task script.
+# Manifest: {{ manifest_path }}
+# =============================================================================
+
+MANIFEST="{{ manifest_path }}"
+TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
+LINE=$((TASK_ID + 1))
+
+if [ ! -f "$MANIFEST" ]; then
+    echo "ERROR: manifest not found: $MANIFEST"
+    exit 1
+fi
+
+TASK_SCRIPT=$(sed -n "${LINE}p" "$MANIFEST")
+
+if [ -z "$TASK_SCRIPT" ]; then
+    echo "ERROR: no manifest entry for array task $TASK_ID (line $LINE) in $MANIFEST"
+    exit 1
+fi
+
+echo "Array task $TASK_ID -> $TASK_SCRIPT"
+echo "=================================================================="
+bash "$TASK_SCRIPT"
+ARRAY_TASK_EXIT=$?
+echo "=================================================================="
+echo "Array task $TASK_ID finished with exit code $ARRAY_TASK_EXIT"
+exit $ARRAY_TASK_EXIT
+
+{% endblock %}

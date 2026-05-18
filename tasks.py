@@ -1327,9 +1327,11 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
     """Submit preprocessing jobs to SLURM."""
     from datetime import datetime
     from code.utils.config import load_config
-    from code.utils.slurm import render_slurm_script, submit_slurm_job, save_job_manifest
+    from code.utils.slurm import (
+        render_slurm_script, submit_slurm_job, submit_job_array, save_job_manifest,
+    )
 
-    print("\n[SLURM Mode] Submitting preprocessing jobs to cluster\n")
+    print("\n[SLURM Mode] Submitting preprocessing job array to cluster\n")
 
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
@@ -1350,78 +1352,70 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
     script_dir.mkdir(parents=True, exist_ok=True)
 
     venv_path = PROJECT_ROOT / config["paths"]["venv"]
-    job_ids = []
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=preproc_resources["cpus"],
+        mem=preproc_resources["mem"],
+        time=preproc_resources["time"],
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+    max_concurrent = slurm_config.get("array_throttle", 0)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
-    print(f"Total jobs: {len(subjects) * len(run_list)}")
+    print(f"Total array tasks: {len(subjects) * len(run_list)}")
 
-    # Track per-subject job IDs for dependent report jobs
-    subject_job_ids = {subj: [] for subj in subjects}
-
+    # Render one per-task script per (subject, run); a single job array
+    # dispatches them all instead of hundreds of separate sbatch submissions.
+    task_scripts = []
     for subj in subjects:
         for run in run_list:
             job_name = f"preproc_sub-{subj}_run-{run}"
             context = {
+                **base_resources,
                 "job_name": job_name,
-                "account": slurm_config["account"],
-                "partition": slurm_config.get("partition", ""),
-                "time": preproc_resources["time"],
-                "cpus": preproc_resources["cpus"],
-                "mem": preproc_resources["mem"],
-                "venv_path": str(venv_path),
-                "project_root": str(PROJECT_ROOT),
-                "log_dir": str(log_dir),
+                "timestamp": timestamp,
                 "subject": subj,
                 "run": run,
                 "bids_root": str(bids_root),
                 "log_level": log_level,
                 "skip_existing": skip_existing,
             }
-
             script_path = script_dir / f"{job_name}_{timestamp}.sh"
             render_slurm_script("preprocessing.sh.j2", context, output_path=script_path)
-            job_id = submit_slurm_job(script_path, dry_run=dry_run)
-            if job_id:
-                job_ids.append(job_id)
-                subject_job_ids[subj].append(job_id)
+            task_scripts.append(script_path)
 
-    # Submit dependent report jobs (per-subject, each also regenerates dataset report)
-    # Each per-subject report job generates its subject report AND the dataset report.
-    # This eliminates the fragile dependency chain where a separate dataset job must
-    # wait for all subject report jobs. The last subject to complete produces the
-    # final correct dataset report (progressive build).
-    report_job_ids = []
+    array_job_id = submit_job_array(
+        task_scripts, "preproc_array", base_resources, script_dir, timestamp,
+        max_concurrent=max_concurrent, dry_run=dry_run,
+    )
+
+    # One report job after the whole preprocessing array finishes.
+    # aggregate_reports --dataset regenerates every subject report AND the
+    # dataset report, so a single afterany-dependent job replaces the old
+    # per-subject report fan-out (and avoids concurrent dataset-report writes).
     report_resources = slurm_config.get("report", {"time": "00:15:00", "cpus": 2, "mem": "4G"})
+    report_ctx = {
+        **base_resources,
+        "cpus": report_resources["cpus"],
+        "mem": report_resources["mem"],
+        "time": report_resources["time"],
+        "job_name": "preproc_report",
+        "timestamp": timestamp,
+    }
+    report_script = script_dir / f"preproc_report_{timestamp}.sh"
+    render_slurm_script("preprocess_report.sh.j2", report_ctx, output_path=report_script)
+    report_job_id = submit_slurm_job(
+        report_script,
+        dependencies=[array_job_id] if array_job_id else None,
+        dep_type="afterany",  # run even if some preprocessing tasks failed
+        dry_run=dry_run,
+    )
 
-    for subj in subjects:
-        deps = subject_job_ids[subj]  # empty if preprocessing was skipped
-        job_name = f"report_sub-{subj}"
-        context = {
-            "job_name": job_name,
-            "account": slurm_config["account"],
-            "partition": slurm_config.get("partition", ""),
-            "time": report_resources["time"],
-            "cpus": report_resources["cpus"],
-            "mem": report_resources["mem"],
-            "venv_path": str(venv_path),
-            "project_root": str(PROJECT_ROOT),
-            "log_dir": str(log_dir),
-            "subject": subj,
-            "timestamp": timestamp,
-        }
-        script_path = script_dir / f"{job_name}_{timestamp}.sh"
-        render_slurm_script("preprocess_report.sh.j2", context, output_path=script_path)
-        rjob_id = submit_slurm_job(
-            script_path,
-            dependencies=deps if deps else None,
-            dep_type="afterany",  # run even if some preprocessing runs failed
-            dry_run=dry_run,
-        )
-        if rjob_id:
-            report_job_ids.append(rjob_id)
-
-    all_job_ids = job_ids + report_job_ids
+    all_job_ids = [j for j in (array_job_id, report_job_id) if j]
     if all_job_ids:
         manifest_path = log_dir / f"preprocessing_manifest_{timestamp}.json"
         save_job_manifest(all_job_ids, manifest_path, metadata={
@@ -1429,11 +1423,14 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
             "timestamp": timestamp,
             "subjects": subjects,
             "runs": run_list,
-            "preprocessing_job_ids": job_ids,
-            "report_job_ids": report_job_ids,
+            "preprocessing_array_job_id": array_job_id,
+            "report_job_id": report_job_id,
         })
-        print(f"\n✓ Submitted {len(job_ids)} preprocessing jobs")
-        print(f"✓ Submitted {len(report_job_ids)} report jobs (with dependencies)")
+        print(f"\n✓ Submitted preprocessing array ({len(task_scripts)} tasks)"
+              f" + 1 dependent report job")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task preprocessing "
+              f"array + 1 report job")
 
 
 def _source_recon_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True):
@@ -1458,7 +1455,9 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
     """Submit source reconstruction jobs to SLURM."""
     from datetime import datetime
     from code.utils.config import load_config
-    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+    )
 
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
@@ -1491,48 +1490,54 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
     log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSubjects: {len(subjects)}, Runs: {len(run_list)}")
-    print(f"Total jobs: {len(subjects) * len(run_list)}")
+    print(f"Total array tasks: {len(subjects) * len(run_list)}")
 
-    job_ids = []
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=src_recon_resources["cpus"],
+        mem=src_recon_resources["mem"],
+        time=src_recon_resources["time"],
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+    max_concurrent = slurm_config.get("array_throttle", 0)
+
+    task_scripts = []
     for subj in subjects:
         for run in run_list:
             job_name = f"srcrecon_sub-{subj}_run-{run}"
             context = {
+                **base_resources,
                 "job_name": job_name,
-                "account": slurm_config["account"],
-                "partition": slurm_config.get("partition", ""),
-                "cpus": src_recon_resources["cpus"],
-                "mem": src_recon_resources["mem"],
-                "time": src_recon_resources["time"],
-                "log_dir": str(log_dir),
-                "venv_path": str(venv_path),
-                "project_root": str(PROJECT_ROOT),
+                "timestamp": timestamp,
                 "subject": subj,
                 "run": run,
                 "bids_root": str(bids_root),
                 "log_level": log_level,
                 "skip_existing": skip_existing,
             }
-
             script_path = script_dir / f"{job_name}_{timestamp}.sh"
             render_slurm_script("source_reconstruction.sh.j2", context, output_path=script_path)
+            task_scripts.append(script_path)
 
-            if not dry_run:
-                try:
-                    job_id = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
-                    job_ids.append(job_id)
-                except Exception as e:
-                    print(f"  ✗ Failed to submit: {e}")
+    array_job_id = submit_job_array(
+        task_scripts, "srcrecon_array", base_resources, script_dir, timestamp,
+        max_concurrent=max_concurrent, dry_run=dry_run,
+    )
 
-    if job_ids:
+    if array_job_id:
         manifest_path = log_dir / f"source_reconstruction_manifest_{timestamp}.json"
-        save_job_manifest(job_ids, manifest_path, metadata={
+        save_job_manifest([array_job_id], manifest_path, metadata={
             "stage": "source_reconstruction",
             "timestamp": timestamp,
             "subjects": subjects,
             "runs": run_list,
         })
-        print(f"\n✓ Submitted {len(job_ids)} source reconstruction jobs")
+        print(f"\n✓ Submitted source reconstruction array ({len(task_scripts)} tasks)")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
 
 def _atlas_slurm(c, subject=None, runs=None, atlases=None,
@@ -1540,7 +1545,9 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
     """Submit atlas application jobs to SLURM."""
     from datetime import datetime
     from code.utils.config import load_config
-    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+    )
 
     print("\n[SLURM Mode] Submitting atlas application jobs to cluster\n")
 
@@ -1570,53 +1577,52 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
     log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
-    print(f"Total jobs: {len(subjects)}")  # One job per subject (all runs)
+    print(f"Total array tasks: {len(subjects)}")  # One task per subject (all runs)
 
-    job_ids = []
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=atlas_resources["cpus"],
+        mem=atlas_resources["mem"],
+        time=atlas_resources["time"],
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+    max_concurrent = slurm_config.get("array_throttle", 0)
+
+    task_scripts = []
     for subj in subjects:
         job_name = f"atlas_sub-{subj}"
-        runs_str = " ".join(run_list)
         context = {
+            **base_resources,
             "job_name": job_name,
-            "account": slurm_config["account"],
-            "partition": slurm_config.get("partition", ""),
-            "cpus": atlas_resources["cpus"],
-            "mem": atlas_resources["mem"],
-            "time": atlas_resources["time"],
-            "log_dir": str(log_dir),
-            "venv_path": str(venv_path),
-            "project_root": str(PROJECT_ROOT),
+            "timestamp": timestamp,
             "subject": subj,
-            "runs": runs_str,
+            "runs": " ".join(run_list),
             "atlases": atlases,
             "skip_existing": skip_existing,
-            "timestamp": timestamp,
         }
-
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
         render_slurm_script("atlas.sh.j2", context, output_path=script_path)
+        task_scripts.append(script_path)
 
-        if not dry_run:
-            try:
-                job_id = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
-                if job_id:
-                    job_ids.append(job_id)
-            except Exception as e:
-                print(f"  ✗ Failed to submit: {e}")
-        else:
-            print(f"[DRY RUN] Would submit: {script_path.name}")
+    array_job_id = submit_job_array(
+        task_scripts, "atlas_array", base_resources, script_dir, timestamp,
+        max_concurrent=max_concurrent, dry_run=dry_run,
+    )
 
-    if job_ids:
+    if array_job_id:
         manifest_path = log_dir / f"atlas_manifest_{timestamp}.json"
-        save_job_manifest(job_ids, manifest_path, metadata={
+        save_job_manifest([array_job_id], manifest_path, metadata={
             "stage": "atlas",
             "timestamp": timestamp,
             "subjects": subjects,
             "runs": run_list,
         })
-        print(f"\n✓ Submitted {len(job_ids)} atlas application jobs")
+        print(f"\n✓ Submitted atlas application array ({len(task_scripts)} tasks)")
     elif dry_run:
-        print(f"\n[DRY RUN] Would have submitted {len(subjects)} jobs")
+        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
 
 def _features_local(c, feature_type, subject, runs=None, space="sensor",
@@ -1671,7 +1677,9 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
     """Submit feature extraction jobs to SLURM."""
     from datetime import datetime
     from code.utils.config import load_config
-    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+    )
 
     print(f"\n[SLURM Mode] Submitting {feature_type} feature extraction jobs to cluster\n")
 
@@ -1702,22 +1710,28 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
     print(f"Feature type: {feature_type}")
     print(f"Space: {space}")
     print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
-    print(f"Total jobs: {len(subjects) * len(run_list)}")
+    print(f"Total array tasks: {len(subjects) * len(run_list)}")
 
-    job_ids = []
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=features_resources["cpus"],
+        mem=features_resources["mem"],
+        time=features_resources["time"],
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+    max_concurrent = slurm_config.get("array_throttle", 0)
+
+    task_scripts = []
     for subj in subjects:
         for run in run_list:
             job_name = f"{feature_type}_sub-{subj}_run-{run}_{space}"
             context = {
+                **base_resources,
                 "job_name": job_name,
-                "account": slurm_config["account"],
-                "partition": slurm_config.get("partition", ""),
-                "cpus": features_resources["cpus"],
-                "mem": features_resources["mem"],
-                "time": features_resources["time"],
-                "log_dir": str(log_dir),
-                "venv_path": str(venv_path),
-                "project_root": str(PROJECT_ROOT),
+                "timestamp": timestamp,
                 "feature_type": feature_type,
                 "subject": subj,
                 "run": run,
@@ -1726,25 +1740,19 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
                 "skip_existing": skip_existing,
                 "complexity_types": complexity_types,
                 "n_events_window": n_events_window,
-                "timestamp": timestamp,
             }
-
             script_path = script_dir / f"{job_name}_{timestamp}.sh"
             render_slurm_script("features.sh.j2", context, output_path=script_path)
+            task_scripts.append(script_path)
 
-            if not dry_run:
-                try:
-                    job_id = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
-                    if job_id:
-                        job_ids.append(job_id)
-                except Exception as e:
-                    print(f"  ✗ Failed to submit: {e}")
-            else:
-                print(f"[DRY RUN] Would submit: {script_path.name}")
+    array_job_id = submit_job_array(
+        task_scripts, f"{feature_type}_array", base_resources, script_dir, timestamp,
+        max_concurrent=max_concurrent, dry_run=dry_run,
+    )
 
-    if job_ids:
+    if array_job_id:
         manifest_path = log_dir / f"{feature_type}_manifest_{timestamp}.json"
-        save_job_manifest(job_ids, manifest_path, metadata={
+        save_job_manifest([array_job_id], manifest_path, metadata={
             "stage": f"features_{feature_type}",
             "feature_type": feature_type,
             "space": space,
@@ -1752,9 +1760,10 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
             "subjects": subjects,
             "runs": run_list,
         })
-        print(f"\n✓ Submitted {len(job_ids)} {feature_type} feature extraction jobs")
+        print(f"\n✓ Submitted {feature_type} feature extraction array "
+              f"({len(task_scripts)} tasks)")
     elif dry_run:
-        print(f"\n[DRY RUN] Would have submitted {len(subjects) * len(run_list)} jobs")
+        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
 
 def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
@@ -1768,7 +1777,9 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
     """Submit one statistics job per feature to SLURM."""
     from datetime import datetime
     from code.utils.config import load_config
-    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+    )
 
     print(f"\n[SLURM Mode] Submitting statistics jobs to cluster\n")
 
@@ -1824,7 +1835,8 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             return "single-trials"
         return "subject-trial-median" if is_complexity else "subject-spectrum"
 
-    all_job_ids = []
+    max_concurrent = slurm_config.get("array_throttle", 0)
+    task_scripts = []
     for feat in features:
         job_name = f"stats_{feat}_{space}_{test}_{trial_type}"
         context = {
@@ -1847,21 +1859,16 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
         }
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
         render_slurm_script("statistics.sh.j2", context, output_path=script_path)
+        task_scripts.append(script_path)
 
-        if dry_run:
-            print(f"[DRY RUN] Would submit: {script_path.name}")
-            continue
+    array_job_id = submit_job_array(
+        task_scripts, f"stats_array_{trial_type}", base_resources, script_dir,
+        timestamp, max_concurrent=max_concurrent, dry_run=dry_run,
+    )
 
-        try:
-            jid = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
-            if jid:
-                all_job_ids.append(jid)
-        except Exception as e:
-            print(f"  ✗ Failed to submit {job_name}: {e}")
-
-    if all_job_ids:
+    if array_job_id:
         manifest_path = log_dir / f"statistics_manifest_{trial_type}_{timestamp}.json"
-        save_job_manifest(all_job_ids, manifest_path, metadata={
+        save_job_manifest([array_job_id], manifest_path, metadata={
             "stage": "statistics",
             "space": space,
             "test": test,
@@ -1872,9 +1879,10 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             "trial_type": trial_type,
             "timestamp": timestamp,
         })
-        print(f"\n✓ Submitted {len(all_job_ids)} job(s); manifest: {manifest_path}")
+        print(f"\n✓ Submitted statistics array ({len(task_scripts)} tasks); "
+              f"manifest: {manifest_path}")
     elif dry_run:
-        print(f"\n[DRY RUN] Would have submitted {len(features)} job(s)")
+        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
 
 def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
@@ -1897,7 +1905,9 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
     """
     from datetime import datetime
     from code.utils.config import load_config
-    from code.utils.slurm import render_slurm_script, save_job_manifest, submit_slurm_job
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+    )
 
     print(f"\n[SLURM Mode] Submitting classification jobs to cluster\n")
 
@@ -1970,14 +1980,14 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
         project_root=str(PROJECT_ROOT),
     )
 
-    all_job_ids = []
-    aggregator_job_ids = []
+    max_concurrent = slurm_config.get("array_throttle", 0)
 
+    # Render every (feature × chunk) classification task script; one job
+    # array dispatches them all.
+    classify_scripts = []
+    agg_feature_labels = []  # features needing a chunk-aggregation job
     for feat_label, feature_args, feat_list in classifications:
-        chunk_indices = list(range(n_chunks))
-        chunk_job_ids = []
-
-        for chunk_idx in chunk_indices:
+        for chunk_idx in range(n_chunks):
             chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
             job_name = f"classify_{feat_label}_{space}_{mode}_{clf}_{trial_type}{chunk_suffix}"
             context = {
@@ -2007,29 +2017,27 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
             }
             script_path = script_dir / f"{job_name}_{timestamp}.sh"
             render_slurm_script("classification.sh.j2", context, output_path=script_path)
-
-            if dry_run:
-                print(f"[DRY RUN] Would submit: {script_path.name}")
-                continue
-
-            try:
-                jid = submit_slurm_job(script_path, job_name=job_name, dry_run=False)
-                if jid:
-                    chunk_job_ids.append(jid)
-                    all_job_ids.append(jid)
-            except Exception as e:
-                print(f"  ✗ Failed to submit {job_name}: {e}")
-
-        # Submit aggregation job with afterok dependency on this classification's chunks
+            classify_scripts.append(script_path)
         if n_chunks > 1 and aggregate:
+            agg_feature_labels.append(feat_label)
+
+    classify_array_id = submit_job_array(
+        classify_scripts, f"classify_array_{trial_type}", base_resources,
+        script_dir, timestamp, max_concurrent=max_concurrent, dry_run=dry_run,
+    )
+
+    # Chunk aggregation (only when n_chunks > 1): one task per feature, run as
+    # a second array that waits afterok on the whole classification array.
+    agg_array_id = None
+    if agg_feature_labels:
+        agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
+        agg_scripts = []
+        for feat_label in agg_feature_labels:
             agg_job_name = f"aggregate_{feat_label}_{space}_{mode}_{clf}_{trial_type}"
             agg_context = {
-                **base_resources,
-                # Aggregation is light — one CPU, modest RAM, short walltime.
-                "cpus": 1,
-                "mem": "8G",
-                "time": "0:30:00",
+                **agg_resources,
                 "job_name": agg_job_name,
+                "timestamp": timestamp,
                 "feature_label": feat_label,
                 "space": space,
                 "mode": mode,
@@ -2038,33 +2046,18 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                 "combined": combine_features,
                 "delete_chunks": delete_chunks,
                 "trial_type": trial_type,
-                "timestamp": timestamp,
             }
             agg_script = script_dir / f"{agg_job_name}_{timestamp}.sh"
             render_slurm_script("classification_aggregate.sh.j2", agg_context, output_path=agg_script)
+            agg_scripts.append(agg_script)
+        agg_array_id = submit_job_array(
+            agg_scripts, f"aggregate_array_{trial_type}", agg_resources,
+            script_dir, timestamp, max_concurrent=max_concurrent,
+            dependencies=[classify_array_id] if classify_array_id else None,
+            dep_type="afterok", dry_run=dry_run,
+        )
 
-            if dry_run:
-                print(f"[DRY RUN] Would submit aggregator: {agg_script.name} "
-                      f"(afterok:{','.join(chunk_job_ids) if chunk_job_ids else '<chunks>'})")
-                continue
-
-            if not chunk_job_ids:
-                print(f"  ✗ Skipping aggregator for {feat_label}: no chunk jobs were submitted")
-                continue
-            try:
-                jid = submit_slurm_job(
-                    agg_script,
-                    job_name=agg_job_name,
-                    dependencies=chunk_job_ids,
-                    dep_type="afterok",
-                    dry_run=False,
-                )
-                if jid:
-                    aggregator_job_ids.append(jid)
-                    all_job_ids.append(jid)
-            except Exception as e:
-                print(f"  ✗ Failed to submit aggregator {agg_job_name}: {e}")
-
+    all_job_ids = [j for j in (classify_array_id, agg_array_id) if j]
     if all_job_ids:
         manifest_path = log_dir / f"classification_manifest_{trial_type}_{timestamp}.json"
         save_job_manifest(all_job_ids, manifest_path, metadata={
@@ -2076,18 +2069,19 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
             "n_permutations": n_permutations,
             "combine_features": combine_features,
             "n_chunks": n_chunks,
-            "aggregator_job_ids": aggregator_job_ids,
+            "classify_array_job_id": classify_array_id,
+            "aggregate_array_job_id": agg_array_id,
             "features": features,
             "trial_type": trial_type,
             "timestamp": timestamp,
         })
-        print(f"\n✓ Submitted {len(all_job_ids)} job(s) "
-              f"({len(aggregator_job_ids)} aggregator); manifest: {manifest_path}")
+        msg = f"\n✓ Submitted classification array ({len(classify_scripts)} tasks)"
+        if agg_feature_labels:
+            msg += f" + aggregation array ({len(agg_feature_labels)} tasks)"
+        print(msg + f"; manifest: {manifest_path}")
     elif dry_run:
-        n_total = len(classifications) * n_chunks + (
-            len(classifications) if n_chunks > 1 and aggregate else 0
-        )
-        print(f"\n[DRY RUN] Would have submitted {n_total} job(s)")
+        n_total = len(classifications) * n_chunks + len(agg_feature_labels)
+        print(f"\n[DRY RUN] Would submit {n_total} task(s) across 1-2 job arrays")
 
 
 @task
