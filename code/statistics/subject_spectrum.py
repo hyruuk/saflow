@@ -2,10 +2,18 @@
 
 This module implements the "fit FOOOF on aggregated spectra" path for
 PSD-derived features (raw band power, FOOOF-corrected band power, FOOOF
-aperiodic parameters). Aggregation pools **all good trials** of a
-``(subject, condition)`` across the subject's runs into a single mean PSD
-(arithmetic mean of the per-epoch Welch PSDs), then fits FOOOF **once per
-condition** — exactly two fits per subject (IN, OUT) per spatial unit.
+aperiodic parameters). For each ``(subject, condition)`` the good epoch
+Welch PSDs are averaged **within each run**, those per-run means are then
+averaged across the subject's runs (mean-of-run-means — runs weighted
+equally, matching cc_saflow's compute_subjfooof.py), and FOOOF is fit
+**once per condition** — exactly two fits per subject (IN, OUT) per
+spatial unit.
+
+Raw band power (``psd_*``) is reported as the mean of **log10** power
+across the band's frequency bins, matching cc_saflow's
+``average_bands(fm.power_spectrum)`` (FOOOF stores ``power_spectrum`` in
+log10). Corrected band power (``psd_corrected_*``) is already a log10
+residual.
 
 Trade-offs vs the per-trial path:
 
@@ -17,8 +25,10 @@ Trade-offs vs the per-trial path:
   a subject the IN and OUT corrected spectra are therefore corrected by
   *different* aperiodic estimates — by design, this isolates the
   periodic IN/OUT difference from any IN/OUT difference in the 1/f
-  baseline. Don't feed these features to a classifier (the corrected
-  values encode their own condition label).
+  baseline. The manuscript Fig.3 panel J classifier consumes exactly
+  these subject-spectrum corrected features (cc_saflow does the same),
+  so this loader is intentionally reused by run_classification.py's
+  ``--analysis-mode=subject-spectrum`` path.
 
 Complexity features are not handled here — they are per-trial scalars and
 go through the existing trial-level loader + subject-median aggregation.
@@ -252,11 +262,12 @@ def load_subject_spectrum_features(
         pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
         pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
 
-        # Walk runs again: collect every good IN / OUT epoch PSD, then pool
-        # them across the subject's runs into a single mean spectrum per
-        # condition (pooled grand mean — one FOOOF fit per condition).
-        in_epoch_psds: List[np.ndarray] = []
-        out_epoch_psds: List[np.ndarray] = []
+        # Walk runs again: average every good IN / OUT epoch PSD *within
+        # each run*, then average those per-run means across the subject's
+        # runs (mean-of-run-means — runs weighted equally, matching
+        # cc_saflow's compute_subjfooof.py). One FOOOF fit per condition.
+        in_run_means: List[np.ndarray] = []
+        out_run_means: List[np.ndarray] = []
         n_in_total, n_out_total, n_bad_in, n_bad_out = 0, 0, 0, 0
         freqs: Optional[np.ndarray] = None
 
@@ -290,20 +301,20 @@ def load_subject_spectrum_features(
             in_mask = in_zone & good_mask
             out_mask = out_zone & good_mask
             if in_mask.any():
-                in_epoch_psds.append(psd_block[in_mask])
+                in_run_means.append(np.nanmean(psd_block[in_mask], axis=0))
                 n_in_total += int(in_mask.sum())
             if out_mask.any():
-                out_epoch_psds.append(psd_block[out_mask])
+                out_run_means.append(np.nanmean(psd_block[out_mask], axis=0))
                 n_out_total += int(out_mask.sum())
 
         # Need both conditions populated somewhere across the runs.
-        if not in_epoch_psds or not out_epoch_psds or freqs is None:
+        if not in_run_means or not out_run_means or freqs is None:
             continue
 
-        # Pooled grand-mean PSD per condition → one FOOOF fit each.
+        # Mean-of-run-means PSD per condition → one FOOOF fit each.
         cond_agg: Dict[str, Dict[str, np.ndarray]] = {}
-        for cond, epoch_psds in (("IN", in_epoch_psds), ("OUT", out_epoch_psds)):
-            mean_psd = np.nanmean(np.concatenate(epoch_psds, axis=0), axis=0)
+        for cond, run_means in (("IN", in_run_means), ("OUT", out_run_means)):
+            mean_psd = np.nanmean(np.stack(run_means, axis=0), axis=0)
             exp, offs, r2, corr = _fit_fooof_group_on_psd(
                 mean_psd, freqs, freq_range, fooof_params
             )
@@ -329,9 +340,14 @@ def load_subject_spectrum_features(
                 fmask = (freqs >= fmin) & (freqs <= fmax)
                 for cond in ("IN", "OUT"):
                     if family == "psd":
-                        # Average linear-power band across band freqs
+                        # Raw band power = mean of log10 power across the
+                        # band bins, matching cc_saflow's
+                        # average_bands(fm.power_spectrum) (FOOOF stores
+                        # power_spectrum in log10).
+                        mp = cond_agg[cond]["mean_psd"]
+                        log_mp = np.log10(np.where(mp > 0, mp, np.nan))
                         cond_features[cond][ft] = np.nanmean(
-                            cond_agg[cond]["mean_psd"][:, fmask], axis=1
+                            log_mp[:, fmask], axis=1
                         )
                     else:  # psd_corr
                         # corrected is in log10 units; band-average is fine
@@ -588,8 +604,9 @@ def load_channel_spectra(
         pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
         pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
 
-        # Second pass: pool every good IN / OUT epoch at the selected channel
-        # across runs, mean into one spectrum per condition, FOOOF fit once.
+        # Second pass: average every good IN / OUT epoch at the selected
+        # channel within each run, then average those per-run means across
+        # runs (mean-of-run-means), FOOOF fit once per condition.
         in_chan_psds: List[np.ndarray] = []
         out_chan_psds: List[np.ndarray] = []
 
@@ -624,15 +641,19 @@ def load_channel_spectra(
             in_mask = task_mask & (vtc <= inbound) & good_mask
             out_mask = task_mask & (vtc >= outbound) & good_mask
             if in_mask.any():
-                in_chan_psds.append(psd_block[in_mask, channel_index, :])
+                in_chan_psds.append(
+                    np.nanmean(psd_block[in_mask, channel_index, :], axis=0)
+                )
             if out_mask.any():
-                out_chan_psds.append(psd_block[out_mask, channel_index, :])
+                out_chan_psds.append(
+                    np.nanmean(psd_block[out_mask, channel_index, :], axis=0)
+                )
 
         if not in_chan_psds or not out_chan_psds:
             continue
 
-        in_psd = np.nanmean(np.concatenate(in_chan_psds, axis=0), axis=0)
-        out_psd = np.nanmean(np.concatenate(out_chan_psds, axis=0), axis=0)
+        in_psd = np.nanmean(np.stack(in_chan_psds, axis=0), axis=0)
+        out_psd = np.nanmean(np.stack(out_chan_psds, axis=0), axis=0)
         in_fit = _fit_fooof_single_curve(in_psd, freqs_full, freq_range, fooof_params)
         out_fit = _fit_fooof_single_curve(out_psd, freqs_full, freq_range, fooof_params)
         if in_fit is None or out_fit is None:
