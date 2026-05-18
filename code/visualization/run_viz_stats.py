@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
+from code.visualization.run_viz import _describe_averaging
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -37,16 +39,18 @@ def get_band_index(feat_name: str) -> int:
     return 999
 
 
-def find_results(stats_dir: Path, feature_type: str, inout_str: str):
-    """Find matching result files, supporting partial matching.
+def find_results(stats_dir: Path, feature_type: str, inout_str: str,
+                 trial_type: str = "alltrials"):
+    """Find matching result files for one trial-type variant.
 
     Result filenames carry trailing ``_path-<mode>_type-<trial_type>`` tokens;
-    the trailing ``*`` below matches them. NOTE: this legacy entry point does
-    not filter by analysis path or trial-type — prefer ``run_viz`` (which
-    exposes ``--trial-type``) when several variants coexist.
+    the glob pins ``_type-<trial_type>`` so the alltrials / correct / lapse
+    variants don't get mixed into one panel. It still does not filter by
+    analysis path — prefer ``run_viz`` when several paths coexist.
     """
     pattern = (
-        f"feature-{feature_type}*_inout-{inout_str}_test-paired_ttest*_results.npz"
+        f"feature-{feature_type}*_inout-{inout_str}_test-paired_ttest"
+        f"*_type-{trial_type}_results.npz"
     )
     return sorted(stats_dir.glob(pattern))
 
@@ -65,20 +69,15 @@ def extract_feature_names(results_files):
 def viz_sensor(results_files, feature_names, alpha, cmap, config, data_root, cbar_label="t-value"):
     """Create sensor-level topomap panel."""
     import mne
+    from code.visualization.render import _get_sensor_info
 
-    # Get sensor info
+    # Get sensor info (handles preprocessed FIFs, epochs FIFs, and raw CTF .ds)
     logger.info("Loading sensor positions...")
-    derivatives_dir = data_root / config["paths"]["derivatives"]
-    sample_files = list(derivatives_dir.glob("preprocessed/sub-*/meg/*_proc-clean_meg.fif"))
-    if not sample_files:
-        sample_files = list(derivatives_dir.glob("**/sub-*/meg/*_meg.fif"))
-    if not sample_files:
-        logger.error("No preprocessed MEG files found to get sensor positions")
+    try:
+        info = _get_sensor_info(config, data_root)
+    except FileNotFoundError as exc:
+        logger.error(str(exc))
         return None
-
-    raw = mne.io.read_raw_fif(sample_files[0], preload=False, verbose=False)
-    raw.pick("mag")
-    info = raw.info
 
     maps_to_plot = []
     masks_to_plot = []
@@ -167,6 +166,12 @@ def main():
     parser.add_argument("--cmap", default=None, help="Override colormap (default: from config)")
     parser.add_argument("--show", action="store_true", help="Display figure interactively")
     parser.add_argument("--no-save", action="store_true", help="Don't save figure to disk")
+    parser.add_argument(
+        "--trial-type", default="alltrials",
+        choices=["alltrials", "correct", "rare", "lapse", "correct_commission"],
+        help="Trial-type variant to plot ('correct' = baseline, 'lapse' = "
+             "windows with a commission error). Default: alltrials.",
+    )
     parser.add_argument("--config", default="config.yaml", help="Path to config file")
 
     args = parser.parse_args()
@@ -185,7 +190,8 @@ def main():
     print("=" * 80)
 
     # Find results
-    results_files = find_results(stats_dir, args.feature_type, inout_str)
+    results_files = find_results(stats_dir, args.feature_type, inout_str,
+                                 args.trial_type)
     if not results_files:
         print(f"ERROR: No results found for feature type '{args.feature_type}'")
         available = list(stats_dir.glob("feature-*_results.npz"))
@@ -236,13 +242,16 @@ def main():
         results_files[0].stem.replace("_results", "_metadata") + ".json"
     )
     data_meta = {}
+    meta = {}
     if first_meta_file.exists():
         with open(first_meta_file) as f:
             meta = json.load(f)
             data_meta = meta.get("data_metadata", {})
+    avg_tag, avg_label = _describe_averaging(meta)
 
     fig_title = (
-        f"{args.feature_type} t-values ({args.space}) | IN/OUT: {inout_bounds} "
+        f"{args.feature_type} t-values ({args.space}) "
+        f"| {args.trial_type} | {avg_label} | IN/OUT: {inout_bounds} "
         f"| N={data_meta.get('n_subjects', '?')} subjects"
     )
     fig.suptitle(fig_title, fontsize=12, y=1.02)
@@ -251,7 +260,10 @@ def main():
     if not args.no_save:
         fig_dir = Path("reports") / "figures"
         fig_dir.mkdir(parents=True, exist_ok=True)
-        fig_path = fig_dir / f"{args.feature_type}_{args.space}_stats.png"
+        fig_path = fig_dir / (
+            f"{args.feature_type}_{args.space}_type-{args.trial_type}"
+            f"_{avg_tag}_stats.png"
+        )
         fig.savefig(fig_path, dpi=300, bbox_inches="tight", facecolor="white")
         print(f"Saved figure to: {fig_path}")
 

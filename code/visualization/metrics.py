@@ -97,9 +97,9 @@ METRICS: Dict[str, Metric] = {
     ),
 
     # ----------- Classification (run_classification) -----------
-    "roc_auc": Metric(
-        name="roc_auc",
-        description="Per-spatial cross-validated ROC AUC (chance = 0.5).",
+    "balanced_accuracy": Metric(
+        name="balanced_accuracy",
+        description="Per-spatial cross-validated balanced accuracy (chance = 0.5).",
         results_subdir="classification_{space}/group",
         results_glob=(
             "feature-{feature}_space-{space}_inout-{inout}"
@@ -110,7 +110,7 @@ METRICS: Dict[str, Metric] = {
         color_mode="sequential_above",
         chance_level=0.5,
         cmap="magma",
-        cbar_label="ROC AUC",
+        cbar_label="Balanced accuracy",
         sequential_min_span=0.05,
         sequential_max_vmax=0.80,
         missing_msg=_classification_missing,

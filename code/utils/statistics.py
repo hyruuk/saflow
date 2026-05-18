@@ -318,7 +318,7 @@ def singlefeat_classif(
                 groups=groups,
                 cv=cv,
                 n_permutations=n_perms,
-                scoring="roc_auc",
+                scoring="balanced_accuracy",
                 n_jobs=-1,
             )
 

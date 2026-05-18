@@ -111,13 +111,14 @@ def get_svm(
     """Get Support Vector Machine classifier.
 
     SVM is a powerful non-linear classifier that can handle high-dimensional
-    data. Use probability=True to enable predict_proba for ROC AUC scoring.
+    data. Balanced-accuracy scoring only needs predict(); set probability=True
+    only if you need predict_proba (e.g. probability-based scorers).
 
     Args:
         C: Regularization parameter.
         kernel: Kernel type ('linear', 'rbf', 'poly', 'sigmoid').
         gamma: Kernel coefficient ('scale', 'auto', or float).
-        probability: Enable probability estimates (needed for ROC AUC).
+        probability: Enable probability estimates (predict_proba).
         random_state: Random seed.
         **kwargs: Additional parameters for SVC.
 

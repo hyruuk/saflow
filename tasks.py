@@ -1118,7 +1118,7 @@ def classify(c, features="all", clf="logistic", cv="auto",
 
 @task
 def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
-              cmap=None, show=False, save=True):
+              trial_type="alltrials", cmap=None, show=False, save=True):
     """Visualize saved statistical results as topographic or surface maps.
 
     For sensor space: creates a panel of topomaps (t-values).
@@ -1150,6 +1150,7 @@ def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
     cmd.extend(["--feature-type", feature_type])
     cmd.extend(["--space", space])
     cmd.extend(["--alpha", str(alpha)])
+    cmd.extend(["--trial-type", trial_type])
     if cmap:
         cmd.extend(["--cmap", cmap])
     if show:
@@ -1164,8 +1165,8 @@ def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
 @task
 def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
              family=None, clf="lda", cv="logo", mode="univariate",
-             test="paired_ttest", correction="auto", alpha=0.05,
-             cmap=None, output_subdir=None, config="config.yaml"):
+             test="paired_ttest", trial_type="alltrials", correction="auto",
+             alpha=0.05, cmap=None, output_subdir=None, config="config.yaml"):
     """Unified rows-of-maps viz (stats + classification, sensor + atlas).
 
     One row of topomaps (sensor) or inflated-brain panels (source/atlas) per
@@ -1173,7 +1174,8 @@ def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
     prints exactly what to run when nothing is found.
 
     Args:
-        metric: 'tval' | 'contrast' | 'roc_auc' (see code.visualization.metrics).
+        metric: 'tval' | 'contrast' | 'balanced_accuracy' (see
+            code.visualization.metrics).
         space: 'sensor', 'source', or atlas name (e.g., 'schaefer_400').
         feature: space-separated feature names (e.g., 'psd_alpha psd_theta').
         feature_set: shortcut family ('psds', 'psds_corrected', 'fooof',
@@ -1181,6 +1183,8 @@ def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
         family: filter rendering to one family when features span multiple.
         clf, cv, mode: classification result filters.
         test: statistics test filter.
+        trial_type: trial-type variant to plot ('alltrials', 'correct',
+            'lapse', ...).
         correction: which p-value correction for the significance mask
             ('auto', 'tmax', 'fdr_bh', 'bonferroni', 'uncorrected').
         alpha: significance threshold for the mask.
@@ -1188,16 +1192,17 @@ def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
         output_subdir: subfolder under reports/figures/ (default: 'classification').
 
     Examples:
-        invoke viz.maps --metric=roc_auc --space=sensor --feature-set=psds
-        invoke viz.maps --metric=roc_auc --space=schaefer_400 --feature-set=all
+        invoke viz.maps --metric=balanced_accuracy --space=sensor --feature-set=psds
+        invoke viz.maps --metric=balanced_accuracy --space=schaefer_400 --feature-set=all
         invoke viz.maps --metric=tval --space=sensor --feature=fooof_exponent
-        invoke viz.maps --metric=contrast --space=sensor --feature-set=psds
+        invoke viz.maps --metric=contrast --space=sensor --feature-set=psds --trial-type=lapse
     """
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.visualization.run_viz",
            "--metric", metric, "--space", space,
            "--clf", clf, "--cv", cv, "--mode", mode,
-           "--test", test, "--correction", correction,
+           "--test", test, "--trial-type", trial_type,
+           "--correction", correction,
            "--alpha", str(alpha), "--config", config]
     if feature:
         cmd.extend(["--feature"] + feature.split())
@@ -1821,7 +1826,7 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
 
     all_job_ids = []
     for feat in features:
-        job_name = f"stats_{feat}_{space}_{test}"
+        job_name = f"stats_{feat}_{space}_{test}_{trial_type}"
         context = {
             **base_resources,
             "job_name": job_name,
@@ -1855,7 +1860,7 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             print(f"  ✗ Failed to submit {job_name}: {e}")
 
     if all_job_ids:
-        manifest_path = log_dir / f"statistics_manifest_{timestamp}.json"
+        manifest_path = log_dir / f"statistics_manifest_{trial_type}_{timestamp}.json"
         save_job_manifest(all_job_ids, manifest_path, metadata={
             "stage": "statistics",
             "space": space,
@@ -1864,6 +1869,7 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
             "alpha": alpha,
             "n_permutations": n_permutations,
             "features": features,
+            "trial_type": trial_type,
             "timestamp": timestamp,
         })
         print(f"\n✓ Submitted {len(all_job_ids)} job(s); manifest: {manifest_path}")
@@ -1973,7 +1979,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 
         for chunk_idx in chunk_indices:
             chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
-            job_name = f"classify_{feat_label}_{space}_{mode}_{clf}{chunk_suffix}"
+            job_name = f"classify_{feat_label}_{space}_{mode}_{clf}_{trial_type}{chunk_suffix}"
             context = {
                 **base_resources,
                 "job_name": job_name,
@@ -2016,7 +2022,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 
         # Submit aggregation job with afterok dependency on this classification's chunks
         if n_chunks > 1 and aggregate:
-            agg_job_name = f"aggregate_{feat_label}_{space}_{mode}_{clf}"
+            agg_job_name = f"aggregate_{feat_label}_{space}_{mode}_{clf}_{trial_type}"
             agg_context = {
                 **base_resources,
                 # Aggregation is light — one CPU, modest RAM, short walltime.
@@ -2060,7 +2066,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                 print(f"  ✗ Failed to submit aggregator {agg_job_name}: {e}")
 
     if all_job_ids:
-        manifest_path = log_dir / f"classification_manifest_{timestamp}.json"
+        manifest_path = log_dir / f"classification_manifest_{trial_type}_{timestamp}.json"
         save_job_manifest(all_job_ids, manifest_path, metadata={
             "stage": "classification",
             "space": space,
@@ -2072,6 +2078,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
             "n_chunks": n_chunks,
             "aggregator_job_ids": aggregator_job_ids,
             "features": features,
+            "trial_type": trial_type,
             "timestamp": timestamp,
         })
         print(f"\n✓ Submitted {len(all_job_ids)} job(s) "

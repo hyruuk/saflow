@@ -186,7 +186,7 @@ def render_atlas_row(
 ):
     """Single row of inflated brain panels (one 2x2 brain per map).
 
-    For ``sequential_above`` metrics (e.g. ROC AUC), pass
+    For ``sequential_above`` metrics (e.g. balanced accuracy), pass
     ``threshold_below_chance=True`` and ``chance_level=metric.chance_level`` to
     hide vertices at/below chance. For diverging metrics, leave the defaults.
     """

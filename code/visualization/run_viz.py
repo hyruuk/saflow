@@ -6,7 +6,7 @@ from the metric's file pattern; picks the right renderer from `--space`.
 
 Examples:
     python -m code.visualization.run_viz --metric=tval --space=sensor --feature-set=psds
-    python -m code.visualization.run_viz --metric=roc_auc --space=schaefer_400 --feature-set=psds
+    python -m code.visualization.run_viz --metric=balanced_accuracy --space=schaefer_400 --feature-set=psds
     python -m code.visualization.run_viz --metric=contrast --space=sensor --feature=fooof_exponent
 
 When the underlying results aren't there, the script tells you exactly which
@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -80,15 +80,36 @@ def _group_by_family(maps: List[MapResult]) -> Dict[str, List[MapResult]]:
     return out
 
 
+def _describe_averaging(metadata: Dict) -> Tuple[str, str]:
+    """Return (filename_tag, human_label) for whether trials were averaged.
+
+    Read from the result file's own metadata so the figure describes the
+    data it actually shows. Statistics files carry ``analysis_mode``;
+    classification files carry ``average_trials``.
+    """
+    dm = metadata.get("data_metadata", metadata) or {}
+    mode = dm.get("analysis_mode")
+    if mode == "single-trials":
+        return "trials-single", "single-trial"
+    if mode in ("subject-spectrum", "subject-trial-median"):
+        return "trials-avg", "subject-averaged"
+    avg = dm.get("average_trials")
+    if avg is True:
+        return "trials-avg", "trial-averaged"
+    if avg is False:
+        return "trials-single", "single-trial"
+    return "trials-na", "averaging-unknown"
+
+
 def _figure_filename(
     family: str, space: str, metric: str, correction: str,
-    extra: Dict[str, str],
+    extra: Dict[str, str], avg_tag: str,
 ) -> str:
     pieces = [f"{metric}", f"{family}", f"space-{space}"]
     if "clf" in extra:
         pieces.append(f"clf-{extra['clf']}")
-    if extra.get("type") and extra["type"] != "alltrials":
-        pieces.append(f"type-{extra['type']}")
+    pieces.append(f"type-{extra.get('type', 'alltrials')}")
+    pieces.append(avg_tag)
     pieces.append(f"correction-{correction}")
     return "_".join(pieces) + ".png"
 
@@ -99,7 +120,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--metric", required=True, choices=list(METRICS),
-        help="What to plot. Examples: tval, contrast, roc_auc.",
+        help="What to plot. Examples: tval, contrast, balanced_accuracy.",
     )
     parser.add_argument(
         "--space", default="sensor",
@@ -268,21 +289,22 @@ def main() -> int:
         # Title with provenance from the first map
         sample = fam_maps[0]
         md = sample.metadata.get("data_metadata", {})
+        avg_tag, avg_label = _describe_averaging(sample.metadata)
+        trial_type_str = extra.get("type", "alltrials")
         title_bits = [
             f"{family} {metric.cbar_label}",
             f"{args.space}",
+            f"{trial_type_str} | {avg_label}",
             f"correction={args.correction} α={args.alpha}",
             f"N={md.get('n_subjects', '?')} subj"
             f" (IN={md.get('n_in', '?')}, OUT={md.get('n_out', '?')})",
         ]
         if "clf" in extra:
             title_bits.insert(2, f"clf={extra['clf']}")
-        if extra.get("type") and extra["type"] != "alltrials":
-            title_bits.insert(2, f"trials={extra['type']}")
         fig.suptitle(" | ".join(title_bits), fontsize=11, y=0.98)
 
         out = fig_dir / _figure_filename(
-            family, args.space, args.metric, args.correction, extra,
+            family, args.space, args.metric, args.correction, extra, avg_tag,
         )
         fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
         import matplotlib.pyplot as plt

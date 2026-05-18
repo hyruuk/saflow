@@ -613,7 +613,7 @@ def _is_group_cv(cv) -> bool:
 # Univariate classification with shared-permutation t-max
 # ---------------------------------------------------------------------------
 
-def _score_one_spatial(clf, X_slice, y, cv, groups, scoring="roc_auc"):
+def _score_one_spatial(clf, X_slice, y, cv, groups, scoring="balanced_accuracy"):
     """Score one spatial unit. X_slice is (n_trials,) or (n_trials, n_features).
 
     Trials with a NaN in this spatial unit (e.g. failed FOOOF fits in fooof /
@@ -684,7 +684,7 @@ def run_univariate_with_tmax(
     n_permutations: int,
     n_jobs: int = -1,
     seed: int = 42,
-    scoring: str = "roc_auc",
+    scoring: str = "balanced_accuracy",
     fit_importances: bool = False,
 ) -> Dict:
     """Per-spatial classification with shared-permutation t-max correction.
@@ -808,7 +808,7 @@ def run_multivariate(
     clf_factory,
     cv,
     n_permutations: int,
-    scoring: str = "roc_auc",
+    scoring: str = "balanced_accuracy",
     fit_importances: bool = False,
 ) -> Dict:
     """Multivariate classification on a flat (n_trials, n_features_total) input."""
