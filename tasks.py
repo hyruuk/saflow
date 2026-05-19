@@ -1298,6 +1298,169 @@ def behavior(c, subject="07", run="4", inout_bounds="25 75", output=None, verbos
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
+@task
+def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
+             clf=None, cv=None, mode=None, test=None, feature_set="all",
+             correction="auto", alpha=0.05, cmap=None, dry_run=False,
+             continue_on_error=True, config="config.yaml"):
+    """Scan the results folder and render every available visualization.
+
+    Walks <data_root>/<paths.results>/ for `statistics_<space>` and
+    `classification_<space>` result folders, discovers which metrics, spaces,
+    trial-types and (for classification) clf/cv/mode combinations actually have
+    result files on disk, and runs `viz.maps` once per discovered combination.
+
+    Every filter argument defaults to None = "discover and render all". Pass a
+    value to restrict to it (e.g. --space=sensor renders only sensor maps);
+    every other dimension is still auto-discovered.
+
+    Args:
+        results_dir: override the results root (default: from config.yaml).
+        metric: restrict to one metric (tval | contrast | balanced_accuracy).
+        space: restrict to one space (sensor | schaefer_400 | ...).
+        trial_type: restrict to one trial-type (alltrials | correct | lapse | ...).
+        clf, cv, mode: restrict classification combinations.
+        test: restrict statistics test (default: discover all).
+        feature_set: feature family set forwarded to viz.maps (default: all).
+        correction, alpha, cmap: forwarded to viz.maps.
+        dry_run: print the planned viz.maps commands without running them.
+        continue_on_error: keep going if one render fails (default: True).
+
+    Examples:
+        invoke viz.auto                  # everything found on disk
+        invoke viz.auto --dry-run        # preview the plan
+        invoke viz.auto --space=sensor   # only sensor maps
+        invoke viz.auto --metric=tval    # only t-value statistics maps
+    """
+    import re
+
+    from code.utils.config import load_config
+    from code.visualization.metrics import METRICS
+
+    if results_dir:
+        results_root = Path(results_dir).expanduser()
+    else:
+        results_root = Path(load_config(config)["paths"]["results"])
+
+    if not results_root.is_dir():
+        print(f"Results folder not found: {results_root}")
+        return
+
+    metric_names = [metric] if metric else list(METRICS)
+    for mn in metric_names:
+        if mn not in METRICS:
+            raise ValueError(f"Unknown metric '{mn}'. Choices: {', '.join(METRICS)}")
+
+    print("=" * 80)
+    print(f"viz.auto | scanning {results_root}")
+    print("=" * 80)
+
+    # Each plan entry is a fully-resolved set of viz.maps arguments.
+    plan = []
+    for mn in metric_names:
+        m = METRICS[mn]
+        family = m.results_subdir.split("_{space}")[0]   # statistics | classification
+        is_classif = "{clf}" in m.results_glob
+        value_suffix = "_" + m.results_glob.rsplit("_", 1)[-1]   # _results.npz | _scores.npz
+
+        for space_dir in sorted(results_root.glob(f"{family}_*")):
+            if not space_dir.is_dir():
+                continue
+            disc_space = space_dir.name[len(family) + 1:]
+            if space and disc_space != space:
+                continue
+            file_dir = results_root / m.results_subdir.format(space=disc_space)
+            if not file_dir.is_dir():
+                continue
+
+            combos = set()
+            for f in sorted(file_dir.glob("*" + value_suffix)):
+                name = "_" + f.name
+                tt = re.search(r"_type-([a-z_]+)" + re.escape(value_suffix), name)
+                if not tt:
+                    continue
+                tt = tt.group(1)
+                if trial_type and tt != trial_type:
+                    continue
+                if is_classif:
+                    c_ = re.search(r"_clf-([^_]+)_cv-", name)
+                    v_ = re.search(r"_cv-([^_]+)_mode-", name)
+                    md_ = re.search(r"_mode-([^_]+)_type-", name)
+                    fclf = c_.group(1) if c_ else "lda"
+                    fcv = v_.group(1) if v_ else "logo"
+                    fmode = md_.group(1) if md_ else "univariate"
+                    if (clf and fclf != clf) or (cv and fcv != cv) or (mode and fmode != mode):
+                        continue
+                    combos.add((tt, fclf, fcv, fmode, None))
+                else:
+                    t_ = re.search(r"_test-(.+?)_path-", name)
+                    ftest = t_.group(1) if t_ else "paired_ttest"
+                    if test and ftest != test:
+                        continue
+                    combos.add((tt, None, None, None, ftest))
+
+            for tt, fclf, fcv, fmode, ftest in sorted(combos):
+                plan.append({
+                    "metric": mn, "space": disc_space, "trial_type": tt,
+                    "clf": fclf, "cv": fcv, "mode": fmode, "test": ftest,
+                    "output_subdir": family,
+                })
+
+    if not plan:
+        print("\nNo result files discovered — nothing to render.")
+        print("Run analysis.stats / analysis.classify first, or check --results-dir.")
+        return
+
+    print(f"\nDiscovered {len(plan)} visualization(s) to render:")
+    for p in plan:
+        extra = (f"clf={p['clf']} cv={p['cv']} mode={p['mode']}"
+                 if p["test"] is None else f"test={p['test']}")
+        print(f"  - {p['metric']:18s} space={p['space']:14s} "
+              f"type={p['trial_type']:12s} {extra}")
+
+    python_exe = get_python_executable()
+    failures = []
+    for i, p in enumerate(plan, 1):
+        cmd = [python_exe, "-m", "code.visualization.run_viz",
+               "--metric", p["metric"], "--space", p["space"],
+               "--feature-set", feature_set,
+               "--trial-type", p["trial_type"],
+               "--correction", correction, "--alpha", str(alpha),
+               "--output-subdir", p["output_subdir"],
+               "--config", config]
+        if p["clf"]:
+            cmd.extend(["--clf", p["clf"]])
+        if p["cv"]:
+            cmd.extend(["--cv", p["cv"]])
+        if p["mode"]:
+            cmd.extend(["--mode", p["mode"]])
+        if p["test"]:
+            cmd.extend(["--test", p["test"]])
+        if cmap:
+            cmd.extend(["--cmap", cmap])
+
+        print(f"\n{'#' * 80}\n# [{i}/{len(plan)}] {p['metric']} | "
+              f"space={p['space']} | type={p['trial_type']}\n{'#' * 80}")
+        print(f"Running: {' '.join(cmd)}\n")
+        if dry_run:
+            continue
+        result = c.run(" ".join(cmd), pty=True,
+                       env=get_env_with_pythonpath(), warn=continue_on_error)
+        if result is not None and getattr(result, "exited", 0) != 0:
+            failures.append((p, f"exit {result.exited}"))
+
+    print("\n" + "=" * 80)
+    if dry_run:
+        print(f"Dry run — {len(plan)} visualization(s) planned, none rendered.")
+    elif failures:
+        print(f"Done with {len(failures)}/{len(plan)} failure(s):")
+        for p, msg in failures:
+            print(f"  - {p['metric']} space={p['space']} type={p['trial_type']}: {msg}")
+    else:
+        print(f"All {len(plan)} visualization(s) rendered.")
+    print("=" * 80)
+
+
 # ==============================================================================
 # Helper Functions (Private)
 # ==============================================================================
@@ -2292,6 +2455,7 @@ analysis.add_task(classify_aggregate, name="classify-aggregate")
 viz = Collection("viz")
 viz.add_task(viz_stats, name="stats")
 viz.add_task(viz_maps, name="maps")
+viz.add_task(viz_auto, name="auto")
 viz.add_task(spectra)
 viz.add_task(behavior)
 
