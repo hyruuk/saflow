@@ -362,8 +362,10 @@ def main() -> int:
     """Main entry point."""
     args = parse_args()
 
-    # Setup logging
-    log_dir = Path("logs") / "features"
+    config = load_config()
+
+    # Setup logging (logs dir resolved from config, relative to project root)
+    log_dir = Path(config["paths"]["logs"]) / "features"
     log_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(
         name="compute_welch_psd",
@@ -377,9 +379,6 @@ def main() -> int:
     logger.info(f"Subject: {args.subject}")
     logger.info(f"Run: {args.run}")
     logger.info(f"Space: {args.space}")
-
-    # Load configuration
-    config = load_config()
 
     # Get epoch timing from config if not specified on CLI
     tmin = args.tmin if args.tmin is not None else config["analysis"]["epochs"]["tmin"]

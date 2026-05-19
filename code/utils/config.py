@@ -153,11 +153,17 @@ def expand_paths(config: Dict[str, Any]) -> Dict[str, Any]:
             path = data_root / path
         config["paths"][key] = str(path)
 
-    # Expand project-specific paths
+    # Expand project-specific paths. Relative paths resolve against the
+    # project root (not the current working directory) so that scripts
+    # launched from any cwd write logs/reports to the same place — e.g.
+    # avoiding a stray nested logs/logs/ directory.
+    project_root = Path(__file__).resolve().parent.parent.parent
     for key in ["reports", "logs", "venv", "slurm_output", "tmp"]:
         if key in config["paths"]:
-            path = Path(config["paths"][key]).expanduser().resolve()
-            config["paths"][key] = str(path)
+            path = Path(config["paths"][key]).expanduser()
+            if not path.is_absolute():
+                path = project_root / path
+            config["paths"][key] = str(path.resolve())
 
     # Expand FreeSurfer subjects directory if present (relative to data_root)
     if "freesurfer_subjects_dir" in config["paths"]:

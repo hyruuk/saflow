@@ -60,7 +60,10 @@ def get_classifier(
             f"Supported: lda, svm, rf, logistic"
         )
 
-    logger.info(f"Initialized {clf_name} classifier: {clf}")
+    # debug, not info: get_classifier is called once per spatial unit per
+    # permutation in the t-max loop — at info level this floods .err logs
+    # with hundreds of thousands of identical lines (~60 MB/task).
+    logger.debug(f"Initialized {clf_name} classifier: {clf}")
     return clf
 
 
