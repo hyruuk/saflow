@@ -30,8 +30,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering",
@@ -104,17 +102,11 @@ test = [
 
 # Documentation dependencies
 docs = [
-    "sphinx==7.4.7; python_version < '3.10'",
-    "sphinx==8.1.3; python_version == '3.10'",
     "sphinx==9.0.4; python_version == '3.11'",
     "sphinx==9.1.0; python_version >= '3.12'",
     "sphinx-rtd-theme==3.1.0",
-    "sphinx-autodoc-typehints==2.3.0; python_version < '3.10'",
-    "sphinx-autodoc-typehints==3.0.1; python_version == '3.10'",
     "sphinx-autodoc-typehints==3.6.1; python_version == '3.11'",
     "sphinx-autodoc-typehints==3.10.2; python_version >= '3.12'",
-    "myst-parser==3.0.1; python_version < '3.10'",
-    "myst-parser==4.0.1; python_version == '3.10'",
     "myst-parser==5.1.0; python_version >= '3.11'",
 ]
 
@@ -148,8 +140,8 @@ include = ["code*"]
 line-length = 100
 indent-width = 4
 
-# Target Python 3.9+
-target-version = "py39"
+# Target Python 3.11+
+target-version = "py311"
 
 # Exclude common directories
 exclude = [
@@ -265,7 +257,7 @@ markers = [
 # Mypy Configuration
 # ============================================================================
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # Set to true once codebase is fully typed

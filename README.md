@@ -4,7 +4,7 @@ A production-ready, config-driven MEG analysis pipeline for processing gradual c
 
 **Version**: 0.2.0
 **Status**: Active Development
-**Python**: 3.9-3.12
+**Python**: 3.11-3.12
 
 ---
 
@@ -220,7 +220,7 @@ Unlike many pipelines, saflow **does not duplicate code** for sensor vs. source 
 
 ### Requirements
 
-- **Python**: 3.9-3.12 (tested on 3.9.5)
+- **Python**: 3.11-3.12
 - **OS**: Linux (tested), macOS (should work), Windows (untested)
 - **Disk space**: ~500GB for full dataset + derivatives
 - **RAM**: 32GB recommended (64GB for source reconstruction)
@@ -232,8 +232,8 @@ Unlike many pipelines, saflow **does not duplicate code** for sensor vs. source 
 git clone https://github.com/your-org/saflow.git
 cd saflow
 
-# Run setup script (creates venv, installs dependencies)
-./setup.sh --all
+# Run setup script (creates env/, installs dependencies with uv)
+./setup.sh
 
 # Activate environment
 source env/bin/activate

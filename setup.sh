@@ -9,13 +9,16 @@
 #   ./setup.sh [OPTIONS]
 #
 # Options:
-#   --python      Specify Python executable (default: auto-detect best 3.9-3.12)
+#   --python      Specify Python executable (default: auto-detect best 3.11-3.12)
+#   --installer   Dependency installer: uv or pip (default: uv)
+#   --offline     Pass --offline to uv sync
 #   --force       Force reinstall if venv already exists
 #   --help        Show this help message
 #
 # Examples:
 #   ./setup.sh                      # Standard installation (auto-detects Python)
-#   ./setup.sh --python python3.10  # Use specific Python version
+#   ./setup.sh --python python3.11  # Use specific Python version
+#   ./setup.sh --installer pip      # Legacy pip install path
 #   ./setup.sh --force              # Force reinstall
 #
 # Interactive Configuration:
@@ -33,6 +36,8 @@ set -e  # Exit on error
 PYTHON_CMD=""  # Will be auto-detected if not specified
 FORCE_REINSTALL=false
 VENV_DIR="env"
+INSTALLER="uv"
+UV_OFFLINE=false
 
 # ==============================================================================
 # Helper Functions
@@ -75,6 +80,14 @@ while [[ $# -gt 0 ]]; do
             PYTHON_CMD="$2"
             shift 2
             ;;
+        --installer)
+            INSTALLER="$2"
+            shift 2
+            ;;
+        --offline)
+            UV_OFFLINE=true
+            shift
+            ;;
         --force)
             FORCE_REINSTALL=true
             shift
@@ -93,18 +106,18 @@ done
 # Python Auto-Detection
 # ==============================================================================
 
-# Find the best available Python version (prefer 3.11 > 3.10 > 3.9)
+# Find the best available Python version (prefer 3.12 > 3.11)
 find_best_python() {
-    local candidates=("python3.11" "python3.10" "python3.9" "python3")
+    local candidates=("python3.12" "python3.11" "python3")
 
     for cmd in "${candidates[@]}"; do
         if command -v "$cmd" &> /dev/null; then
-            # Verify it's actually a supported version (3.9-3.12)
+            # Verify it's actually a supported version (3.11-3.12)
             local version_info=$("$cmd" -c 'import sys; print(sys.version_info.major, sys.version_info.minor)' 2>/dev/null)
             local major=$(echo "$version_info" | cut -d' ' -f1)
             local minor=$(echo "$version_info" | cut -d' ' -f2)
 
-            if [[ "$major" == "3" ]] && [[ "$minor" -ge 9 ]] && [[ "$minor" -le 12 ]]; then
+            if [[ "$major" == "3" ]] && [[ "$minor" -ge 11 ]] && [[ "$minor" -le 12 ]]; then
                 echo "$cmd"
                 return 0
             fi
@@ -124,8 +137,8 @@ print_header "Saflow Environment Setup"
 if [[ -z "$PYTHON_CMD" ]]; then
     PYTHON_CMD=$(find_best_python)
     if [[ -z "$PYTHON_CMD" ]]; then
-        print_error "No suitable Python found (requires 3.9-3.12)"
-        echo "  Please install Python 3.9+ or specify a different executable with --python"
+        print_error "No suitable Python found (requires 3.11-3.12)"
+        echo "  Please install Python 3.11+ or specify a different executable with --python"
         exit 1
     fi
     print_info "Auto-detected Python: $PYTHON_CMD"
@@ -134,7 +147,7 @@ fi
 # Check if Python is available
 if ! command -v "$PYTHON_CMD" &> /dev/null; then
     print_error "Python executable '$PYTHON_CMD' not found"
-    echo "  Please install Python 3.9+ or specify a different executable with --python"
+    echo "  Please install Python 3.11+ or specify a different executable with --python"
     exit 1
 fi
 
@@ -149,12 +162,17 @@ if ! [[ "$PYTHON_MAJOR" =~ ^[0-9]+$ ]] || ! [[ "$PYTHON_MINOR" =~ ^[0-9]+$ ]]; t
     exit 1
 fi
 
-if [[ "$PYTHON_MAJOR" -lt 3 ]] || [[ "$PYTHON_MAJOR" -eq 3 && "$PYTHON_MINOR" -lt 9 ]]; then
-    print_error "Python 3.9+ is required (found: $PYTHON_VERSION)"
+if [[ "$PYTHON_MAJOR" -lt 3 ]] || [[ "$PYTHON_MAJOR" -eq 3 && "$PYTHON_MINOR" -lt 11 ]] || [[ "$PYTHON_MAJOR" -eq 3 && "$PYTHON_MINOR" -gt 12 ]]; then
+    print_error "Python 3.11-3.12 is required (found: $PYTHON_VERSION)"
     exit 1
 fi
 
 print_success "Found Python $PYTHON_VERSION"
+
+if [[ "$INSTALLER" != "uv" && "$INSTALLER" != "pip" ]]; then
+    print_error "Invalid installer: $INSTALLER (expected 'uv' or 'pip')"
+    exit 1
+fi
 
 # Check if venv module is available
 if ! "$PYTHON_CMD" -c "import venv" 2>/dev/null; then
@@ -188,8 +206,19 @@ if [[ -d "$VENV_DIR" ]]; then
 fi
 
 if [[ ! -d "$VENV_DIR" ]]; then
-    print_info "Creating virtual environment with $PYTHON_CMD"
-    "$PYTHON_CMD" -m venv "$VENV_DIR"
+    if [[ "$INSTALLER" == "uv" ]]; then
+        if ! command -v uv &> /dev/null; then
+            print_error "uv is not installed or not on PATH"
+            echo "  Install/load uv, or rerun with: ./setup.sh --installer pip"
+            echo "  On HPC, the pip path may be limited by the site wheelhouse."
+            exit 1
+        fi
+        print_info "Creating virtual environment with uv and $PYTHON_CMD"
+        uv venv --python "$PYTHON_CMD" "$VENV_DIR"
+    else
+        print_info "Creating virtual environment with $PYTHON_CMD"
+        "$PYTHON_CMD" -m venv "$VENV_DIR"
+    fi
     print_success "Virtual environment created at: $VENV_DIR"
 fi
 
@@ -197,10 +226,12 @@ fi
 source "$VENV_DIR/bin/activate"
 print_success "Virtual environment activated"
 
-# Upgrade pip, setuptools, wheel
-print_info "Upgrading pip, setuptools, and wheel"
-pip install --upgrade pip setuptools wheel > /dev/null
-print_success "Build tools updated"
+if [[ "$INSTALLER" == "pip" ]]; then
+    # Upgrade pip, setuptools, wheel
+    print_info "Upgrading pip, setuptools, and wheel"
+    pip install --upgrade pip setuptools wheel > /dev/null
+    print_success "Build tools updated"
+fi
 
 # ==============================================================================
 # Package Installation
@@ -208,8 +239,18 @@ print_success "Build tools updated"
 
 print_header "Installing saflow package"
 
-print_info "Installing saflow with all dependencies"
-pip install -e ".[all]"
+if [[ "$INSTALLER" == "uv" ]]; then
+    print_info "Installing saflow with uv from uv.lock"
+    UV_ARGS=(sync --all-extras --python "$PYTHON_CMD")
+    if [[ "$UV_OFFLINE" == true ]]; then
+        UV_ARGS+=(--offline)
+    fi
+    UV_PROJECT_ENVIRONMENT="$VENV_DIR" uv "${UV_ARGS[@]}"
+else
+    print_warning "Using legacy pip install path; HPC wheelhouses may not contain exact pins"
+    print_info "Installing saflow with all dependencies"
+    pip install -e ".[all]"
+fi
 
 print_success "Package installation complete"
 
@@ -395,7 +436,7 @@ echo "  4. Run tests to verify everything works:"
 echo "     pytest tests/"
 echo ""
 echo "  5. Run linting:"
-echo "     ruff check saflow/ code/"
+echo "     ruff check code tasks.py tests"
 echo ""
 echo ""
 echo "For more information, see:"

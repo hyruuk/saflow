@@ -737,7 +737,7 @@ Run setup script to create development environment.
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--mode` | string | basic | Setup mode: `basic`, `dev`, `all` |
-| `--python` | string | python3.9 | Python executable to use |
+| `--python` | string | auto | Python executable to use (`python3.12`/`python3.11`) |
 | `--force` | flag | false | Force recreation of environment |
 
 **Examples:**
