@@ -272,14 +272,16 @@ invoke pipeline.features.psd --slurm
 
 ### `invoke pipeline.features.fooof`
 
-Extract FOOOF (specparam) aperiodic parameters and corrected PSDs.
+Extract specparam aperiodic parameters and corrected PSDs, preserving the
+existing FOOOF-compatible task name and `fooof_*` output feature names.
 
 **What it computes:**
 - Aperiodic parameters (exponent, offset, knee if enabled)
 - Goodness of fit metrics (r_squared, error)
 - Aperiodic-corrected PSDs (periodic component only)
 
-FOOOF parameters (freq_range, aperiodic_mode, etc.) are configured in `config.yaml`.
+Specparam fitting parameters (`freq_range`, `aperiodic_mode`, etc.) are
+configured in `config.yaml` and match the previous FOOOF settings.
 
 **Arguments:**
 | Argument | Type | Default | Description |
@@ -494,6 +496,51 @@ Loads previously computed statistics and displays summary. The statistics must h
 invoke viz.stats
 invoke viz.stats --feature-type=complexity --show
 invoke viz.stats --feature-type=fooof
+```
+
+---
+
+### `invoke viz.stats-classif-panel`
+
+Render the paper-ready stats + classification multi-panel figure (Fig. 3 from cc_saflow).
+
+A single composite figure with letter labels A–J:
+
+| Panel | Content |
+|-------|---------|
+| A | Per-band t-values for raw PSD (7 topomaps) |
+| B | Per-band AUC for raw PSD (7 topomaps) |
+| C | Raw spectrum (PSD) — IN vs OUT line plot |
+| D | Aperiodic component — IN vs OUT line plot |
+| E | Corrected spectrum (PSDc) — IN vs OUT line plot |
+| F | Periodic components — IN vs OUT line plot |
+| G | FOOOF t-values (exponent, offset, R²) (3 topomaps) |
+| H | FOOOF AUC (exponent, offset, R²) (3 topomaps) |
+| I | Per-band t-values for corrected PSD (7 topomaps) |
+| J | Per-band AUC for corrected PSD (7 topomaps) |
+
+Significance is computed within each topomap independently per feature — never pooled across bands or metrics. The spectral lines (C–F) are picked at the sensor/region with the most significant FOOOF exponent t-value.
+
+**Requires:** Both `analysis.stats` and `analysis.classify` must have been run for the chosen `--space` and `--trial-type` (raw + corrected PSD bands and the three FOOOF parameters).
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | sensor | Analysis space: `sensor` (topomaps) or an atlas name like `schaefer_400` / `aparc.a2009s` (inflated-brain panels). Vertex-level `source` is not wired |
+| `--trial-type` | string | alltrials | `alltrials`, `correct`, `lapse` |
+| `--correction` | string | fdr | Significance mask: `fdr`, `tmax`, `bonferroni`, `uncorrected` (applied per-feature) |
+| `--clf` | string | logistic | Classifier used in the classification results to load |
+| `--cv` | string | group | Cross-validation scheme used in the classification results |
+| `--alpha` | float | 0.05 | Significance threshold for the mask |
+| `--n-events-window` | int | 8 | Trials per Welch window (welch desc suffix) |
+| `--output` | PATH | none | Override output path. Default: `reports/figures/stats_classif_panel_space-<space>_type-<trial>_correction-<corr>.png` |
+| `--config` | PATH | config.yaml | Config file path |
+
+**Examples:**
+```bash
+invoke viz.stats-classif-panel
+invoke viz.stats-classif-panel --trial-type=correct
+invoke viz.stats-classif-panel --trial-type=lapse --correction=tmax
 ```
 
 ---

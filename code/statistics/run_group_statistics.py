@@ -1119,16 +1119,26 @@ def save_statistical_results(
         f"_path-{mode_tag}_type-{trial_type}"
     )
 
-    # Build dictionary of all numerical results
+    # Build dictionary of all numerical results.
+    # Canonical p-value keys: `pvals_uncorrected`, `pvals_fdr_bh`,
+    # `pvals_tmax`, `pvals_bonferroni`. (Match the classification side.)
+    _CORR_TO_KEY = {
+        "fdr": "pvals_fdr_bh",
+        "fdr_bh": "pvals_fdr_bh",
+        "fdr_by": "pvals_fdr_by",
+        "tmax": "pvals_tmax",
+        "bonferroni": "pvals_bonferroni",
+        "holm_bonferroni": "pvals_holm_bonferroni",
+        "none": "pvals_uncorrected",
+    }
     results_dict = {
         "contrast": contrast,
         "tvals": tvals,
-        "pvals": pvals,
+        "pvals_uncorrected": pvals,
     }
-
-    # Add corrected p-values with prefixed keys
     for correction, corrected in corrected_pvals.items():
-        results_dict[f"pvals_corrected_{correction}"] = corrected
+        key = _CORR_TO_KEY.get(correction, f"pvals_{correction}")
+        results_dict[key] = corrected
 
     # Add effect sizes with prefixed keys
     for effect_name, effect_array in effect_sizes.items():

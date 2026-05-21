@@ -32,13 +32,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from fooof import FOOOF, FOOOFGroup
 
 from code.utils.config import load_config
 from code.utils.logging_config import log_provenance, setup_logging
+from code.utils.specparam_compat import (
+    get_aperiodic_params,
+    get_r_squared,
+    load_spectral_model_classes,
+    model_has_fit,
+)
 from code.utils.validation import validate_subject_run
 
 logger = logging.getLogger(__name__)
+SpectralModel, _ = load_spectral_model_classes()
 
 
 def load_welch_psd(
@@ -121,7 +127,7 @@ def fit_fooof_single(
         - params: Dict with exponent, offset, r_squared
         - corrected_psd: Aperiodic-corrected PSD, shape (n_freqs,)
     """
-    fm = FOOOF(
+    fm = SpectralModel(
         peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
         max_n_peaks=fooof_params.get("max_n_peaks", 4),
         min_peak_height=fooof_params.get("min_peak_height", 0.10),
@@ -131,24 +137,26 @@ def fit_fooof_single(
     )
 
     fm.fit(freq_bins, psd, freq_range=freq_range)
+    has_fit = model_has_fit(fm)
+    aperiodic_params = get_aperiodic_params(fm) if has_fit else np.array([np.nan, np.nan])
 
     # Extract parameters
     params = {
-        "exponent": fm.aperiodic_params_[1] if fm.has_model else np.nan,
-        "offset": fm.aperiodic_params_[0] if fm.has_model else np.nan,
-        "r_squared": fm.r_squared_ if fm.has_model else np.nan,
+        "exponent": aperiodic_params[-1] if has_fit else np.nan,
+        "offset": aperiodic_params[0] if has_fit else np.nan,
+        "r_squared": get_r_squared(fm) if has_fit else np.nan,
     }
 
     # Get corrected (flattened) PSD - aperiodic component removed
     # The aperiodic model is fit on freq_range only, but we extrapolate it
     # across the full spectrum so that corrected PSDs cover all frequencies
     # (including gamma bands above the fitting range).
-    if fm.has_model:
+    if has_fit:
         # Extrapolate the aperiodic fit to the full frequency range
         # FOOOF aperiodic model (fixed): L = b - log10(F^exp)
         #   where b = offset, exp = exponent
-        offset = fm.aperiodic_params_[0]
-        exponent = fm.aperiodic_params_[1]
+        offset = aperiodic_params[0]
+        exponent = aperiodic_params[-1]
 
         # Guard against freq_bins containing 0 Hz
         safe_freqs = np.where(freq_bins > 0, freq_bins, np.nan)

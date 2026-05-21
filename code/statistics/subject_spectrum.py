@@ -47,6 +47,17 @@ from tqdm import tqdm
 
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
+from code.utils.specparam_compat import (
+    get_aperiodic_params,
+    get_fit_freqs,
+    get_group_model,
+    get_modeled_spectrum,
+    get_peak_fit,
+    get_r_squared,
+    load_spectral_group_model,
+    load_spectral_model,
+    model_has_fit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +102,9 @@ def _fit_fooof_group_on_psd(
         subtracting the extrapolated aperiodic component over the full
         frequency range).
     """
-    from fooof import FOOOFGroup
+    spectral_group_model_class = load_spectral_group_model()
 
-    fg = FOOOFGroup(
+    fg = spectral_group_model_class(
         peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
         max_n_peaks=fooof_params.get("max_n_peaks", 4),
         min_peak_height=fooof_params.get("min_peak_height", 0.10),
@@ -113,14 +124,15 @@ def _fit_fooof_group_on_psd(
     log_psd = np.log10(np.where(mean_psd > 0, mean_psd, np.nan))
 
     for ch in range(n_chans):
-        fm = fg.get_fooof(ch)
-        if not fm.has_model:
+        fm = get_group_model(fg, ch)
+        if not model_has_fit(fm):
             continue
-        offs = fm.aperiodic_params_[0]
-        expn = fm.aperiodic_params_[-1]  # last param: exponent (knee mode adds a knee in between)
+        aperiodic_params = get_aperiodic_params(fm)
+        offs = aperiodic_params[0]
+        expn = aperiodic_params[-1]  # last param: exponent (knee mode adds a knee in between)
         exponent[ch] = expn
         offset[ch] = offs
-        r_squared[ch] = fm.r_squared_
+        r_squared[ch] = get_r_squared(fm)
         aperiodic_full = offs - np.log10(safe_freqs ** expn)
         corrected[ch] = log_psd[ch] - aperiodic_full
 
@@ -457,9 +469,9 @@ def _fit_fooof_single_curve(
     Gaussian peaks, ``full_model`` = aperiodic + peaks), and the aperiodic
     scalars. ``None`` if the model failed to fit.
     """
-    from fooof import FOOOF
+    spectral_model_class = load_spectral_model()
 
-    fm = FOOOF(
+    fm = spectral_model_class(
         peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
         max_n_peaks=fooof_params.get("max_n_peaks", 4),
         min_peak_height=fooof_params.get("min_peak_height", 0.10),
@@ -471,11 +483,12 @@ def _fit_fooof_single_curve(
         fm.fit(freqs, psd_1d, freq_range=freq_range)
     except Exception:
         return None
-    if not getattr(fm, "has_model", False):
+    if not model_has_fit(fm):
         return None
 
-    offset = float(fm.aperiodic_params_[0])
-    exponent = float(fm.aperiodic_params_[-1])  # knee mode adds a knee before it
+    aperiodic_params = get_aperiodic_params(fm)
+    offset = float(aperiodic_params[0])
+    exponent = float(aperiodic_params[-1])  # knee mode adds a knee before it
 
     safe_freqs = np.where(freqs > 0, freqs, np.nan)
     raw_log = np.log10(np.where(psd_1d > 0, psd_1d, np.nan))
@@ -485,9 +498,9 @@ def _fit_fooof_single_curve(
         raw=raw_log,                                       # (n_freqs,)
         aperiodic=aperiodic_full,                          # (n_freqs,)
         corrected=raw_log - aperiodic_full,                # (n_freqs,)
-        fit_freqs=np.asarray(fm.freqs, dtype=float),       # (n_freqs_fit,)
-        periodic=np.asarray(fm._peak_fit, dtype=float),    # (n_freqs_fit,)
-        full_model=np.asarray(fm.fooofed_spectrum_, float),# (n_freqs_fit,)
+        fit_freqs=get_fit_freqs(fm),                       # (n_freqs_fit,)
+        periodic=get_peak_fit(fm),                         # (n_freqs_fit,)
+        full_model=get_modeled_spectrum(fm),               # (n_freqs_fit,)
         exponent=exponent,
         offset=offset,
     )

@@ -344,7 +344,7 @@ for subj in 04 05 06; do
   done
 done
 
-# FOOOF fitting (loads Welch PSDs)
+# Specparam fitting (FOOOF-compatible feature names; loads Welch PSDs)
 python -m code.features.compute_fooof \
   --subject 04 --run 02 --space sensor --inout-bounds 25 75
 ```
@@ -441,9 +441,10 @@ cat logs/slurm/preprocessing/preprocessing_manifest_*.json
 
 **Alternative rejected**: Save only final ICA+AR version
 
-### 6. FOOOF Per-Trial + Averaged
+### 6. Specparam / FOOOF Per-Trial + Averaged
 
-**Decision**: Fit FOOOF to individual trials AND IN/OUT averages
+**Decision**: Fit specparam models to individual trials AND IN/OUT averages,
+while keeping the existing `fooof_*` output names for compatibility.
 
 **Rationale**:
 - **Trial-level variability**: Capture dynamics, not just averages
@@ -498,7 +499,7 @@ invoke source-recon --subject 04 --runs "02 03"
 python -m code.features.compute_welch_psd \
   --subject 04 --run 02 --space sensor
 
-# Stage 3b: FOOOF (loads Welch PSD)
+# Stage 3b: Specparam / FOOOF-compatible features (loads Welch PSD)
 python -m code.features.compute_fooof \
   --subject 04 --run 02 --space sensor \
   --inout-bounds 25 75

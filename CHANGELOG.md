@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Migrated spectral parameterization imports from `fooof` to pinned
+  `specparam==2.0.0rc6` while preserving the existing FOOOF-compatible
+  fitting parameters, task names, output filenames, and `fooof_*` feature keys.
+
+### Fixed
+- Removed the deprecated FOOOF import path at the compatibility boundary
+  and updated surface rendering calls to avoid Nilearn's deprecated
+  ``darkness`` default in the stats/classification panel workflow.
+
 ### Planned
 - Statistics module (group-level contrasts, IN/OUT comparisons)
 - Classification module (ML decoding, cross-validation)

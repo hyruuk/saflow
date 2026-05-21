@@ -90,8 +90,12 @@ def viz_sensor(results_files, feature_names, alpha, cmap, config, data_root, cba
             maps_to_plot.append(tvals)
             mask = None
             n_sig = 0
-            for key in results.files:
-                if key.startswith("pvals_corrected_"):
+            # Canonical correction keys first; legacy stats keys are kept as
+            # fallback so old npz files still resolve.
+            for key in ("pvals_fdr_bh", "pvals_tmax", "pvals_bonferroni",
+                        "pvals_corrected_fdr_bh", "pvals_corrected_fdr",
+                        "pvals_corrected_tmax", "pvals_corrected_bonferroni"):
+                if key in results.files:
                     pvals = results[key].flatten()
                     mask = pvals < alpha
                     n_sig = int(np.sum(mask))

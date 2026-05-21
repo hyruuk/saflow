@@ -71,15 +71,28 @@ def find_exponent_results(stats_dir: Path, stat_feature: str, inout_str: str) ->
 def select_unit(results_file: Path, select_by: str) -> Dict:
     """Return the most significant spatial unit from a stats result file.
 
-    select_by: 'corrected' (default, uses pvals_corrected_*) or 'uncorrected'.
+    select_by: 'corrected' (default, prefers `pvals_fdr_bh` / `pvals_tmax`)
+               or 'uncorrected'.
     """
     res = np.load(results_file, allow_pickle=True)
     tvals = res["tvals"].flatten()
-    pvals = res["pvals"].flatten() if "pvals" in res.files else np.full_like(tvals, np.nan)
 
-    corrected_key = next(
-        (k for k in res.files if k.startswith("pvals_corrected_")), None
-    )
+    # Uncorrected: canonical key first, legacy bare 'pvals' as fallback.
+    if "pvals_uncorrected" in res.files:
+        pvals = res["pvals_uncorrected"].flatten()
+    elif "pvals" in res.files:
+        pvals = res["pvals"].flatten()
+    else:
+        pvals = np.full_like(tvals, np.nan)
+
+    # Corrected: prefer canonical keys, fall back to legacy `pvals_corrected_*`.
+    corrected_key = None
+    for cand in ("pvals_fdr_bh", "pvals_tmax", "pvals_bonferroni",
+                 "pvals_corrected_fdr_bh", "pvals_corrected_fdr",
+                 "pvals_corrected_tmax", "pvals_corrected_bonferroni"):
+        if cand in res.files:
+            corrected_key = cand
+            break
     pvals_corr = (
         res[corrected_key].flatten() if corrected_key else np.full_like(tvals, np.nan)
     )

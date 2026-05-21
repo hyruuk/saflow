@@ -309,7 +309,7 @@ features:
       overlap: 0.938          # Overlap fraction (0-1) (~959/1022, matching cc_saflow)
       average: "median"       # Averaging method: 'mean' or 'median'
 
-  # FOOOF parameters
+  # Specparam / FOOOF-compatible spectral parameterization settings
   fooof:
     - name: "default"
       freq_range: [2, 120]   # Frequency range for fitting

@@ -1269,6 +1269,54 @@ def spectra(c, space="sensor", stat_feature="fooof_exponent", select_by="correct
 
 
 @task
+def stats_classif_panel(c, space="sensor", trial_type="alltrials",
+                        correction="fdr", clf="logistic", cv="group",
+                        alpha=0.05, n_events_window=8,
+                        output=None, config="config.yaml"):
+    """Render the paper-ready stats + classification multi-panel (Fig. 3).
+
+    A single composite figure (panels A-J): per-band t-values and AUC for
+    raw and corrected PSD, FOOOF parameter t-values and AUC, plus the
+    IN-vs-OUT FOOOF spectral decomposition lines (raw, aperiodic,
+    corrected, periodic). Significance is computed within each topomap
+    (per feature), never pooled across bands/metrics.
+
+    Args:
+        space: 'sensor' (topomaps) or an atlas name like 'schaefer_400' /
+            'aparc.a2009s' (inflated-brain panels). Vertex-level 'source'
+            is not wired.
+        trial_type: alltrials | correct | lapse.
+        correction: significance mask -- fdr (default) | tmax | bonferroni |
+            uncorrected. Always applied per-feature.
+        clf, cv: classifier file selectors (default logistic/group). The
+            panel is necessarily univariate.
+        alpha: significance threshold for the mask (default 0.05).
+        n_events_window: trials per welch window (welch desc suffix).
+        output: override output path. Default writes to
+            reports/figures/stats_classif_panel_space-<space>_type-<trial>_correction-<corr>.png.
+
+    Examples:
+        invoke viz.stats-classif-panel
+        invoke viz.stats-classif-panel --trial-type=correct
+        invoke viz.stats-classif-panel --trial-type=lapse --correction=tmax
+    """
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.visualization.stats_classif_panel",
+           "--config", config,
+           "--space", space,
+           "--trial-type", trial_type,
+           "--correction", correction,
+           "--clf", clf, "--cv", cv,
+           "--alpha", str(alpha),
+           "--n-events-window", str(n_events_window)]
+    if output:
+        cmd.extend(["--output", output])
+
+    print(f"Running: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def behavior(c, subject="07", run="4", inout_bounds="25 75", output=None, verbose=False):
     """Generate behavioral analysis figure.
 
@@ -2457,6 +2505,7 @@ viz.add_task(viz_stats, name="stats")
 viz.add_task(viz_maps, name="maps")
 viz.add_task(viz_auto, name="auto")
 viz.add_task(spectra)
+viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
 
 # SLURM job-management tasks

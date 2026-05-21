@@ -9,12 +9,14 @@ Requires: nilearn, mne, matplotlib, numpy
 """
 
 import logging
+import warnings
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib import MatplotlibDeprecationWarning
 from matplotlib.figure import Figure
 
 logger = logging.getLogger(__name__)
@@ -177,20 +179,27 @@ def render_inflated_view(
     stat_map = lh_data if hemi == "left" else rh_data
 
     fig, ax = plt.subplots(1, 1, figsize=(4, 3), subplot_kw={"projection": "3d"})
-    plotting.plot_surf_stat_map(
-        surf_mesh,
-        stat_map,
-        bg_map=bg_map,
-        hemi=hemi,
-        view=view,
-        cmap=cmap,
-        vmin=vmin,
-        vmax=vmax,
-        threshold=threshold,
-        colorbar=False,
-        axes=ax,
-        engine="matplotlib",
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*Auto-close\(\)ing of figures upon backend switching.*",
+            category=MatplotlibDeprecationWarning,
+        )
+        plotting.plot_surf_stat_map(
+            surf_mesh,
+            stat_map,
+            bg_map=bg_map,
+            hemi=hemi,
+            view=view,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            threshold=threshold,
+            colorbar=False,
+            axes=ax,
+            engine="matplotlib",
+            darkness=None,
+        )
 
     # Render to array
     fig.canvas.draw()
@@ -378,10 +387,13 @@ def plot_surface_stats_panel(
 
         tvals = results["tvals"].flatten()
 
-        # Get significance info
+        # Get significance info. Canonical keys first; legacy keys retained
+        # so old stats npz files still load.
         n_sig = 0
-        for key in results.files:
-            if key.startswith("pvals_corrected_"):
+        for key in ("pvals_fdr_bh", "pvals_tmax", "pvals_bonferroni",
+                    "pvals_corrected_fdr_bh", "pvals_corrected_fdr",
+                    "pvals_corrected_tmax", "pvals_corrected_bonferroni"):
+            if key in results.files:
                 pvals = results[key].flatten()
                 n_sig = int(np.sum(pvals < alpha))
                 break

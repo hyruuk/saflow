@@ -57,7 +57,7 @@ dependencies = [
     "mlneurotools>=0.1.0",
 
     # Signal processing & features
-    "fooof>=1.0.0,<2.0.0",
+    "specparam==2.0.0rc6",
     "antropy>=0.1.6,<1.0.0",
 
     # Statistics
@@ -299,7 +299,7 @@ module = [
     "mne.*",
     "mne_bids.*",
     "autoreject.*",
-    "fooof.*",
+    "specparam.*",
     "mlneurotools.*",
 ]
 ignore_missing_imports = true
