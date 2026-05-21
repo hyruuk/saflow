@@ -75,11 +75,13 @@ def apply_fdr_correction(
     if method == "bh":
         # BH: assumes independence or positive dependence
         threshold = (np.arange(1, m + 1) / m) * alpha
+        q_multiplier = m
 
     elif method == "by":
         # BY: handles arbitrary dependence (more conservative)
         c_m = np.sum(1.0 / np.arange(1, m + 1))  # Harmonic sum
         threshold = (np.arange(1, m + 1) / (m * c_m)) * alpha
+        q_multiplier = m * c_m
 
     else:
         raise ValueError(f"Unknown FDR method: {method}. Use 'bh' or 'by'.")
@@ -95,9 +97,9 @@ def apply_fdr_correction(
         critical_pval = 0.0  # No rejections
 
     # Compute q-values (adjusted p-values)
-    # q(i) = min(p(i) * m / i, 1)
+    # q(i) = min(p(i) * multiplier / i, 1). BY uses m*c(m).
     qvals_sorted = np.minimum(
-        pvals_sorted * m / np.arange(1, m + 1),
+        pvals_sorted * q_multiplier / np.arange(1, m + 1),
         1.0
     )
 

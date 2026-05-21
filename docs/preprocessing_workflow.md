@@ -47,7 +47,7 @@ Per `(subject, run)` under `derivatives/preprocessed/sub-XX/meg/`:
 | `*_proc-clean_meg.fif` | ICA-cleaned continuous, bad chans interpolated, BAD_AR2 annotations |
 | `*_proc-clean_annotations.json` | Sidecar with onset/duration/description of every annotation; sufficient to drop bad trials downstream without reading the FIF |
 | `*_proc-clean_params.json` | Provenance: filter, ICA, AR1/AR2 stats, bad channel list, retention |
-| `*_proc-ica_meg.fif` | ICA-cleaned epochs (all of them, with the AR2 reject_log) |
+| `*_proc-ica_epo.fif` | ICA-cleaned epochs (all of them, with the AR2 reject_log) |
 | `*_desc-ARlog1_meg.pkl` | AR1 reject_log (used to derive globally bad channels) |
 | `*_desc-ARlog2_meg.pkl` | AR2 reject_log (per-trial bad flag only — no interp labels under fit-only mode) |
 | `*_desc-ica_meg-ica.fif` | Fitted ICA object |

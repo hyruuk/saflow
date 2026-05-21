@@ -127,6 +127,9 @@ def fit_fooof_single(
         - params: Dict with exponent, offset, r_squared
         - corrected_psd: Aperiodic-corrected PSD, shape (n_freqs,)
     """
+    if fooof_params.get("aperiodic_mode", "fixed") != "fixed":
+        raise ValueError("Only fixed aperiodic mode is supported.")
+
     fm = SpectralModel(
         peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
         max_n_peaks=fooof_params.get("max_n_peaks", 4),

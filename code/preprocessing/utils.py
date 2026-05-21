@@ -8,8 +8,9 @@ This module provides helper functions for the preprocessing pipeline:
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import mne
 import numpy as np
@@ -19,12 +20,23 @@ from mne_bids import BIDSPath, read_raw_bids
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class DerivativeFilePath:
+    """Minimal path wrapper matching the BIDSPath attributes used downstream."""
+
+    fpath: Path
+
+    def mkdir(self, exist_ok: bool = True) -> None:
+        """Create the parent directory for this derivative file."""
+        self.fpath.parent.mkdir(parents=True, exist_ok=exist_ok)
+
+
 def create_preprocessing_paths(
     subject: str,
     run: str,
     bids_root: Path,
     derivatives_root: Path,
-) -> Dict[str, BIDSPath]:
+) -> Dict[str, Union[BIDSPath, DerivativeFilePath]]:
     """Create BIDSPath objects for preprocessing inputs and outputs.
 
     Args:
@@ -37,8 +49,7 @@ def create_preprocessing_paths(
         Dictionary with BIDSPath objects:
         - 'raw': Input raw BIDS data
         - 'preproc': Output preprocessed continuous data
-        - 'epoch_ica': Output epochs (ICA only, no AR)
-        - 'epoch_ica_ar': Output epochs (ICA + AR)
+        - 'epoch_ica': Output epochs (ICA-cleaned, with AR2 flags in metadata)
         - 'ARlog_first': First AutoReject log (for ICA fitting)
         - 'ARlog_second': Second AutoReject log (post-ICA bad epoch detection)
         - 'report': Output HTML report
@@ -111,45 +122,18 @@ def create_preprocessing_paths(
 
     epoch_dir = derivatives_root / "epochs"
 
-    # ICA only epochs
-    epoch_ica_bidspath = BIDSPath(
-        subject=subject,
-        task="gradCPT",
-        run=run,
-        datatype="meg",
-        processing="ica",
-        root=str(epoch_dir),
+    epoch_ica_bidspath = DerivativeFilePath(
+        epoch_dir
+        / f"sub-{subject}"
+        / "meg"
+        / f"sub-{subject}_task-gradCPT_run-{run}_proc-ica_epo.fif"
     )
     epoch_ica_bidspath.mkdir(exist_ok=True)
-
-    # ICA + AR epochs
-    epoch_ica_ar_bidspath = BIDSPath(
-        subject=subject,
-        task="gradCPT",
-        run=run,
-        datatype="meg",
-        processing="icaar",
-        root=str(epoch_dir),
-    )
-    epoch_ica_ar_bidspath.mkdir(exist_ok=True)
-
-    # AR2-interpolated epochs
-    epoch_ar2_interp_bidspath = BIDSPath(
-        subject=subject,
-        task="gradCPT",
-        run=run,
-        datatype="meg",
-        processing="ar2interp",
-        root=str(epoch_dir),
-    )
-    epoch_ar2_interp_bidspath.mkdir(exist_ok=True)
 
     return {
         "raw": raw_bidspath,
         "preproc": preproc_bidspath,
         "epoch_ica": epoch_ica_bidspath,
-        "epoch_ica_ar": epoch_ica_ar_bidspath,
-        "epoch_ar2_interp": epoch_ar2_interp_bidspath,
         "ARlog_first": ARlog_first_bidspath,
         "ARlog_second": ARlog_second_bidspath,
         "report": report_bidspath,

@@ -1083,8 +1083,7 @@ Threshold-Based Detection (post-ICA, {threshold_stats.get('mode', 'fixed')}):
 Output Files
 -----------
 Continuous (ICA + BAD_AR2 annotations): derivatives/preprocessed/sub-{subject}/meg/*_proc-clean_meg.fif
-Epochs (ICA, all): derivatives/epochs/sub-{subject}/meg/*_proc-ica (n={n_total_epochs})
-Epochs (AR2 interpolated): derivatives/epochs/sub-{subject}/meg/*_proc-ar2interp
+Epochs (ICA, all): derivatives/epochs/sub-{subject}/meg/*_proc-ica_epo.fif (n={n_total_epochs})
 
 Data Retention
 --------------
@@ -1470,11 +1469,11 @@ def preprocess_run(
         console.print(f"[green]\u2713 AR2: no channels above bad-channel threshold[/green]")
 
     # ================================================================
-    # RE-DERIVE FINAL EPOCHS FROM INTERPOLATED CONTINUOUS SIGNAL
+    # RE-DERIVE FINAL CANONICAL EPOCHS FROM CLEAN CONTINUOUS SIGNAL
     # ================================================================
-    logger.info("Re-creating epochs from AR2-interpolated continuous data")
+    logger.info("Re-creating canonical ICA epochs with AR2 flags")
     epochs_preproc = create_epochs(cleaned_raw, events_stim, event_id_stim, tmin, tmax, picks)
-    console.print(f"[green]\u2713 Final epochs: {len(epochs_preproc)} (post-ICA + AR2-interp)[/green]")
+    console.print(f"[green]\u2713 Final epochs: {len(epochs_preproc)} (post-ICA, AR2 flagged)[/green]")
 
     # ================================================================
     # THRESHOLD-BASED DETECTION (data-driven or fixed)
@@ -1904,7 +1903,7 @@ def main():
         bids_root = args.bids_root
         logger.info(f"Using BIDS root from CLI: {bids_root}")
     else:
-        bids_root = Path(config["paths"]["data_root"]) / "bids"
+        bids_root = Path(config["paths"]["bids"])
         logger.info(f"Using BIDS root from config: {bids_root}")
 
     derivatives_root = Path(config["paths"]["data_root"]) / config["paths"]["derivatives"]
@@ -1947,8 +1946,7 @@ def main():
     console.print(f"  Processed {len(runs)} runs")
     console.print(f"\n[bold]Output locations:[/bold]")
     console.print(f"  Continuous (ICA + BAD_AR2): {derivatives_root}/preprocessed/sub-{args.subject}/")
-    console.print(f"  Epochs (ICA, all): {derivatives_root}/epochs/sub-{args.subject}/*proc-ica*")
-    console.print(f"  Epochs (AR2 interp): {derivatives_root}/epochs/sub-{args.subject}/*proc-ar2interp*")
+    console.print(f"  Epochs (ICA, all): {derivatives_root}/epochs/sub-{args.subject}/meg/*proc-ica_epo.fif")
     console.print(f"  AR logs: {derivatives_root}/preprocessed/sub-{args.subject}/*ARlog*.pkl")
     console.print(f"  Reports: {derivatives_root}/preprocessed/sub-{args.subject}/*_report_meg.html")
     console.print(f"\n[bold]Logs:[/bold] {log_file}")

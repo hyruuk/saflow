@@ -140,7 +140,7 @@ Same locations as local execution:
 ```
 derivatives/
 ├── preprocessed/sub-04/meg/*_proc-clean_meg.fif
-└── epochs/sub-04/meg/*_proc-ica_meg.fif
+└── epochs/sub-04/meg/*_proc-ica_epo.fif
 ```
 
 ## Templates

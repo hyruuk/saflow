@@ -66,7 +66,7 @@ def _get_sensor_info(config: Dict, data_root: Path):
         "preprocessed/sub-*/meg/*_proc-clean_meg.fif"
     ))
     if not sample_files:
-        bids_dir = data_root / config["paths"].get("bids", "bids")
+        bids_dir = Path(config["paths"].get("bids", data_root / "bids"))
         sample_files = list(bids_dir.glob("sub-*/meg/*_task-*_meg.fif"))
     if not sample_files:
         sample_files = list(derivatives_dir.glob("**/sub-*/meg/*_meg.fif"))

@@ -428,16 +428,14 @@ cat logs/slurm/preprocessing/preprocessing_manifest_*.json
 
 ### 5. Multiple Preprocessing Outputs
 
-**Decision**: Save 3 versions of preprocessed data
+**Decision**: Save one canonical epoched derivative plus continuous data
 
 1. **Continuous (ICA-cleaned)**: `*_proc-clean_meg.fif`
-2. **Epochs (ICA only)**: `*_proc-ica_meg.fif`
-3. **Epochs (ICA+AR)**: `*_proc-icaar_meg.fif`
+2. **Epochs (ICA-cleaned)**: `*_proc-ica_epo.fif`
 
 **Rationale**:
-- **Flexibility**: Downstream analyses can choose version
-- **Validation**: Compare results across versions
-- **Transparency**: Users see impact of each cleaning step
+- **Single contract**: Downstream analyses load one epoch filename everywhere
+- **Transparency**: AR2 bad epochs are represented by ARlog2 and BAD_AR2 annotations
 
 **Alternative rejected**: Save only final ICA+AR version
 
@@ -573,7 +571,7 @@ features:
     freq_range: [2, 120]           # Fitting range (Hz)
     peak_width_limits: [1, 8]      # Peak width (Hz)
     max_n_peaks: 4                 # Max peaks to fit
-    aperiodic_mode: "fixed"        # "fixed" or "knee"
+    aperiodic_mode: "fixed"        # fixed only; knee mode is unsupported
 ```
 
 See `config.yaml.template` for all options.
@@ -622,8 +620,7 @@ saflow/
 │   │       └── *_proc-clean_meg.fif
 │   ├── epochs/                # Stage 1: Epoched data
 │   │   └── sub-04/meg/
-│   │       ├── *_proc-ica_meg.fif     # ICA-only epochs
-│   │       └── *_proc-icaar_meg.fif   # ICA+AutoReject epochs
+│   │       └── *_proc-ica_epo.fif     # ICA-cleaned epochs with AR2 flags
 │   ├── morphed_sources/       # Stage 2: Source estimates (fsaverage)
 │   ├── atlased_sources_*/     # Stage 2: Atlas-parcellated sources
 │   └── noise_covariance/      # Noise covariance matrices

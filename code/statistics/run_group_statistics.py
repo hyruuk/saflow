@@ -42,6 +42,8 @@ from code.statistics.effect_sizes import (
     compute_cohens_d,
     compute_hedges_g,
     compute_eta_squared,
+    compute_paired_cohens_d,
+    compute_paired_hedges_g,
 )
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
@@ -65,13 +67,10 @@ def load_config(config_path: Optional[Path] = None) -> Dict:
     Returns:
         Configuration dictionary.
     """
-    if config_path is None:
-        config_path = Path("config.yaml")
+    from code.utils.config import load_config as load_project_config
 
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    logger.info(f"Loaded configuration from {config_path}")
+    config = load_project_config(str(config_path) if config_path else None)
+    logger.info(f"Loaded configuration from {config_path or 'default search paths'}")
     return config
 
 
@@ -945,6 +944,8 @@ def compute_all_effect_sizes(
     X: np.ndarray,
     y: np.ndarray,
     groups: np.ndarray,
+    mode: str = "paired",
+    aggregate: str = "median",
 ) -> Dict[str, np.ndarray]:
     """Compute multiple effect size measures.
 
@@ -959,22 +960,24 @@ def compute_all_effect_sizes(
         - 'hedges_g': Hedges' g, shape (n_features, n_spatial)
         - 'eta_squared': Eta-squared, shape (n_features, n_spatial)
     """
-    logger.info("Computing effect sizes")
+    logger.info(f"Computing effect sizes ({mode})")
 
     effect_sizes = {}
 
-    # Cohen's d
-    effect_sizes["cohens_d"] = compute_cohens_d(X, y, groups)
-    logger.debug(f"Cohen's d range: [{np.nanmin(effect_sizes['cohens_d']):.3f}, {np.nanmax(effect_sizes['cohens_d']):.3f}]")
+    if mode == "single-trials":
+        effect_sizes["cohens_d_trial_pooled"] = compute_cohens_d(X, y, groups)
+        effect_sizes["hedges_g_trial_pooled"] = compute_hedges_g(X, y, groups)
+        effect_sizes["eta_squared_trial_pooled"] = compute_eta_squared(X, y, groups)
+        return effect_sizes
 
-    # Hedges' g (bias-corrected Cohen's d)
-    effect_sizes["hedges_g"] = compute_hedges_g(X, y, groups)
-    logger.debug(f"Hedges' g range: [{np.nanmin(effect_sizes['hedges_g']):.3f}, {np.nanmax(effect_sizes['hedges_g']):.3f}]")
-
-    # Eta-squared
+    # Paired/repeated-measures effect sizes on per-subject aggregates.
+    effect_sizes["cohens_d_paired"] = compute_paired_cohens_d(
+        X, y, groups, aggregate=aggregate
+    )
+    effect_sizes["hedges_g_paired"] = compute_paired_hedges_g(
+        X, y, groups, aggregate=aggregate
+    )
     effect_sizes["eta_squared"] = compute_eta_squared(X, y, groups)
-    logger.debug(f"Eta-squared range: [{np.nanmin(effect_sizes['eta_squared']):.3f}, {np.nanmax(effect_sizes['eta_squared']):.3f}]")
-
     return effect_sizes
 
 
@@ -989,6 +992,7 @@ def apply_corrections(
     n_permutations: int = 1000,
     n_jobs: int = -1,
     aggregate: str = "median",
+    fdr_method: str = "bh",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Apply multiple comparison correction.
 
@@ -1019,7 +1023,7 @@ def apply_corrections(
         corrected = pvals.copy()
 
     elif correction == "fdr":
-        corrected = apply_fdr_correction(pvals, alpha, method="bh")
+        corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
 
     elif correction == "bonferroni":
         corrected = apply_bonferroni_correction(pvals, alpha)
@@ -1027,7 +1031,7 @@ def apply_corrections(
     elif correction == "tmax":
         if X is None or y is None or groups is None:
             logger.warning("Tmax correction requires X, y, groups. Falling back to FDR.")
-            corrected = apply_fdr_correction(pvals, alpha, method="bh")
+            corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
         else:
             logger.info(
                 f"Running tmax with {n_permutations} permutations on per-subject "
@@ -1057,7 +1061,9 @@ def apply_corrections(
             for i in range(tvals.shape[0]):
                 for j in range(tvals.shape[1]):
                     if not np.isnan(tvals[i, j]):
-                        corrected[i, j] = np.mean(max_t_perm >= np.abs(tvals[i, j]))
+                        corrected[i, j] = (
+                            np.sum(max_t_perm >= np.abs(tvals[i, j])) + 1
+                        ) / (n_permutations + 1)
                     else:
                         corrected[i, j] = 1.0
 
@@ -1171,6 +1177,15 @@ def save_statistical_results(
         "n_spatial": int(contrast.shape[1]),
         "corrections_applied": list(corrected_pvals.keys()),
         "effect_sizes_computed": list(effect_sizes.keys()),
+        "method_metadata": {
+            "analysis_mode": metadata.get("analysis_mode"),
+            "effect_size_mode": metadata.get("effect_size_mode"),
+            "correction_method": metadata.get("correction_method"),
+            "fdr_method": metadata.get("fdr_method"),
+            "n_permutations": metadata.get("n_permutations"),
+            "bad_trial_rule": metadata.get("bad_trial_rule"),
+            "windowing_profile": metadata.get("windowing_profile"),
+        },
         "results_file": str(results_file.name),
     }
 
@@ -1215,6 +1230,13 @@ def main():
         default="fdr",
         choices=["none", "fdr", "bonferroni", "tmax"],
         help="Multiple comparison correction method",
+    )
+    parser.add_argument(
+        "--fdr-method",
+        type=str,
+        default=None,
+        choices=["bh", "by"],
+        help="FDR method when --correction=fdr: bh or by (default: config statistics.fdr_method).",
     )
     parser.add_argument(
         "--n-permutations",
@@ -1328,6 +1350,7 @@ def main():
 
     # Get INOUT bounds from config
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
+    fdr_method = args.fdr_method or config.get("statistics", {}).get("fdr_method", "bh")
 
     # Set up output directory
     data_root = Path(config["paths"]["data_root"])
@@ -1350,7 +1373,7 @@ def main():
     logger.info(f"IN/OUT bounds: {inout_bounds}")
     logger.info(f"Trial-type filter: {args.trial_type}")
     logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
-    logger.info(f"Corrections: {args.correction}")
+    logger.info(f"Corrections: {args.correction} (fdr_method={fdr_method})")
     logger.info(f"Alpha: {args.alpha}")
     logger.info("=" * 80)
 
@@ -1427,10 +1450,17 @@ def main():
             n_permutations=args.n_permutations,
             n_jobs=args.n_jobs,
             aggregate=eff_aggregate,
+            fdr_method=fdr_method,
         )
         corrected_pvals_dict = {args.correction: corrected_pvals}
 
-        effect_sizes = compute_all_effect_sizes(X=X, y=y, groups=groups)
+        effect_sizes = compute_all_effect_sizes(
+            X=X,
+            y=y,
+            groups=groups,
+            mode="single-trials" if eff_single_trials else "paired",
+            aggregate=eff_aggregate,
+        )
 
         # Surface the test configuration in the sidecar so each results
         # file is self-describing (mode, aggregator, bad-filter status).
@@ -1442,6 +1472,13 @@ def main():
         )
         metadata["drop_bad_trials"] = bool(not args.keep_bad_trials)
         metadata["trial_type"] = args.trial_type
+        metadata["effect_size_mode"] = "trial_pooled" if eff_single_trials else "paired"
+        metadata["correction_method"] = args.correction
+        metadata["fdr_method"] = fdr_method
+        metadata["n_permutations"] = int(args.n_permutations)
+        metadata["windowing_profile"] = (
+            "default" if args.n_events_window <= 1 else f"window{args.n_events_window}"
+        )
 
         save_statistical_results(
             output_dir=output_dir,

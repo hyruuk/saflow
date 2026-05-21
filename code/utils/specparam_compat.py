@@ -58,7 +58,7 @@ def model_has_fit(model: Any) -> bool:
 
 
 def get_aperiodic_params(model: Any) -> np.ndarray:
-    """Return aperiodic parameters as ``[offset, (knee), exponent]``."""
+    """Return fixed-mode aperiodic parameters as ``[offset, exponent]``."""
     return np.asarray(model.get_params("aperiodic"), dtype=float)
 
 

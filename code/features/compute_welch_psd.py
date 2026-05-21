@@ -235,6 +235,7 @@ def save_welch_psds(
         "run": run,
         "space": space,
         "method": "welch",
+        "windowing_profile": "default" if n_events_window <= 1 else f"window{n_events_window}",
         "n_fft": n_fft,
         "n_overlap": n_overlap,
         "average": average,
@@ -350,8 +351,8 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Number of consecutive stim trials per epoch. 1 = single-trial, "
             "8 = cc_saflow's sliding window (default). When >=2, Welch params "
-            "are taken from the 'window8' config profile (n_fft=2044, "
-            "overlap=0.75, average='mean')."
+            "must be defined in the matching features.welch_psd profile, "
+            "for example 'window8'."
         ),
     )
 
@@ -392,14 +393,12 @@ def main() -> int:
     cli_n_overlap = args.n_overlap
 
     # Determine paths
-    data_root = Path(config["paths"]["data_root"])
-    bids_root = Path(args.bids_root) if args.bids_root else data_root / "bids"
-    derivatives_root = data_root / config["paths"]["derivatives"]
+    bids_root = Path(args.bids_root) if args.bids_root else Path(config["paths"]["bids"])
     task_name = config["bids"]["task_name"]
 
     # Build output path in features/
     # space can be "sensor", "source", or an atlas name like "aparc.a2009s"
-    features_root = data_root / config["paths"]["features"]
+    features_root = Path(config["paths"]["features"])
     output_root = features_root / f"welch_psds_{args.space}" / f"sub-{args.subject}"
 
     # Check if output already exists (matches save_welch_psds filename logic)
@@ -459,18 +458,22 @@ def main() -> int:
     )
 
     # Resolve Welch parameters from config if not given on CLI.
-    # Window-mode (n_events_window >= 2) auto-selects the "window8" profile,
-    # which mirrors cc_saflow's hardcoded n_fft=2044, n_overlap=1533, mean.
+    # Window-mode (n_events_window >= 2) requires the matching window{N}
+    # profile so the run cannot silently use single-trial defaults.
     sfreq = spatial_data.sfreq
     n_fft = cli_n_fft
     n_overlap = cli_n_overlap
 
     welch_cfg = config.get("features", {}).get("welch_psd", [{}])
     profile_name = "window8" if args.n_events_window >= 2 else "default"
-    profile = next(
-        (p for p in welch_cfg if p.get("name") == profile_name),
-        welch_cfg[0] if welch_cfg else {},
-    )
+    profile = next((p for p in welch_cfg if p.get("name") == profile_name), None)
+    if profile is None:
+        logger.error(
+            "Missing features.welch_psd profile %r for n_events_window=%s",
+            profile_name,
+            args.n_events_window,
+        )
+        return 1
     logger.info(f"Welch profile: {profile.get('name', '?')}")
     average = profile.get("average", "median")
 

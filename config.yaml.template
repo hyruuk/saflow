@@ -10,6 +10,7 @@ paths:
 
   # Data paths (relative to data_root)
   raw: sourcedata/
+  bids: bids/
   derivatives: derivatives/
   features: features/
   results: results/
@@ -308,6 +309,10 @@ features:
       window_sec: 0.852       # Window length in seconds (~1022 samples at 1200 Hz)
       overlap: 0.938          # Overlap fraction (0-1) (~959/1022, matching cc_saflow)
       average: "median"       # Averaging method: 'mean' or 'median'
+    - name: "window8"
+      window_sec: 1.703       # 2044 samples at 1200 Hz, matching cc_saflow windowed PSD
+      overlap: 0.75           # 1533 samples at 1200 Hz
+      average: "mean"
 
   # Specparam / FOOOF-compatible spectral parameterization settings
   fooof:
@@ -317,7 +322,7 @@ features:
       max_n_peaks: 8
       min_peak_height: 0.0
       peak_threshold: 2.0
-      aperiodic_mode: "fixed"  # 'fixed' or 'knee'
+      aperiodic_mode: "fixed"  # fixed only; knee mode is intentionally unsupported
 
   # Complexity metrics configuration (using antropy library)
   complexity:

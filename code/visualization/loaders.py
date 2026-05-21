@@ -57,7 +57,7 @@ COMPLEXITY_ORDER = [
     "entropy_approximate", "entropy_svd",
     "fractal_higuchi", "fractal_petrosian", "fractal_katz", "fractal_dfa",
 ]
-FOOOF_ORDER = ["exponent", "offset", "knee", "r_squared"]
+FOOOF_ORDER = ["exponent", "offset", "r_squared"]
 
 
 def feature_family(feature: str) -> str:

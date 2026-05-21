@@ -10,7 +10,7 @@ These are reusable utilities; main preprocessing pipelines are in code/preproces
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import mne
 import numpy as np
@@ -209,7 +209,7 @@ def trim_INOUT_idx(
 
 def compute_PSD_hilbert(
     raw: mne.io.Raw,
-    ARlog: "autoreject.AutoReject",
+    ARlog: Any,
     tmin: float = 0.0,
     tmax: float = 0.8,
     freqlist: Optional[List[List[float]]] = None,
@@ -293,7 +293,7 @@ def compute_PSD_hilbert(
 
 def compute_envelopes_hilbert(
     raw: mne.io.Raw,
-    ARlog: "autoreject.AutoReject",
+    ARlog: Any,
     freqlist: Optional[List[List[float]]] = None,
     tmin: float = 0.0,
     tmax: float = 0.8,

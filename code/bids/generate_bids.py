@@ -420,7 +420,7 @@ def main():
         bids_root = args.output
         logger.info(f"Using output directory from CLI: {bids_root}")
     else:
-        bids_root = Path(config["paths"]["data_root"]) / "bids"
+        bids_root = Path(config["paths"]["bids"])
         logger.info(f"Using output directory from config: {bids_root}")
 
     # Determine subjects to process

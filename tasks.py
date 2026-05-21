@@ -42,7 +42,7 @@ from invoke import Collection, task
 # ==============================================================================
 
 PROJECT_ROOT = Path(__file__).parent
-SAFLOW_PKG = PROJECT_ROOT / "saflow"
+SAFLOW_PKG = PROJECT_ROOT / "code"
 CODE_DIR = PROJECT_ROOT / "code"
 TESTS_DIR = PROJECT_ROOT / "tests"
 DOCS_DIR = PROJECT_ROOT / "docs"
@@ -265,7 +265,7 @@ def test(c, verbose=False, coverage=True, markers=None):
     if verbose:
         cmd.append("-v")
     if coverage:
-        cmd.extend(["--cov=saflow", "--cov=code", "--cov-report=term-missing"])
+        cmd.extend(["--cov=code", "--cov-report=term-missing"])
     if markers:
         cmd.append(f"-m '{markers}'")
 
@@ -656,11 +656,11 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
     """Extract FOOOF aperiodic parameters and corrected PSDs.
 
     Computes:
-    - Aperiodic parameters (exponent, offset, knee)
+    - Aperiodic parameters (exponent, offset)
     - Goodness of fit (r_squared, error)
     - Corrected PSDs (aperiodic component removed)
 
-    FOOOF parameters (freq_range, aperiodic_mode) come from config.yaml.
+    FOOOF parameters (freq_range, fixed aperiodic_mode) come from config.yaml.
 
     Args:
         n_events_window: Window size used by upstream Welch (1 = single-trial,
@@ -1549,8 +1549,7 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
     run_list = runs.split() if runs else config["bids"]["task_runs"]
 
     if not bids_root:
-        data_root = Path(config["paths"]["data_root"])
-        bids_root = data_root / "bids"
+        bids_root = Path(config["paths"]["bids"])
     else:
         bids_root = Path(bids_root)
 
@@ -1684,11 +1683,10 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
         print("ERROR: No source_reconstruction resources in config.yaml")
         return
 
-    data_root = Path(config["paths"]["data_root"])
     if bids_root:
         bids_root = Path(bids_root)
     else:
-        bids_root = data_root / "bids"
+        bids_root = Path(config["paths"]["bids"])
 
     venv_path = Path(config["paths"]["venv"])
     if not venv_path.is_absolute():

@@ -10,11 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Added explicit configurable `paths.bids` expansion, canonicalized epoch
+  derivatives to `*_proc-ica_epo.fif`, and made Welch windowed PSD extraction
+  require an explicit `window{N}` profile.
+- Updated group statistics to use paired effect sizes by default, finite
+  permutation p-values for tmax, configurable BH/BY FDR, and richer result
+  sidecar method metadata.
 - Migrated spectral parameterization imports from `fooof` to pinned
   `specparam==2.0.0rc6` while preserving the existing FOOOF-compatible
   fitting parameters, task names, output filenames, and `fooof_*` feature keys.
 
 ### Fixed
+- Fixed BY FDR adjusted p-values to include the Benjamini-Yekutieli harmonic
+  correction factor.
 - Removed the deprecated FOOOF import path at the compatibility boundary
   and updated surface rendering calls to avoid Nilearn's deprecated
   ``darkness`` default in the stats/classification panel workflow.

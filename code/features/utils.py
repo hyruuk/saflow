@@ -136,8 +136,6 @@ def segment_spatial_temporal_data(
     tmin_samples = int(tmin * sfreq)
     tmax_samples = int(tmax * sfreq)
     epoch_length = tmax_samples - tmin_samples
-    # In windowed mode, the slice extends backward by (N-1) trial-lengths
-    win_tmin_samples = tmin_samples - epoch_length * (n_events_window - 1)
 
     # Filter to stimulus trials only (reset index for positional iteration)
     stim_trials = (
@@ -178,25 +176,32 @@ def segment_spatial_temporal_data(
         if i + 1 < n_events_window:
             continue
 
-        # Get event onset in samples (anchor = current trial)
-        onset_sample = int(trial["onset"] * sfreq)
+        if n_events_window > 1:
+            first_idx = i - n_events_window + 1
+            included = stim_trials.iloc[first_idx : i + 1]
+            start_sample = int((included.iloc[0]["onset"] + tmin) * sfreq)
+            end_sample = int((included.iloc[-1]["onset"] + tmax) * sfreq)
+        else:
+            included = None
+            start_sample = int((trial["onset"] + tmin) * sfreq)
+            end_sample = int((trial["onset"] + tmax) * sfreq)
 
-        # Boundary checks (window extends backwards by win_tmin_samples)
-        if onset_sample + tmax_samples >= data.shape[1]:
+        # Boundary checks
+        if end_sample >= data.shape[1]:
             logger.debug(f"Skipping trial {i}: extends beyond data")
             continue
-        if onset_sample + win_tmin_samples < 0:
+        if start_sample < 0:
             logger.debug(f"Skipping trial {i}: window starts before data")
             continue
 
         # Extract segment
-        segment = data[:, onset_sample + win_tmin_samples : onset_sample + tmax_samples]
+        segment = data[:, start_sample:end_sample]
         segmented_array.append(segment)
 
         row = dict(trial)  # anchor trial's events row
+        row["window_start"] = start_sample / sfreq
+        row["window_end"] = end_sample / sfreq
         if n_events_window > 1:
-            first_idx = i - n_events_window + 1
-            included = stim_trials.iloc[first_idx : i + 1]
             inc_vtc = (
                 included["VTC_filtered"].to_numpy(dtype=float)
                 if "VTC_filtered" in included.columns
@@ -229,7 +234,20 @@ def segment_spatial_temporal_data(
 
         metadata_rows.append(row)
 
-    segmented_array = np.array(segmented_array)
+    if segmented_array:
+        max_len = max(segment.shape[1] for segment in segmented_array)
+        min_len = min(segment.shape[1] for segment in segmented_array)
+        if max_len != min_len:
+            logger.warning(
+                "Windowed segments have variable lengths from irregular event onsets; "
+                "padding shorter segments with NaN to preserve actual timing."
+            )
+        padded = np.full((len(segmented_array), data.shape[0], max_len), np.nan)
+        for idx, segment in enumerate(segmented_array):
+            padded[idx, :, : segment.shape[1]] = segment
+        segmented_array = padded
+    else:
+        segmented_array = np.empty((0, data.shape[0], epoch_length))
     trial_metadata = pd.DataFrame(metadata_rows).reset_index(drop=True)
 
     # Single-trial mode: bad_ar1/bad_ar2 columns already populated for

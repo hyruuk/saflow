@@ -226,7 +226,7 @@ def scan_dataset(config: Dict) -> DatasetSummary:
 
     data_root = Path(config["paths"]["data_root"])
     sourcedata = data_root / "sourcedata"
-    bids_root = data_root / "bids"
+    bids_root = Path(config["paths"]["bids"])
     derivatives_root = data_root / config["paths"]["derivatives"]
     features_root = data_root / config["paths"]["features"]
 

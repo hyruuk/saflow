@@ -129,7 +129,7 @@ def _fit_fooof_group_on_psd(
             continue
         aperiodic_params = get_aperiodic_params(fm)
         offs = aperiodic_params[0]
-        expn = aperiodic_params[-1]  # last param: exponent (knee mode adds a knee in between)
+        expn = aperiodic_params[-1]
         exponent[ch] = expn
         offset[ch] = offs
         r_squared[ch] = get_r_squared(fm)
@@ -488,7 +488,7 @@ def _fit_fooof_single_curve(
 
     aperiodic_params = get_aperiodic_params(fm)
     offset = float(aperiodic_params[0])
-    exponent = float(aperiodic_params[-1])  # knee mode adds a knee before it
+    exponent = float(aperiodic_params[-1])
 
     safe_freqs = np.where(freqs > 0, freqs, np.nan)
     raw_log = np.log10(np.where(psd_1d > 0, psd_1d, np.nan))

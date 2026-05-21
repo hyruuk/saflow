@@ -282,8 +282,7 @@ def process_subject_run(
     logger.info(f"Processing subject {subject}, run {run}, space {space}")
 
     # Get paths
-    data_root = Path(config["paths"]["data_root"])
-    bids_root = data_root / "bids"
+    bids_root = Path(config["paths"]["bids"])
     task_name = config["bids"]["task_name"]
 
     # Output directory and file

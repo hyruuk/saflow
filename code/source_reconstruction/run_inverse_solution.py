@@ -85,9 +85,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--processing",
         type=str,
-        choices=["clean", "ica", "ar2interp"],
+        choices=["clean", "ica"],
         default="clean",
-        help="Processing state: 'clean' (continuous ICA-cleaned), 'ica' (ICA epochs, all), or 'ar2interp' (AR2-interpolated epochs)",
+        help="Processing state: 'clean' (continuous ICA-cleaned) or 'ica' (canonical ICA epochs)",
     )
 
     parser.add_argument(
@@ -141,7 +141,7 @@ def process_single_run(
         derivatives_root: Derivatives root directory
         skip_existing: Skip if output exists
         input_type: "continuous" or "epochs"
-        processing: Processing state ("clean", "ica", or "ar2interp")
+        processing: Processing state ("clean" or "ica")
 
     Returns:
         True if processing succeeded, False otherwise
@@ -306,7 +306,6 @@ def process_single_run(
             epochs_root = derivatives_root / "epochs" / f"sub-{subject}" / "meg"
             epochs_path = BIDSPath(
                 subject=subject,
-                session="recording",
                 task="gradCPT",
                 run=run,
                 processing=processing,
@@ -427,7 +426,7 @@ def main() -> int:
     if args.bids_root:
         bids_root = args.bids_root
     else:
-        bids_root = data_root / "bids"
+        bids_root = Path(config["paths"]["bids"])
 
     derivatives_root = data_root / config["paths"]["derivatives"]
 

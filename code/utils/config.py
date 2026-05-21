@@ -91,7 +91,7 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ConfigurationError(f"Missing required section: {section}")
 
     # Validate paths section
-    required_paths = ["data_root", "raw", "derivatives", "features", "results"]
+    required_paths = ["data_root", "raw", "bids", "derivatives", "features", "results"]
     for path_key in required_paths:
         if path_key not in config["paths"]:
             raise ConfigurationError(f"Missing required path: paths.{path_key}")
@@ -117,13 +117,30 @@ def validate_config(config: Dict[str, Any]) -> None:
             "Please update config.yaml with actual values."
         )
 
-    # Validate analysis space
-    valid_spaces = ["sensor", "source"]
+    # Validate analysis space. Concrete atlas names are allowed because task
+    # entry points accept atlas short names directly as the analysis space.
+    valid_spaces = ["sensor", "source", "atlas"]
     analysis_space = config["analysis"]["space"]
-    if analysis_space not in valid_spaces:
+    valid_atlas = (
+        analysis_space in config.get("source_reconstruction", {}).get("atlases", [])
+        or analysis_space.startswith("schaefer_")
+        or analysis_space.startswith("Schaefer2018_")
+        or analysis_space in {"aparc", "aparc.a2009s", "HCPMMP1"}
+    )
+    if analysis_space not in valid_spaces and not valid_atlas:
         raise ConfigurationError(
-            f"Invalid analysis.space: {analysis_space}. Must be one of {valid_spaces}"
+            f"Invalid analysis.space: {analysis_space}. Must be sensor, source, atlas, "
+            "or a configured atlas name such as aparc.a2009s or schaefer_100."
         )
+
+    for idx, params in enumerate(config.get("features", {}).get("fooof", [])):
+        mode = params.get("aperiodic_mode", "fixed")
+        if mode != "fixed":
+            raise ConfigurationError(
+                "Unsupported features.fooof "
+                f"profile {idx} aperiodic_mode={mode!r}. "
+                "Only 'fixed' is supported."
+            )
 
     # Validate BIDS configuration
     if not config["bids"]["subjects"]:
@@ -147,11 +164,11 @@ def expand_paths(config: Dict[str, Any]) -> Dict[str, Any]:
     config["paths"]["data_root"] = str(data_root)
 
     # Expand paths relative to data_root
-    for key in ["raw", "derivatives", "features", "results"]:
+    for key in ["raw", "bids", "derivatives", "features", "results"]:
         path = Path(config["paths"][key])
         if not path.is_absolute():
             path = data_root / path
-        config["paths"][key] = str(path)
+        config["paths"][key] = str(path.expanduser().resolve())
 
     # Expand project-specific paths. Relative paths resolve against the
     # project root (not the current working directory) so that scripts

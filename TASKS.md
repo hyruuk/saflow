@@ -125,8 +125,8 @@ Run MEG preprocessing (Stage 1 of pipeline).
 5. Runs AutoReject (AR1) to identify bad epochs for ICA
 6. Fits ICA and removes ECG/EOG artifacts, applies to continuous raw
 7. Re-epochs from ICA-cleaned continuous (1:1 mapping with AR1)
-8. Runs AutoReject (AR2) with fit+transform (reject log + interpolation)
-9. Saves three outputs: continuous Raw + BAD annotations, ICA epochs, AR2-interpolated epochs
+8. Runs AutoReject (AR2) in fit-only mode to flag bad epochs
+9. Saves continuous Raw + BAD annotations and canonical ICA epochs (`*_proc-ica_epo.fif`)
 
 **Arguments:**
 | Argument | Type | Default | Description |
@@ -276,12 +276,13 @@ Extract specparam aperiodic parameters and corrected PSDs, preserving the
 existing FOOOF-compatible task name and `fooof_*` output feature names.
 
 **What it computes:**
-- Aperiodic parameters (exponent, offset, knee if enabled)
+- Aperiodic parameters (exponent, offset; fixed aperiodic mode only)
 - Goodness of fit metrics (r_squared, error)
 - Aperiodic-corrected PSDs (periodic component only)
 
 Specparam fitting parameters (`freq_range`, `aperiodic_mode`, etc.) are
-configured in `config.yaml` and match the previous FOOOF settings.
+configured in `config.yaml`. `aperiodic_mode` must be `fixed`; other modes
+are intentionally rejected during config validation.
 
 **Arguments:**
 | Argument | Type | Default | Description |
@@ -393,6 +394,7 @@ Complexity features are routed through the same `run_group_statistics` schema as
 | `--space` | string | sensor | Analysis space: `sensor`, or atlas name (e.g. `schaefer_400`, `aparc.a2009s`) |
 | `--test` | string | paired_ttest | `paired_ttest` or `independent_ttest` |
 | `--correction` | string | tmax | `none`, `fdr`, `bonferroni`, or `tmax` (FWER via permutation) |
+| `--fdr-method` | string | config | `bh` or `by` when using `--correction=fdr` |
 | `--alpha` | float | 0.05 | Significance threshold |
 | `--n-permutations` | int | 10000 | Permutations for `tmax` |
 | `--n-jobs` | int | 1 | Parallel jobs (`-1` = all cores) |

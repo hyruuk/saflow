@@ -127,6 +127,78 @@ def compute_hedges_g(
     return hedges_g
 
 
+def compute_paired_cohens_d(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray,
+    aggregate: str = "median",
+) -> np.ndarray:
+    """Compute paired Cohen's dz from per-subject IN/OUT aggregates.
+
+    Args:
+        X: Feature data, shape (n_features, n_trials, n_spatial).
+        y: Labels (0=IN, 1=OUT), shape (n_trials,).
+        groups: Subject indices, shape (n_trials,).
+        aggregate: Per-subject reducer, ``"median"`` or ``"mean"``.
+
+    Returns:
+        Paired Cohen's dz values, shape (n_features, n_spatial). Positive
+        values mean OUT > IN.
+    """
+    if aggregate not in {"median", "mean"}:
+        raise ValueError(f"Unknown aggregate: {aggregate}")
+    reducer = np.nanmedian if aggregate == "median" else np.nanmean
+
+    diffs = []
+    for subject in np.unique(groups):
+        subject_mask = groups == subject
+        in_mask = subject_mask & (y == 0)
+        out_mask = subject_mask & (y == 1)
+        if not (np.any(in_mask) and np.any(out_mask)):
+            continue
+        subject_in = reducer(X[:, in_mask, :], axis=1)
+        subject_out = reducer(X[:, out_mask, :], axis=1)
+        diffs.append(subject_out - subject_in)
+
+    if not diffs:
+        return np.full((X.shape[0], X.shape[2]), np.nan)
+
+    diffs_arr = np.asarray(diffs)
+    mean_diff = np.nanmean(diffs_arr, axis=0)
+    sd_diff = np.nanstd(diffs_arr, axis=0, ddof=1)
+    sd_diff[sd_diff == 0] = np.nan
+    return mean_diff / sd_diff
+
+
+def compute_paired_hedges_g(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray,
+    aggregate: str = "median",
+) -> np.ndarray:
+    """Compute small-sample corrected paired Cohen's dz.
+
+    Args:
+        X: Feature data, shape (n_features, n_trials, n_spatial).
+        y: Labels (0=IN, 1=OUT), shape (n_trials,).
+        groups: Subject indices, shape (n_trials,).
+        aggregate: Per-subject reducer, ``"median"`` or ``"mean"``.
+
+    Returns:
+        Paired Hedges' g values, shape (n_features, n_spatial).
+    """
+    d_z = compute_paired_cohens_d(X, y, groups, aggregate=aggregate)
+    n_subjects = sum(
+        np.any((groups == subject) & (y == 0)) and np.any((groups == subject) & (y == 1))
+        for subject in np.unique(groups)
+    )
+    df = n_subjects - 1
+    if df <= 0:
+        return np.full_like(d_z, np.nan)
+    correction = 1 - 3 / (4 * df - 1)
+    return d_z * correction
+
+
 def compute_eta_squared(
     X: np.ndarray,
     y: np.ndarray,

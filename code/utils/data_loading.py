@@ -39,7 +39,7 @@ def load_features(
     Args:
         feature_folder: Path to folder containing feature files.
         feature: Feature type to load. Options: 'psd', 'lzc', 'slope', 'offset',
-            'knee', 'r_squared'. Defaults to 'psd'.
+            'r_squared'. Defaults to 'psd'.
         splitby: How to split conditions. Currently only 'inout' is supported.
             Defaults to 'inout'.
         inout: Which INOUT classification to use. Options: 'INOUT_2575', 'INOUT_50_50',

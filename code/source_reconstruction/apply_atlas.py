@@ -104,7 +104,7 @@ def parse_args() -> argparse.Namespace:
         "--processing",
         type=str,
         default="clean",
-        choices=["clean", "ica", "ar2interp"],
+        choices=["clean", "ica"],
         help="Processing state of input data",
     )
 
@@ -419,7 +419,7 @@ def main() -> int:
     if args.bids_root:
         bids_root = args.bids_root
     else:
-        bids_root = data_root / "bids"
+        bids_root = Path(config["paths"]["bids"])
 
     derivatives_root = data_root / config["paths"]["derivatives"]
 
