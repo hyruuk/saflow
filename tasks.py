@@ -2320,6 +2320,153 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 
 
 @task
+def classify_multifeature(c, features="all", label=None,
+                          clf="logistic", cv="logo", space="sensor",
+                          axis="all", importance="permutation",
+                          n_permutations=1000, n_jobs=-1,
+                          per_feature_scale=True, no_balance=False,
+                          seed=42, trial_type="alltrials",
+                          zoning="per-run", n_events_window=8,
+                          standardize="per-subject", analysis_level="epoch",
+                          n_chunks=1, chunk_idx=0,
+                          importance_n_repeats=5,
+                          keep_bad_trials=False, output_dir=None,
+                          aggregate=True, config="config.yaml"):
+    """Run multi-feature classification (IN vs OUT) along one or all axes.
+
+    Loads all selected features as one stacked tensor (n_trials, n_spatial,
+    n_features) and runs IN-vs-OUT decoding along one or more axes:
+
+      - per-spatial : per-sensor/ROI classifier using all features as input.
+                      Output: scores(n_spatial,), importance(n_spatial, n_feat).
+      - per-feature : per-feature classifier using all spatial units as input.
+                      Output: scores(n_features,), importance(n_features, n_sp).
+      - per-cell    : one classifier per (sensor, feature) pair.
+                      Output: scores(n_spatial, n_features).
+      - joint       : one classifier on flattened (n_spatial * n_features).
+                      Output: scalar score, importance(n_spatial, n_feat).
+      - all (default): run all four axes, write one file per axis.
+
+    `--features` follows the same conventions as `analysis.classify` (single
+    name, space-separated list, or shortcut: psds, psds_corrected, fooof,
+    complexity, all).
+
+    Feature-importance backend (`--importance`):
+      - permutation (default): model-agnostic, averaged over CV test folds.
+      - coef: signed coefficients (linear models only: lda, logistic, svm).
+      - tree: feature_importances_ (rf only).
+      - none: skip importance.
+
+    Examples:
+        # All four axes, all features, sensor space, logreg + permutation importance
+        invoke analysis.classify-multifeature
+
+        # Per-feature axis only on schaefer_400, RF + tree importance
+        invoke analysis.classify-multifeature --axis=per-feature \\
+            --space=schaefer_400 --clf=rf --importance=tree
+
+        # Joint axis, all features, with bundled aggregation after
+        invoke analysis.classify-multifeature --axis=joint --features=all
+    """
+    print("=" * 80)
+    print("Multi-Feature Classification Analysis")
+    print("=" * 80)
+
+    feature_list = resolve_features(features)
+    print(f"Features ({len(feature_list)}): {' '.join(feature_list)}")
+    print(f"Axis: {axis}  clf: {clf}  importance: {importance}  space: {space}")
+
+    if n_chunks > 1 and axis not in ("per-cell",):
+        print(
+            f"NOTE: --n-chunks={n_chunks} only takes effect for --axis=per-cell."
+        )
+
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.classification.run_multifeature",
+           "--feature", *feature_list]
+    cmd.extend(["--clf", clf])
+    cmd.extend(["--cv", cv])
+    cmd.extend(["--space", space])
+    cmd.extend(["--axis", axis])
+    cmd.extend(["--importance", importance])
+    cmd.extend(["--importance-n-repeats", str(importance_n_repeats)])
+    cmd.extend(["--n-permutations", str(n_permutations)])
+    cmd.extend(["--n-jobs", str(n_jobs)])
+    cmd.extend(["--trial-type", trial_type])
+    cmd.extend(["--zoning", zoning])
+    cmd.extend(["--n-events-window", str(n_events_window)])
+    cmd.extend(["--standardize", standardize])
+    cmd.extend(["--analysis-level", analysis_level])
+    cmd.extend(["--seed", str(seed)])
+    cmd.extend(["--n-chunks", str(n_chunks)])
+    cmd.extend(["--chunk-idx", str(chunk_idx)])
+    cmd.extend(["--config", config])
+    if not per_feature_scale:
+        cmd.append("--no-per-feature-scale")
+    if no_balance:
+        cmd.append("--no-balance")
+    if keep_bad_trials:
+        cmd.append("--keep-bad-trials")
+    if label:
+        cmd.extend(["--label", label])
+    if output_dir:
+        cmd.extend(["--output-dir", output_dir])
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+    if aggregate and axis == "all":
+        actual_label = label or f"combined-{len(feature_list)}"
+        agg_cmd = [
+            python_exe, "-m", "code.classification.aggregate_multifeature",
+            "--label", actual_label,
+            "--space", space,
+            "--clf", clf,
+            "--cv", cv,
+            "--importance", importance,
+            "--trial-type", trial_type,
+            "--analysis-level", analysis_level,
+            "--config", config,
+        ]
+        if output_dir:
+            agg_cmd.extend(["--output-dir", output_dir])
+        print(f"\nAggregating bundle: {' '.join(agg_cmd)}\n")
+        c.run(" ".join(agg_cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def classify_multifeature_aggregate(c, label, space, clf="logistic", cv="logo",
+                                    importance="permutation",
+                                    trial_type="alltrials",
+                                    analysis_level="epoch",
+                                    axes=None,
+                                    output_dir=None, config="config.yaml"):
+    """Bundle per-axis multi-feature classification outputs into one file.
+
+    Examples:
+        invoke analysis.classify-multifeature-aggregate --label=combined-19 --space=sensor
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.classification.aggregate_multifeature",
+        "--label", label,
+        "--space", space,
+        "--clf", clf,
+        "--cv", cv,
+        "--importance", importance,
+        "--trial-type", trial_type,
+        "--analysis-level", analysis_level,
+        "--config", config,
+    ]
+    if axes:
+        cmd.extend(["--axes", *axes.split()])
+    if output_dir:
+        cmd.extend(["--output-dir", output_dir])
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def classify_aggregate(c, feature, space, clf="lda", cv="logo",
                        mode="univariate", combined=False,
                        delete_chunks=False, trial_type="alltrials",
@@ -2522,6 +2669,9 @@ analysis = Collection("analysis")
 analysis.add_task(stats)
 analysis.add_task(classify)
 analysis.add_task(classify_aggregate, name="classify-aggregate")
+analysis.add_task(classify_multifeature, name="classify-multifeature")
+analysis.add_task(classify_multifeature_aggregate,
+                  name="classify-multifeature-aggregate")
 
 # Visualization tasks
 viz = Collection("viz")

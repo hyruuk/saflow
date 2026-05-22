@@ -53,7 +53,7 @@ def load_welch_psd(
     space: str,
     config: Dict[str, Any],
     n_events_window: int = 1,
-) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame, Optional[list]]:
     """Load pre-computed Welch PSD from processed/ directory.
 
     Args:
@@ -95,6 +95,9 @@ def load_welch_psd(
     welch_data = np.load(welch_file, allow_pickle=True)
     psd_array = welch_data["psds"]  # (n_trials, n_spatial, n_freqs)
     freq_bins = welch_data["freqs"]
+    ch_names = (
+        list(welch_data["ch_names"]) if "ch_names" in welch_data.files else None
+    )
 
     # Load trial metadata (saved as dict)
     trial_metadata_dict = welch_data["trial_metadata"].item()
@@ -105,7 +108,7 @@ def load_welch_psd(
         f"{psd_array.shape[2]} frequency bins"
     )
 
-    return psd_array, freq_bins, events_df
+    return psd_array, freq_bins, events_df, ch_names
 
 
 def fit_fooof_single(
@@ -279,7 +282,7 @@ def process_subject_run(
     logger.info(
         f"Processing sub-{subject} run-{run} space-{space} (n_events_window={n_events_window})"
     )
-    psd_array, freq_bins, events_df = load_welch_psd(
+    psd_array, freq_bins, events_df, ch_names = load_welch_psd(
         subject, run, space, config, n_events_window=n_events_window
     )
 
@@ -325,14 +328,16 @@ def process_subject_run(
 
     # Save FOOOF parameters
     logger.info(f"Saving FOOOF parameters: {fooof_file.name}")
-    np.savez_compressed(
-        fooof_file,
+    fooof_payload = dict(
         exponent=exponents,  # (n_trials, n_spatial)
         offset=offsets,
         r_squared=r_squareds,
         trial_metadata=events_df.to_dict('list'),
         freqs=freq_bins,
     )
+    if ch_names is not None:
+        fooof_payload["ch_names"] = np.asarray(list(ch_names))
+    np.savez_compressed(fooof_file, **fooof_payload)
 
     # Save FOOOF metadata JSON
     fooof_params_file = fooof_file.with_name(fooof_file.name.replace(".npz", "_params.json"))
@@ -358,12 +363,14 @@ def process_subject_run(
 
     # Save corrected PSDs (same format as original Welch PSDs)
     logger.info(f"Saving corrected PSDs: {corrected_file.name}")
-    np.savez_compressed(
-        corrected_file,
+    corrected_payload = dict(
         psds=corrected_psds,  # (n_trials, n_spatial, n_freqs) - same as original
         freqs=freq_bins,
         trial_metadata=events_df.to_dict('list'),
     )
+    if ch_names is not None:
+        corrected_payload["ch_names"] = np.asarray(list(ch_names))
+    np.savez_compressed(corrected_file, **corrected_payload)
 
     # Save corrected PSDs metadata JSON
     corrected_params_file = corrected_file.with_name(corrected_file.name.replace(".npz", "_params.json"))

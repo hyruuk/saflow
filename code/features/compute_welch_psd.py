@@ -31,7 +31,7 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import mne
 import numpy as np
@@ -159,6 +159,7 @@ def save_welch_psds(
     config: Dict,
     n_fft: int,
     n_overlap: int,
+    ch_names: Optional[List[str]] = None,
     n_events_window: int = 1,
     average: str = "median",
 ):
@@ -218,12 +219,14 @@ def save_welch_psds(
     metadata_dict = trial_metadata.to_dict('list')
 
     # Save as compressed numpy array
-    np.savez_compressed(
-        output_file,
+    npz_payload = dict(
         psds=psds,
         freqs=freqs,
         trial_metadata=metadata_dict,
     )
+    if ch_names is not None:
+        npz_payload["ch_names"] = np.asarray(list(ch_names))
+    np.savez_compressed(output_file, **npz_payload)
 
     logger.info(f"Saved Welch PSDs to {output_file}")
 
@@ -512,6 +515,7 @@ def main() -> int:
         config=config,
         n_fft=welch_params["n_fft"],
         n_overlap=welch_params["n_overlap"],
+        ch_names=list(spatial_data.spatial_names),
         n_events_window=welch_params["n_events_window"],
         average=welch_params["average"],
     )
