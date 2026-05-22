@@ -46,7 +46,7 @@ dependencies = [
 
     # Scientific computing
     "numpy==1.26.4",
-    "scipy==1.17.1",
+    "scipy>=1.17.0,<1.18",
     "pandas==2.3.3",
 
     # Machine learning
