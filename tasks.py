@@ -2500,6 +2500,188 @@ def classify_aggregate(c, feature, space, clf="lda", cv="logo",
 
 
 # ==============================================================================
+# analysis.networks.* — Yeo-network aggregation, coherence, classification
+# ==============================================================================
+
+@task
+def networks_aggregate_stats(c, space="schaefer_400", trial_type="all",
+                             correction="fdr", yeo=7, alpha=0.05,
+                             inout_token="2575"):
+    """Aggregate per-parcel stats to Yeo networks.
+
+    Examples:
+        invoke analysis.networks.aggregate-stats --space=schaefer_400
+        invoke analysis.networks.aggregate-stats --space=schaefer_400 --yeo=17 --correction=tmax
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.statistics.aggregate_networks",
+        "--space", space,
+        "--trial-type", trial_type,
+        "--correction", correction,
+        "--yeo", str(yeo),
+        "--alpha", str(alpha),
+        "--inout-token", inout_token,
+    ]
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def networks_coherence(c, space="schaefer_400", trial_type="all",
+                       feature=None, yeo=7, aggregate="median"):
+    """Compute within/between Yeo-network coherence of IN-OUT contrasts.
+
+    Examples:
+        invoke analysis.networks.coherence --space=schaefer_400
+        invoke analysis.networks.coherence --space=schaefer_400 --feature=fooof_exponent
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.statistics.network_coherence",
+        "--space", space,
+        "--trial-type", trial_type,
+        "--yeo", str(yeo),
+        "--aggregate", aggregate,
+    ]
+    if feature:
+        cmd.extend(["--feature", feature])
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def networks_classify(c, space="schaefer_400", scope="all", trial_type="all",
+                      yeo=7, clf="logistic", cv="logo", n_permutations=1000,
+                      n_jobs=-1, families=None, per_feature_features=None,
+                      subjects=None):
+    """Yeo-network-restricted IN-vs-OUT classification (3 scopes).
+
+    Scopes: per-family | per-feature | joint | all
+
+    Examples:
+        invoke analysis.networks.classify --space=schaefer_400
+        invoke analysis.networks.classify --space=schaefer_400 --scope=joint
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.classification.run_network_classification",
+        "--space", space,
+        "--scope", scope,
+        "--trial-type", trial_type,
+        "--yeo", str(yeo),
+        "--clf", clf,
+        "--cv", cv,
+        "--n-permutations", str(n_permutations),
+        "--n-jobs", str(n_jobs),
+    ]
+    if families:
+        cmd.extend(["--families", families])
+    if per_feature_features:
+        cmd.extend(["--per-feature-features", per_feature_features])
+    if subjects:
+        cmd.extend(["--subjects", subjects])
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def networks_importance(c, space="schaefer_400", label="all", trial_type="all",
+                        yeo=7, clf="logistic", cv="logo",
+                        importance="permutation", analysis_level="epoch",
+                        input=None):
+    """Aggregate joint-axis multifeature permutation importance to networks.
+
+    Requires that run_multifeature has been executed with --axis=joint and
+    --importance=permutation for the matching (space, clf, cv, trial-type).
+
+    Examples:
+        invoke analysis.networks.importance --space=schaefer_400
+        invoke analysis.networks.importance --input=/path/to/feature-all_..._scores.npz --yeo=7
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.classification.aggregate_network_importance",
+        "--space", space,
+        "--label", label,
+        "--trial-type", trial_type,
+        "--yeo", str(yeo),
+        "--clf", clf,
+        "--cv", cv,
+        "--importance", importance,
+        "--analysis-level", analysis_level,
+    ]
+    if input:
+        cmd.extend(["--input", input])
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def networks_all(c, space="schaefer_400", trial_type="all", yeo=7,
+                 correction="fdr", clf="logistic", cv="logo",
+                 n_permutations=1000, label="all"):
+    """Run the full network-layer pipeline (stats agg + coherence + classif + importance).
+
+    Examples:
+        invoke analysis.networks.all --space=schaefer_400
+        invoke analysis.networks.all --space=schaefer_400 --yeo=17
+    """
+    print("=" * 80)
+    print("Network analysis pipeline (4 stages)")
+    print("=" * 80)
+    networks_aggregate_stats(
+        c, space=space, trial_type=trial_type, correction=correction, yeo=yeo,
+    )
+    networks_coherence(c, space=space, trial_type=trial_type, yeo=yeo)
+    networks_classify(
+        c, space=space, scope="all", trial_type=trial_type, yeo=yeo,
+        clf=clf, cv=cv, n_permutations=n_permutations,
+    )
+    networks_importance(
+        c, space=space, label=label, trial_type=trial_type, yeo=yeo,
+        clf=clf, cv=cv,
+    )
+
+
+@task
+def viz_network_panel(c, space="schaefer_400", trial_type="correct", yeo=7,
+                      correction="fdr", alpha=0.05, clf="logistic", cv="logo",
+                      mf_label="all", no_yeo_overlay=False, output=None,
+                      config="config.yaml"):
+    """Render the composite Yeo-network story panel (single PNG, 4 tiers).
+
+    Reads from results/statistics_<space>/group/networks/ and
+    results/classification_<space>/group_mf/networks/. Sections without
+    inputs degrade to "no data" placeholders (useful while pipelines run).
+
+    Examples:
+        invoke viz.networks.panel --space=schaefer_400 --trial-type=correct
+        invoke viz.networks.panel --space=schaefer_400 --trial-type=lapse --yeo=17
+        invoke viz.networks.panel --no-yeo-overlay   # faster, skip Tier-1 outlines
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.visualization.network_story_panel",
+        "--space", space,
+        "--trial-type", trial_type,
+        "--yeo", str(yeo),
+        "--correction", correction,
+        "--alpha", str(alpha),
+        "--clf", clf,
+        "--cv", cv,
+        "--mf-label", mf_label,
+        "--config", config,
+    ]
+    if no_yeo_overlay:
+        cmd.append("--no-yeo-overlay")
+    if output:
+        cmd.extend(["--output", output])
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+# ==============================================================================
 # Build Namespace Collections
 # ==============================================================================
 
@@ -2664,6 +2846,14 @@ def slurm_cancel(c, pattern=None, job_ids=None, state=None, user=None,
     print(f"\n✓ Cancelled {cancelled}/{len(targets)} job(s)")
 
 
+# analysis.networks.* subcollection
+networks = Collection("networks")
+networks.add_task(networks_aggregate_stats, name="aggregate-stats")
+networks.add_task(networks_coherence, name="coherence")
+networks.add_task(networks_classify, name="classify")
+networks.add_task(networks_importance, name="importance")
+networks.add_task(networks_all, name="all")
+
 # Analysis tasks
 analysis = Collection("analysis")
 analysis.add_task(stats)
@@ -2672,6 +2862,11 @@ analysis.add_task(classify_aggregate, name="classify-aggregate")
 analysis.add_task(classify_multifeature, name="classify-multifeature")
 analysis.add_task(classify_multifeature_aggregate,
                   name="classify-multifeature-aggregate")
+analysis.add_collection(networks)  # Nested: analysis.networks.*
+
+# viz.networks.* subcollection
+viz_networks = Collection("networks")
+viz_networks.add_task(viz_network_panel, name="panel")
 
 # Visualization tasks
 viz = Collection("viz")
@@ -2681,6 +2876,7 @@ viz.add_task(viz_auto, name="auto")
 viz.add_task(spectra)
 viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
+viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks
 slurm = Collection("slurm")

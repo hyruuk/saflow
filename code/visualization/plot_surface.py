@@ -90,6 +90,61 @@ def _ensure_schaefer_annot(atlas_name: str) -> None:
             raise
 
 
+# In-process cache: (atlas_name, n_networks) -> (lh_labels, rh_labels). The
+# overlay is reused across every brain panel in a figure; reading the annot
+# + mapping vertices is the most expensive step.
+_YEO_VERTEX_CACHE: Dict[Tuple[str, int], Tuple[np.ndarray, np.ndarray]] = {}
+
+
+def yeo_vertex_labels(
+    atlas_name: str = "schaefer_400",
+    n_networks: int = 7,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Per-vertex Yeo network indices for fsaverage (lh, rh).
+
+    Vertices not belonging to any cortical parcel (e.g. medial wall) get
+    ``-1``. Indices match ``network_order(n_networks)`` ordering.
+    """
+    from code.source_reconstruction.apply_atlas import get_mne_atlas_name
+    from code.utils.yeo_networks import (
+        UNKNOWN_NETWORK,
+        get_network_assignments,
+        network_order,
+    )
+    import mne
+
+    key = (atlas_name, n_networks)
+    if key in _YEO_VERTEX_CACHE:
+        return _YEO_VERTEX_CACHE[key]
+
+    _ensure_schaefer_annot(atlas_name)
+    subjects_dir = str(_get_subjects_dir())
+    mne_atlas = get_mne_atlas_name(atlas_name)
+
+    labels = mne.read_labels_from_annot(
+        "fsaverage", parc=mne_atlas, subjects_dir=subjects_dir, verbose=False
+    )
+    label_names = [lab.name for lab in labels]
+    assignments = get_network_assignments(label_names, n_networks=n_networks)
+    nets = network_order(n_networks)
+    name_to_idx: Dict[str, int] = {n: i for i, n in enumerate(nets)}
+
+    n_vertices = 163842
+    lh = np.full(n_vertices, -1, dtype=np.int16)
+    rh = np.full(n_vertices, -1, dtype=np.int16)
+    for lab, net in zip(labels, assignments):
+        if net == UNKNOWN_NETWORK:
+            continue
+        idx = name_to_idx[net]
+        if lab.hemi == "lh":
+            lh[lab.vertices] = idx
+        else:
+            rh[lab.vertices] = idx
+
+    _YEO_VERTEX_CACHE[key] = (lh, rh)
+    return lh, rh
+
+
 def roi_to_surface(
     roi_values: np.ndarray,
     roi_names: List[str],
@@ -156,6 +211,10 @@ def render_inflated_view(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     threshold: Optional[float] = None,
+    yeo_overlay: Optional[int] = None,
+    yeo_atlas_name: str = "schaefer_400",
+    yeo_outline_color: str = "white",
+    yeo_outline_lw: float = 0.6,
 ) -> np.ndarray:
     """Render a single inflated brain view and return as RGB array.
 
@@ -168,6 +227,14 @@ def render_inflated_view(
         cmap: Matplotlib colormap name.
         vmin, vmax: Color limits (symmetric around 0 for diverging cmaps).
         threshold: Values below this absolute threshold are not shown.
+        yeo_overlay: If 7 or 17, draw Yeo network boundaries on top of the
+            stat map. ``None`` (default) draws no overlay.
+        yeo_atlas_name: Schaefer parcellation used to derive the Yeo
+            assignments (e.g. ``schaefer_400``). The overlay is independent
+            of the stat-map data; this only controls which Schaefer
+            annotation file the network labels are read from.
+        yeo_outline_color: Outline color (matplotlib spec).
+        yeo_outline_lw: Outline line-width.
 
     Returns:
         RGB image array of shape (H, W, 3).
@@ -201,6 +268,30 @@ def render_inflated_view(
             darkness=None,
         )
 
+        if yeo_overlay is not None:
+            yeo_lh, yeo_rh = yeo_vertex_labels(
+                atlas_name=yeo_atlas_name, n_networks=yeo_overlay,
+            )
+            roi_map = yeo_lh if hemi == "left" else yeo_rh
+            # plot_surf_contours draws boundaries between distinct label
+            # values; levels=positive label indices avoids the "Unknown"
+            # sentinel (-1).
+            levels = [int(v) for v in np.unique(roi_map) if v >= 0]
+            try:
+                plotting.plot_surf_contours(
+                    surf_mesh,
+                    roi_map=roi_map,
+                    hemi=hemi,
+                    view=view,
+                    levels=levels,
+                    colors=[yeo_outline_color] * len(levels),
+                    linewidth=yeo_outline_lw,
+                    axes=ax,
+                    figure=fig,
+                )
+            except Exception as exc:
+                logger.warning(f"Yeo overlay skipped on {hemi}/{view}: {exc}")
+
     # Render to array
     fig.canvas.draw()
     buf = fig.canvas.buffer_rgba()
@@ -233,6 +324,8 @@ def plot_inflated_stat_map(
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     threshold: Optional[float] = None,
+    yeo_overlay: Optional[int] = None,
+    yeo_atlas_name: str = "schaefer_400",
 ) -> Figure:
     """Create a 2x2 panel of inflated brain views for a single stat map.
 
@@ -247,6 +340,8 @@ def plot_inflated_stat_map(
         cmap: Colormap name.
         vmin, vmax: Symmetric color limits.
         threshold: Absolute threshold below which values are hidden.
+        yeo_overlay: 7 / 17 / None — draw Yeo-N network boundaries on top.
+        yeo_atlas_name: Schaefer parcellation that backs the Yeo labels.
 
     Returns:
         Matplotlib Figure with the 2x2 brain panel.
@@ -259,6 +354,7 @@ def plot_inflated_stat_map(
         images[(hemi, view)] = render_inflated_view(
             lh_data, rh_data, hemi, view, fsaverage,
             cmap=cmap, vmin=vmin, vmax=vmax, threshold=threshold,
+            yeo_overlay=yeo_overlay, yeo_atlas_name=yeo_atlas_name,
         )
 
     # Resize all views to same height
@@ -323,6 +419,8 @@ def plot_surface_stats_panel(
     cmap: str = "RdBu_r",
     fig_title: str = "",
     cbar_label: str = "t-value",
+    yeo_overlay: Optional[int] = None,
+    yeo_atlas_name: Optional[str] = None,
 ) -> Figure:
     """Create a panel of inflated brain maps for multiple features.
 
@@ -401,12 +499,15 @@ def plot_surface_stats_panel(
         # Map to surface
         lh_data, rh_data = _stat_values_to_surface(tvals, space, roi_names)
 
-        # Render 4 views
+        # Render 4 views (with optional Yeo network outline overlay)
+        overlay_atlas = yeo_atlas_name or space
         images = {}
         for hemi, view in VIEWS:
             images[(hemi, view)] = render_inflated_view(
                 lh_data, rh_data, hemi, view, fsaverage,
                 cmap=cmap, vmin=vmin, vmax=vmax,
+                yeo_overlay=yeo_overlay,
+                yeo_atlas_name=overlay_atlas,
             )
 
         # Resize to uniform height
