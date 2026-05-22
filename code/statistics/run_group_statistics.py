@@ -1090,7 +1090,7 @@ def save_statistical_results(
     effect_sizes: Dict[str, np.ndarray],
     metadata: Dict,
     config: Dict,
-    analysis_mode: str = "subject-trial-median",
+    analysis_level: str = "average",
     trial_type: str = "alltrials",
 ) -> None:
     """Save statistical results with provenance metadata.
@@ -1115,14 +1115,12 @@ def save_statistical_results(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     inout_str = inout_bounds_to_string(inout_bounds)
-    # Bake the analysis path and the trial-type filter into the filename so
-    # Path-1 (subject-spectrum) / Path-2 (subject-trial-median / single-
-    # trials) and the alltrials / correct / lapse variants never overwrite
-    # each other for the same feature_type.
-    mode_tag = analysis_mode.replace("subject-", "subj-")
+    # Bake the analysis level and the trial-type filter into the filename so
+    # epoch / average runs and alltrials / correct / lapse variants never
+    # overwrite each other for the same feature_type.
     base_name = (
         f"feature-{feature_type}_inout-{inout_str}_test-{test_type}"
-        f"_path-{mode_tag}_type-{trial_type}"
+        f"_level-{analysis_level}_type-{trial_type}"
     )
 
     # Build dictionary of all numerical results.
@@ -1178,7 +1176,8 @@ def save_statistical_results(
         "corrections_applied": list(corrected_pvals.keys()),
         "effect_sizes_computed": list(effect_sizes.keys()),
         "method_metadata": {
-            "analysis_mode": metadata.get("analysis_mode"),
+            "analysis_level": metadata.get("analysis_level"),
+            "loader": metadata.get("loader"),
             "effect_size_mode": metadata.get("effect_size_mode"),
             "correction_method": metadata.get("correction_method"),
             "fdr_method": metadata.get("fdr_method"),
@@ -1269,38 +1268,32 @@ def main():
         help="Number of parallel jobs (-1 = all cores, 1 = no parallelization)",
     )
     parser.add_argument(
-        "--analysis-mode",
+        "--analysis-level",
         type=str,
-        default="subject-spectrum",
-        choices=["subject-spectrum", "subject-trial-median", "single-trials"],
+        default="both",
+        choices=["both", "epoch", "average"],
         help=(
-            "Analysis path:\n"
-            "  subject-spectrum (default, Path 1): pool all good trials of "
-            "each (subj, cond) across runs, mean PSD, fit FOOOF once per "
-            "condition (2 fits/subject), derive psd_<band> / "
-            "psd_corrected_<band> / fooof_<param>; paired t-test. Cleaner "
-            "FOOOF fits than per-trial. Required for psd_corrected_*.\n"
-            "  subject-trial-median: per-trial features (precomputed), "
-            "median-aggregate per subject × condition, paired t-test. Use "
-            "for complexity (always) and for cross-checking PSD-derived "
-            "stats against per-trial FOOOF.\n"
-            "  single-trials: legacy trial-level ttest_ind. Mixes within- "
-            "and between-subject variance. Not recommended."
+            "Aggregation level for the test:\n"
+            "  epoch: per-epoch features, independent t-test on every "
+            "epoch. Mixes within- and between-subject variance — kept for "
+            "trial-level reference.\n"
+            "  average: 1 IN + 1 OUT value per subject, paired t-test. "
+            "For psd_*/fooof_* via subject-spectrum (pool each (subj, cond)'s "
+            "good epochs and fit FOOOF once → 2 fits/subject; required for "
+            "psd_corrected_*). For complexity_* via per-subject "
+            "median/mean of per-epoch features.\n"
+            "  both (default): run both levels, save two result files per "
+            "feature."
         ),
-    )
-    parser.add_argument(
-        "--single-trials",
-        action="store_true",
-        default=False,
-        help="DEPRECATED alias for --analysis-mode single-trials.",
     )
     parser.add_argument(
         "--aggregate",
         type=str,
         default="median",
         choices=["median", "mean"],
-        help="Per-subject aggregation statistic for subject-trial-median "
-             "mode (ignored otherwise). 'median' (default) matches cc_saflow.",
+        help="Per-subject aggregation statistic for level=average on "
+             "complexity_* features (ignored elsewhere). 'median' (default) "
+             "matches cc_saflow.",
     )
     parser.add_argument(
         "--keep-bad-trials",
@@ -1342,8 +1335,10 @@ def main():
     args = parser.parse_args()
 
     # Honour the deprecated alias.
-    if args.single_trials and args.analysis_mode == "subject-spectrum":
-        args.analysis_mode = "single-trials"
+    levels = (
+        ["epoch", "average"] if args.analysis_level == "both"
+        else [args.analysis_level]
+    )
 
     # Load configuration
     config = load_config(Path(args.config))
@@ -1363,13 +1358,7 @@ def main():
     logger.info("=" * 80)
     logger.info(f"Feature types ({len(feature_types)}): {feature_types}")
     logger.info(f"Space: {args.space}")
-    logger.info(f"Analysis mode: {args.analysis_mode}")
-    if args.analysis_mode == "single-trials":
-        logger.info("  (trial-level ttest_ind — legacy)")
-    elif args.analysis_mode == "subject-trial-median":
-        logger.info(f"  per-subject {args.aggregate} of per-trial features → paired {args.test}")
-    elif args.analysis_mode == "subject-spectrum":
-        logger.info("  pooled (subj, cond) mean PSD → FOOOF on aggregate (2 fits/subj) → paired t-test")
+    logger.info(f"Analysis level: {args.analysis_level} ({'+'.join(levels)})")
     logger.info(f"IN/OUT bounds: {inout_bounds}")
     logger.info(f"Trial-type filter: {args.trial_type}")
     logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
@@ -1377,124 +1366,161 @@ def main():
     logger.info(f"Alpha: {args.alpha}")
     logger.info("=" * 80)
 
-    if args.analysis_mode == "subject-spectrum":
-        # Path 1: only PSD-derived families are meaningful here. Reject
-        # complexity_* up front so the user is not silently shifted off-mode.
-        unsupported = [
-            ft for ft in feature_types
-            if not (ft.startswith("psd_") or ft.startswith("fooof_"))
-        ]
-        if unsupported:
-            raise SystemExit(
-                f"--analysis-mode subject-spectrum only supports psd_*, "
-                f"psd_corrected_* and fooof_*. Got non-PSD: {unsupported}. "
-                f"Re-run those with --analysis-mode subject-trial-median."
+    def _loader_for_stats(level: str, ft: str) -> str:
+        """Pick the loader for one (level, feature).
+
+        epoch  → trial loader, ttest_ind on per-epoch features.
+        average:
+          psd_/fooof_ → subject-spectrum (pool → FOOOF once → 2 rows/subj).
+          complexity_ → trial loader, paired t-test on per-subject median/mean.
+        """
+        if level == "epoch":
+            return "trial"
+        return "subject-spectrum" if (
+            ft.startswith("psd_") or ft.startswith("fooof_")
+        ) else "subject-mean"
+
+    # Lazy per-(level, loader) cache so we load each block at most once.
+    block_cache: Dict[Tuple[str, str], Dict] = {}
+
+    def _load_blocks(loader: str, ft_subset: List[str]) -> Dict:
+        if not ft_subset:
+            return {}
+        key = (loader, tuple(ft_subset))
+        if key in block_cache:
+            return block_cache[key]
+        if loader == "subject-spectrum":
+            from code.statistics.subject_spectrum import (
+                load_subject_spectrum_features,
             )
-        from code.statistics.subject_spectrum import load_subject_spectrum_features
-        logger.info("Loading features (subject-spectrum)...")
-        feature_blocks = load_subject_spectrum_features(
-            feature_types=feature_types,
-            space=args.space,
-            inout_bounds=inout_bounds,
-            config=config,
-            drop_bad_trials=not args.keep_bad_trials,
-            n_jobs=args.n_jobs,
-            trial_type=args.trial_type,
-            zoning=args.zoning,
-            n_events_window=args.n_events_window,
-        )
-    else:
-        logger.info("Loading features (batched)...")
-        feature_blocks = load_all_features_batched(
-            feature_types=feature_types,
-            space=args.space,
-            inout_bounds=inout_bounds,
-            config=config,
-            drop_bad_trials=not args.keep_bad_trials,
-            trial_type=args.trial_type,
-            zoning=args.zoning,
-            n_events_window=args.n_events_window,
-        )
+            logger.info(
+                f"Loading features (subject-spectrum): {ft_subset}..."
+            )
+            blocks = load_subject_spectrum_features(
+                feature_types=ft_subset,
+                space=args.space,
+                inout_bounds=inout_bounds,
+                config=config,
+                drop_bad_trials=not args.keep_bad_trials,
+                n_jobs=args.n_jobs,
+                trial_type=args.trial_type,
+                zoning=args.zoning,
+                n_events_window=args.n_events_window,
+            )
+        else:
+            logger.info(f"Loading features (trial, batched): {ft_subset}...")
+            blocks = load_all_features_batched(
+                feature_types=ft_subset,
+                space=args.space,
+                inout_bounds=inout_bounds,
+                config=config,
+                drop_bad_trials=not args.keep_bad_trials,
+                trial_type=args.trial_type,
+                zoning=args.zoning,
+                n_events_window=args.n_events_window,
+            )
+        block_cache[key] = blocks
+        return blocks
 
-    for feat_idx, ft in enumerate(feature_types, start=1):
-        X, y, groups, metadata = feature_blocks[ft]
+    for level in levels:
         logger.info("")
-        logger.info(f"[{feat_idx}/{len(feature_types)}] Testing: {ft}")
-        logger.info("-" * 78)
+        logger.info("=" * 80)
+        logger.info(f"Analysis level: {level}")
+        logger.info("=" * 80)
+        # Group features by loader so subject-spectrum / trial loaders run
+        # once per level rather than per feature.
+        feats_by_loader: Dict[str, List[str]] = {}
+        for ft in feature_types:
+            feats_by_loader.setdefault(_loader_for_stats(level, ft), []).append(ft)
+        for loader, fts in feats_by_loader.items():
+            blocks = _load_blocks(loader, fts)
+            for feat_idx, ft in enumerate(fts, start=1):
+                X, y, groups, metadata = blocks[ft]
+                logger.info("")
+                logger.info(
+                    f"[{feat_idx}/{len(fts)}] Testing {ft} "
+                    f"(level={level}, loader={loader})"
+                )
+                logger.info("-" * 78)
 
-        # In subject-spectrum mode, X already carries one row per
-        # (subject, condition); aggregate is a no-op (each "trial" is
-        # already a subject-level value).
-        is_subject_spectrum = args.analysis_mode == "subject-spectrum"
-        eff_aggregate = "mean" if is_subject_spectrum else args.aggregate
-        eff_single_trials = args.analysis_mode == "single-trials"
+                is_subject_spectrum = loader == "subject-spectrum"
+                eff_single_trials = level == "epoch"
+                # subject-spectrum: each row IS already a subject-level value;
+                # mean is a no-op. subject-mean: per-subject median/mean of
+                # per-epoch features. epoch: no aggregation.
+                eff_aggregate = (
+                    "mean" if is_subject_spectrum
+                    else (None if eff_single_trials else args.aggregate)
+                )
 
-        contrast, tvals, pvals = run_statistical_test(
-            X=X,
-            y=y,
-            groups=groups,
-            test_type=args.test,
-            n_permutations=args.n_permutations,
-            single_trials=eff_single_trials,
-            aggregate=eff_aggregate,
-        )
+                contrast, tvals, pvals = run_statistical_test(
+                    X=X,
+                    y=y,
+                    groups=groups,
+                    test_type=args.test,
+                    n_permutations=args.n_permutations,
+                    single_trials=eff_single_trials,
+                    aggregate=eff_aggregate or "median",
+                )
 
-        corrected_pvals, sig_mask = apply_corrections(
-            pvals=pvals,
-            tvals=tvals,
-            correction=args.correction,
-            alpha=args.alpha,
-            X=X,
-            y=y,
-            groups=groups,
-            n_permutations=args.n_permutations,
-            n_jobs=args.n_jobs,
-            aggregate=eff_aggregate,
-            fdr_method=fdr_method,
-        )
-        corrected_pvals_dict = {args.correction: corrected_pvals}
+                corrected_pvals, sig_mask = apply_corrections(
+                    pvals=pvals,
+                    tvals=tvals,
+                    correction=args.correction,
+                    alpha=args.alpha,
+                    X=X,
+                    y=y,
+                    groups=groups,
+                    n_permutations=args.n_permutations,
+                    n_jobs=args.n_jobs,
+                    aggregate=eff_aggregate or "median",
+                    fdr_method=fdr_method,
+                )
+                corrected_pvals_dict = {args.correction: corrected_pvals}
 
-        effect_sizes = compute_all_effect_sizes(
-            X=X,
-            y=y,
-            groups=groups,
-            mode="single-trials" if eff_single_trials else "paired",
-            aggregate=eff_aggregate,
-        )
+                effect_sizes = compute_all_effect_sizes(
+                    X=X,
+                    y=y,
+                    groups=groups,
+                    mode="single-trials" if eff_single_trials else "paired",
+                    aggregate=eff_aggregate or "median",
+                )
 
-        # Surface the test configuration in the sidecar so each results
-        # file is self-describing (mode, aggregator, bad-filter status).
-        metadata = dict(metadata)
-        metadata["analysis_mode"] = args.analysis_mode
-        metadata["aggregate"] = eff_aggregate if not eff_single_trials else None
-        metadata["test"] = (
-            "ttest_ind" if eff_single_trials else args.test
-        )
-        metadata["drop_bad_trials"] = bool(not args.keep_bad_trials)
-        metadata["trial_type"] = args.trial_type
-        metadata["effect_size_mode"] = "trial_pooled" if eff_single_trials else "paired"
-        metadata["correction_method"] = args.correction
-        metadata["fdr_method"] = fdr_method
-        metadata["n_permutations"] = int(args.n_permutations)
-        metadata["windowing_profile"] = (
-            "default" if args.n_events_window <= 1 else f"window{args.n_events_window}"
-        )
+                # Surface the test configuration in the sidecar so each
+                # results file is self-describing.
+                test_meta = dict(metadata)
+                test_meta["analysis_level"] = level
+                test_meta["loader"] = loader
+                test_meta["aggregate"] = eff_aggregate
+                test_meta["test"] = "ttest_ind" if eff_single_trials else args.test
+                test_meta["drop_bad_trials"] = bool(not args.keep_bad_trials)
+                test_meta["trial_type"] = args.trial_type
+                test_meta["effect_size_mode"] = (
+                    "trial_pooled" if eff_single_trials else "paired"
+                )
+                test_meta["correction_method"] = args.correction
+                test_meta["fdr_method"] = fdr_method
+                test_meta["n_permutations"] = int(args.n_permutations)
+                test_meta["windowing_profile"] = (
+                    "default" if args.n_events_window <= 1
+                    else f"window{args.n_events_window}"
+                )
 
-        save_statistical_results(
-            output_dir=output_dir,
-            feature_type=ft,
-            inout_bounds=inout_bounds,
-            test_type=args.test,
-            contrast=contrast,
-            tvals=tvals,
-            pvals=pvals,
-            corrected_pvals=corrected_pvals_dict,
-            effect_sizes=effect_sizes,
-            metadata=metadata,
-            config=config,
-            analysis_mode=args.analysis_mode,
-            trial_type=args.trial_type,
-        )
+                save_statistical_results(
+                    output_dir=output_dir,
+                    feature_type=ft,
+                    inout_bounds=inout_bounds,
+                    test_type=args.test,
+                    contrast=contrast,
+                    tvals=tvals,
+                    pvals=pvals,
+                    corrected_pvals=corrected_pvals_dict,
+                    effect_sizes=effect_sizes,
+                    metadata=test_meta,
+                    config=config,
+                    analysis_level=level,
+                    trial_type=args.trial_type,
+                )
 
     # Visualization
     if args.visualize:

@@ -91,21 +91,32 @@ def _describe_averaging(metadata: Dict) -> Tuple[str, str]:
     """Return (filename_tag, human_label) for whether trials were averaged.
 
     Read from the result file's own metadata so the figure describes the
-    data it actually shows. Statistics files carry ``analysis_mode``;
-    classification files carry ``average_trials``.
+    data it actually shows. Current files carry ``analysis_level``; older
+    classification files carry ``granularity`` or ``average_trials``;
+    older statistics files carry ``analysis_mode``.
     """
     dm = metadata.get("data_metadata", metadata) or {}
+    level = dm.get("analysis_level")
+    if level == "epoch":
+        return "level-epoch", "per-epoch"
+    if level == "average":
+        return "level-average", "subject-averaged"
+    granularity = dm.get("granularity")
+    if granularity == "trial":
+        return "level-epoch", "per-epoch"
+    if granularity in ("subject-spectrum", "subject-mean"):
+        return "level-average", "subject-averaged"
     mode = dm.get("analysis_mode")
     if mode == "single-trials":
-        return "trials-single", "single-trial"
+        return "level-epoch", "per-epoch"
     if mode in ("subject-spectrum", "subject-trial-median"):
-        return "trials-avg", "subject-averaged"
+        return "level-average", "subject-averaged"
     avg = dm.get("average_trials")
     if avg is True:
-        return "trials-avg", "trial-averaged"
+        return "level-average", "subject-averaged"
     if avg is False:
-        return "trials-single", "single-trial"
-    return "trials-na", "averaging-unknown"
+        return "level-epoch", "per-epoch"
+    return "level-unknown", "level-unknown"
 
 
 def _figure_filename(

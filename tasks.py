@@ -825,15 +825,16 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 @task
 def stats(c, features="all", space="sensor", test="paired_ttest",
           correction="fdr", alpha=0.05, n_permutations=10000,
-          n_jobs=1, average_trials=True, aggregate="median", visualize=False,
+          n_jobs=1, analysis_level="both", aggregate="median", visualize=False,
           continue_on_error=True,
           trial_type="all", zoning="per-run", n_events_window=8,
           slurm_time=None, slurm_mem=None, slurm_cpus=None,
           slurm=False, dry_run=False):
     """Run group-level statistical analysis (IN vs OUT) on one or more features.
 
-    With no arguments, runs every feature through every trial-type variant
-    (`--features=all --trial-type=all`).
+    With no arguments, runs every feature through every trial-type variant at
+    every analysis level (`--features=all --trial-type=all
+    --analysis-level=both`).
 
     `--features` accepts (default: 'all'):
       - A single feature name: --features=fooof_exponent
@@ -845,19 +846,15 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
       - The shortcut 'all' → alltrials + correct (baseline) + lapse, each run
         separately into its own `_type-<...>` result files.
 
-    Each feature is tested independently (single-feature framework). PSD bands
-    are read from config.yaml; "all" expands to FOOOF + PSD + PSD-corrected +
-    complexity. Complexity features automatically use the dedicated complexity
-    stats script; everything else uses run_group_statistics.
-
-    Defaults match the analysis-workflow path (subject-level paired t-test +
-    tmax permutation correction). Pass --no-average-trials for the trial-level
-    independent t-test path.
+    `--analysis-level` accepts (default: 'both'):
+      - epoch:   per-epoch independent t-test (level-epoch file).
+      - average: 1 IN + 1 OUT per subject, paired t-test (level-average file).
+                  psd_/fooof_ → subject-spectrum (pool → FOOOF once);
+                  complexity_ → per-subject median/mean of per-epoch features.
+      - both:    run both, save one results file per level.
 
     --aggregate ('median' default | 'mean') controls the per-subject reducer
-    for the subject-trial-median path (complexity features). It is ignored in
-    subject-spectrum (PSD/FOOOF) and single-trials modes — those force their
-    own reducer.
+    used by level=average on complexity_* features. Ignored elsewhere.
 
     Examples:
         invoke analysis.stats --features=fooof_exponent
@@ -865,15 +862,14 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
         invoke analysis.stats --features=all --n-jobs=4
         invoke analysis.stats --features=complexity --correction=fdr
         invoke analysis.stats --features=complexity --aggregate=mean
-        invoke analysis.stats --features="psd_alpha psd_theta" --no-average-trials
+        invoke analysis.stats --features="psd_alpha psd_theta" --analysis-level=epoch
         invoke analysis.stats --features=psds --slurm
     """
     feature_list = resolve_features(features)
     trial_types = resolve_trial_types(trial_type)
-    test_label = "paired t-test (subject-level)" if average_trials else "independent t-test (trial-level)"
     print("=" * 80)
     print(f"analysis.stats | space={space}  correction={correction}  α={alpha}")
-    print(f"               | n_perm={n_permutations}  test={test_label}")
+    print(f"               | n_perm={n_permutations}  analysis-level={analysis_level}")
     print(f"               | features ({len(feature_list)}): {' '.join(feature_list)}")
     print(f"               | trial-types ({len(trial_types)}): {' '.join(trial_types)}")
     print("=" * 80)
@@ -890,7 +886,7 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
                 alpha=alpha,
                 n_permutations=n_permutations,
                 n_jobs=n_jobs,
-                average_trials=average_trials,
+                analysis_level=analysis_level,
                 aggregate=aggregate,
                 visualize=visualize,
                 trial_type=tt,
@@ -904,57 +900,29 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
         return
 
     python_exe = get_python_executable()
-
-    # Split into complexity features (use dedicated script) and the rest.
-    complexity_feats = [f for f in feature_list
-                        if f == "complexity" or f.startswith("complexity_")]
-    other_feats = [f for f in feature_list if f not in complexity_feats]
-
     failures = []
-
-    other_mode = "subject-spectrum" if average_trials else "single-trials"
-    complexity_mode = "subject-trial-median" if average_trials else "single-trials"
 
     for tt in trial_types:
         print(f"\n{'#' * 80}\n# trial-type: {tt}\n{'#' * 80}")
-
-        if other_feats:
-            cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-                   "--feature-type", *other_feats,
-                   "--space", space, "--test", test,
-                   "--correction", correction, "--alpha", str(alpha),
-                   "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-                   "--analysis-mode", other_mode,
-                   "--aggregate", aggregate,
-                   "--trial-type", tt,
-                   "--zoning", zoning,
-                   "--n-events-window", str(n_events_window)]
-            if visualize:
-                cmd.append("--visualize")
-            print(f"\n>>> run_group_statistics on {len(other_feats)} feature(s) (mode={other_mode})")
-            print(f"Running: {' '.join(cmd)}\n")
-            result = c.run(" ".join(cmd), pty=True,
-                           env=get_env_with_pythonpath(), warn=continue_on_error)
-            if result is not None and getattr(result, "exited", 0) != 0:
-                failures.append((f"run_group_statistics[{tt}]", f"exit {result.exited}"))
-
-        if complexity_feats:
-            cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-                   "--feature-type", *complexity_feats,
-                   "--space", space, "--test", test,
-                   "--correction", correction, "--alpha", str(alpha),
-                   "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-                   "--analysis-mode", complexity_mode,
-                   "--aggregate", aggregate,
-                   "--trial-type", tt,
-                   "--zoning", zoning,
-                   "--n-events-window", str(n_events_window)]
-            print(f"\n>>> complexity stats on {len(complexity_feats)} metric(s) (mode={complexity_mode})")
-            print(f"Running: {' '.join(cmd)}\n")
-            result = c.run(" ".join(cmd), pty=True,
-                           env=get_env_with_pythonpath(), warn=continue_on_error)
-            if result is not None and getattr(result, "exited", 0) != 0:
-                failures.append((f"complexity_stats[{tt}]", f"exit {result.exited}"))
+        cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+               "--feature-type", *feature_list,
+               "--space", space, "--test", test,
+               "--correction", correction, "--alpha", str(alpha),
+               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
+               "--analysis-level", analysis_level,
+               "--aggregate", aggregate,
+               "--trial-type", tt,
+               "--zoning", zoning,
+               "--n-events-window", str(n_events_window)]
+        if visualize:
+            cmd.append("--visualize")
+        print(f"\n>>> run_group_statistics on {len(feature_list)} feature(s) "
+              f"(level={analysis_level})")
+        print(f"Running: {' '.join(cmd)}\n")
+        result = c.run(" ".join(cmd), pty=True,
+                       env=get_env_with_pythonpath(), warn=continue_on_error)
+        if result is not None and getattr(result, "exited", 0) != 0:
+            failures.append((f"run_group_statistics[{tt}]", f"exit {result.exited}"))
 
     print("\n" + "=" * 80)
     if failures:
@@ -973,7 +941,7 @@ def classify(c, features="all", clf="logistic", cv="auto",
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
              trial_type="all", zoning="per-run", n_events_window=8,
-             average_trials=True, standardize="auto",
+             analysis_level="both", standardize="auto",
              slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT) on one or more features.
@@ -995,12 +963,15 @@ def classify(c, features="all", clf="logistic", cv="auto",
       - univariate (default): per-channel/ROI classifier + shared-permutation t-max
       - multivariate: pool spatial dim, single permutation_test_score
 
-    Trial averaging & CV:
-      - Default: each subject's trials are averaged to one IN + one OUT vector,
-        and --cv=auto resolves to GroupKFold(k=6) over subjects.
-      - --no-average-trials: classify single trials; --cv=auto resolves to
-        leave-one-subject-out instead.
-      - --cv (logo|stratified|group) forces a specific splitter regardless.
+    Analysis level & CV:
+      - --analysis-level=epoch: per-epoch classification (LOSO CV).
+      - --analysis-level=average: 1 IN + 1 OUT row per subject — subject-
+        spectrum (pool → FOOOF) for psd_/fooof_, mean of per-epoch features
+        for complexity_. GroupKFold(k=6).
+      - --analysis-level=both (default): run both levels, save one scores
+        file per level.
+      - --cv=auto resolves from the level (logo for epoch, group for
+        average). --cv (logo|stratified|group) forces a specific splitter.
 
     Feature handling:
       - Default loop: each feature is classified independently (single-feature framework).
@@ -1028,8 +999,8 @@ def classify(c, features="all", clf="logistic", cv="auto",
         # Submit each feature as a separate SLURM job
         invoke analysis.classify --features=psds --slurm
 
-        # Single-trial classification with leave-one-subject-out CV
-        invoke analysis.classify --features=fooof_exponent --no-average-trials
+        # Per-epoch classification only (LOSO CV)
+        invoke analysis.classify --features=fooof_exponent --analysis-level=epoch
     """
     print("=" * 80)
     print("Classification Analysis")
@@ -1064,7 +1035,7 @@ def classify(c, features="all", clf="logistic", cv="auto",
                 trial_type=tt,
                 zoning=zoning,
                 n_events_window=n_events_window,
-                average_trials=average_trials,
+                analysis_level=analysis_level,
                 standardize=standardize,
                 slurm_time=slurm_time,
                 slurm_mem=slurm_mem,
@@ -1095,10 +1066,9 @@ def classify(c, features="all", clf="logistic", cv="auto",
         cmd.extend(["--trial-type", tt])
         cmd.extend(["--zoning", zoning])
         cmd.extend(["--n-events-window", str(n_events_window)])
+        cmd.extend(["--analysis-level", analysis_level])
         cmd.extend(["--standardize", standardize])
         cmd.extend(["--seed", str(seed)])
-        if not average_trials:
-            cmd.append("--no-average-trials")
         if no_balance:
             cmd.append("--no-balance")
         if continue_on_error:
@@ -1979,13 +1949,14 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
 
 def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
                  correction="fdr", alpha=0.05, n_permutations=10000,
-                 n_jobs=1, average_trials=True, aggregate="median",
+                 n_jobs=1, analysis_level="both", aggregate="median",
                  visualize=False,
                  trial_type="alltrials", zoning="per-run",
                  n_events_window=8,
                  slurm_time=None, slurm_mem=None, slurm_cpus=None,
                  dry_run=False):
-    """Submit one statistics job per feature to SLURM."""
+    """Submit one statistics job per feature to SLURM (each runs all
+    requested levels in-process)."""
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
@@ -2020,9 +1991,13 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
     log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "statistics"
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    levels = ["epoch", "average"] if analysis_level == "both" else [analysis_level]
+
     print(f"Space: {space}  Test: {test}  Correction: {correction}")
-    print(f"n_permutations: {n_permutations}  alpha: {alpha}  average_trials: {average_trials}")
-    print(f"Jobs: {len(features)} (one per feature)")
+    print(f"n_permutations: {n_permutations}  alpha: {alpha}  "
+          f"analysis_level: {analysis_level} ({'+'.join(levels)})")
+    print(f"Jobs: {len(features)} feature(s) × {len(levels)} level(s) "
+          f"= {len(features) * len(levels)} (one job array per level)")
 
     cpus_resolved = slurm_cpus if slurm_cpus is not None else stats_resources["cpus"]
     mem_resolved = slurm_mem if slurm_mem is not None else stats_resources["mem"]
@@ -2040,60 +2015,66 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
         project_root=str(PROJECT_ROOT),
     )
 
-    def _mode_for(feat: str) -> str:
-        is_complexity = feat == "complexity" or feat.startswith("complexity_")
-        if not average_trials:
-            return "single-trials"
-        return "subject-trial-median" if is_complexity else "subject-spectrum"
-
     max_concurrent = slurm_config.get("array_throttle", 0)
-    task_scripts = []
-    for feat in features:
-        job_name = f"stats_{feat}_{space}_{test}_{trial_type}"
-        context = {
-            **base_resources,
-            "job_name": job_name,
-            "feature_label": feat,
-            "space": space,
-            "test": test,
-            "correction": correction,
-            "alpha": alpha,
-            "n_permutations": n_permutations,
-            "n_jobs": n_jobs,
-            "analysis_mode": _mode_for(feat),
-            "aggregate": aggregate,
-            "visualize": visualize,
-            "trial_type": trial_type,
-            "zoning": zoning,
-            "n_events_window": n_events_window,
-            "timestamp": timestamp,
-        }
-        script_path = script_dir / f"{job_name}_{timestamp}.sh"
-        render_slurm_script("statistics.sh.j2", context, output_path=script_path)
-        task_scripts.append(script_path)
+    all_ids: List[str] = []
+    all_scripts: List[Path] = []
+    for level in levels:
+        level_scripts = []
+        for feat in features:
+            job_name = f"stats_{feat}_{space}_{test}_{trial_type}_level-{level}"
+            context = {
+                **base_resources,
+                "job_name": job_name,
+                "feature_label": feat,
+                "space": space,
+                "test": test,
+                "correction": correction,
+                "alpha": alpha,
+                "n_permutations": n_permutations,
+                "n_jobs": n_jobs,
+                "analysis_level": level,
+                "aggregate": aggregate,
+                "visualize": visualize,
+                "trial_type": trial_type,
+                "zoning": zoning,
+                "n_events_window": n_events_window,
+                "timestamp": timestamp,
+            }
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script("statistics.sh.j2", context, output_path=script_path)
+            level_scripts.append(script_path)
 
-    array_job_id = submit_job_array(
-        task_scripts, f"stats_array_{trial_type}", base_resources, script_dir,
-        timestamp, max_concurrent=max_concurrent, dry_run=dry_run,
-    )
+        array_job_id = submit_job_array(
+            level_scripts,
+            f"stats_array_{trial_type}_level-{level}", base_resources,
+            script_dir, timestamp, max_concurrent=max_concurrent,
+            dry_run=dry_run,
+        )
+        if array_job_id:
+            all_ids.append(array_job_id)
+        all_scripts.extend(level_scripts)
 
-    if array_job_id:
+    if all_ids:
         manifest_path = log_dir / f"statistics_manifest_{trial_type}_{timestamp}.json"
-        save_job_manifest([array_job_id], manifest_path, metadata={
+        save_job_manifest(all_ids, manifest_path, metadata={
             "stage": "statistics",
             "space": space,
             "test": test,
             "correction": correction,
             "alpha": alpha,
             "n_permutations": n_permutations,
+            "analysis_levels": levels,
             "features": features,
             "trial_type": trial_type,
             "timestamp": timestamp,
         })
-        print(f"\n✓ Submitted statistics array ({len(task_scripts)} tasks); "
-              f"manifest: {manifest_path}")
+        print(f"\n✓ Submitted {len(all_ids)} statistics array(s) "
+              f"({len(all_scripts)} tasks total); manifest: {manifest_path}")
     elif dry_run:
-        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
+        print(
+            f"\n[DRY RUN] Would submit {len(levels)} statistics array(s) "
+            f"({len(all_scripts)} task(s))"
+        )
 
 
 def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
@@ -2102,14 +2083,15 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                     combine_features=False, importances=False, label=None,
                     n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
                     trial_type="alltrials", zoning="per-run",
-                    n_events_window=8, average_trials=True,
+                    n_events_window=8, analysis_level="both",
                     standardize="auto",
                     slurm_time=None, slurm_mem=None, slurm_cpus=None,
                     dry_run=False):
     """Submit classification jobs to SLURM.
 
     Job fan-out:
-      - One classification per feature (or one per combined-feature run).
+      - One job per (feature, level). When --analysis-level=both, each
+        feature yields two jobs (one per level).
       - When n_chunks > 1 (univariate only), each classification is split into
         n_chunks parallel jobs over the spatial dimension. All chunks share the
         same seed so the permutation y-shuffle sequence is identical, and an
@@ -2120,14 +2102,14 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
     from code.utils.slurm import (
         render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
     )
+    from code.classification.run_classification import _cv_for_level
 
     print(f"\n[SLURM Mode] Submitting classification jobs to cluster\n")
 
-    # run_classification resolves --cv=auto from trial averaging; mirror that
-    # here so the chunk-aggregation job builds the matching output filename.
-    cv_resolved = cv
-    if cv == "auto":
-        cv_resolved = "group" if average_trials else "logo"
+    levels = ["epoch", "average"] if analysis_level == "both" else [analysis_level]
+
+    def _cv_for_lvl(level: str) -> str:
+        return cv if cv != "auto" else _cv_for_level(level)
 
     config = load_config()
     slurm_config = config["computing"]["slurm"]
@@ -2170,10 +2152,11 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
     else:
         classifications = [(feat, f"--feature {feat}", [feat]) for feat in features]
 
-    print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv_resolved}")
+    print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv}")
     print(f"n_permutations: {n_permutations}  combine_features: {combine_features}  "
-          f"average_trials: {average_trials}")
-    print(f"Classifications: {len(classifications)}  chunks per classification: {n_chunks}")
+          f"analysis_level: {analysis_level} ({'+'.join(levels)})")
+    print(f"Classifications: {len(classifications)} × {len(levels)} level(s)  "
+          f"chunks per classification: {n_chunks}")
 
     # Resolve resources: per-invocation overrides win over config defaults
     cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources["cpus"]
@@ -2194,83 +2177,112 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 
     max_concurrent = slurm_config.get("array_throttle", 0)
 
-    # Render every (feature × chunk) classification task script; one job
-    # array dispatches them all.
-    classify_scripts = []
-    agg_feature_labels = []  # features needing a chunk-aggregation job
-    for feat_label, feature_args, feat_list in classifications:
-        for chunk_idx in range(n_chunks):
-            chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
-            job_name = f"classify_{feat_label}_{space}_{mode}_{clf}_{trial_type}{chunk_suffix}"
-            context = {
-                **base_resources,
-                "job_name": job_name,
-                "feature_label": feat_label,
-                "feature_args": feature_args,
-                "space": space,
-                "mode": mode,
-                "clf": clf,
-                "cv": cv,
-                "average_trials": average_trials,
-                "n_permutations": n_permutations,
-                "n_jobs": n_jobs,
-                "no_balance": no_balance,
-                "combine_features": combine_features,
-                "importances": importances,
-                "continue_on_error": continue_on_error,
-                "label": label,
-                "n_chunks": n_chunks,
-                "chunk_idx": chunk_idx,
-                "seed": seed,
-                "trial_type": trial_type,
-                "zoning": zoning,
-                "n_events_window": n_events_window,
-                "standardize": standardize,
-                "timestamp": timestamp,
-            }
-            script_path = script_dir / f"{job_name}_{timestamp}.sh"
-            render_slurm_script("classification.sh.j2", context, output_path=script_path)
-            classify_scripts.append(script_path)
-        if n_chunks > 1 and aggregate:
-            agg_feature_labels.append(feat_label)
+    # One job array per analysis level (so the user can monitor / re-submit
+    # epoch and average independently). Each array contains (feature × chunk)
+    # tasks for that level, plus an optional aggregation array when chunked.
+    all_classify_ids: List[str] = []
+    all_agg_ids: List[str] = []
+    all_classify_scripts: List[Path] = []
+    all_agg_jobs: List[Tuple[str, str]] = []
 
-    classify_array_id = submit_job_array(
-        classify_scripts, f"classify_array_{trial_type}", base_resources,
-        script_dir, timestamp, max_concurrent=max_concurrent, dry_run=dry_run,
-    )
+    for level in levels:
+        level_scripts = []
+        level_agg_jobs: List[Tuple[str, str]] = []
+        for feat_label, feature_args, feat_list in classifications:
+            for chunk_idx in range(n_chunks):
+                chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
+                job_name = (
+                    f"classify_{feat_label}_{space}_{mode}_{clf}_"
+                    f"{trial_type}_level-{level}{chunk_suffix}"
+                )
+                context = {
+                    **base_resources,
+                    "job_name": job_name,
+                    "feature_label": feat_label,
+                    "feature_args": feature_args,
+                    "space": space,
+                    "mode": mode,
+                    "clf": clf,
+                    "cv": cv,
+                    "analysis_level": level,
+                    "n_permutations": n_permutations,
+                    "n_jobs": n_jobs,
+                    "no_balance": no_balance,
+                    "combine_features": combine_features,
+                    "importances": importances,
+                    "continue_on_error": continue_on_error,
+                    "label": label,
+                    "n_chunks": n_chunks,
+                    "chunk_idx": chunk_idx,
+                    "seed": seed,
+                    "trial_type": trial_type,
+                    "zoning": zoning,
+                    "n_events_window": n_events_window,
+                    "standardize": standardize,
+                    "timestamp": timestamp,
+                }
+                script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                render_slurm_script("classification.sh.j2", context, output_path=script_path)
+                level_scripts.append(script_path)
+            if n_chunks > 1 and aggregate:
+                level_agg_jobs.append((feat_label, level))
 
-    # Chunk aggregation (only when n_chunks > 1): one task per feature, run as
-    # a second array that waits afterok on the whole classification array.
-    agg_array_id = None
-    if agg_feature_labels:
-        agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
-        agg_scripts = []
-        for feat_label in agg_feature_labels:
-            agg_job_name = f"aggregate_{feat_label}_{space}_{mode}_{clf}_{trial_type}"
-            agg_context = {
-                **agg_resources,
-                "job_name": agg_job_name,
-                "timestamp": timestamp,
-                "feature_label": feat_label,
-                "space": space,
-                "mode": mode,
-                "clf": clf,
-                "cv": cv_resolved,
-                "combined": combine_features,
-                "delete_chunks": delete_chunks,
-                "trial_type": trial_type,
-            }
-            agg_script = script_dir / f"{agg_job_name}_{timestamp}.sh"
-            render_slurm_script("classification_aggregate.sh.j2", agg_context, output_path=agg_script)
-            agg_scripts.append(agg_script)
-        agg_array_id = submit_job_array(
-            agg_scripts, f"aggregate_array_{trial_type}", agg_resources,
+        classify_array_id = submit_job_array(
+            level_scripts,
+            f"classify_array_{trial_type}_level-{level}", base_resources,
             script_dir, timestamp, max_concurrent=max_concurrent,
-            dependencies=[classify_array_id] if classify_array_id else None,
-            dep_type="afterok", dry_run=dry_run,
+            dry_run=dry_run,
         )
 
-    all_job_ids = [j for j in (classify_array_id, agg_array_id) if j]
+        # Chunk aggregation (only when n_chunks > 1): one task per
+        # (feature, level), in a second array depending on this level's
+        # classification array.
+        agg_array_id = None
+        if level_agg_jobs:
+            agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
+            agg_scripts = []
+            for feat_label, _lvl in level_agg_jobs:
+                cv_resolved = _cv_for_lvl(level)
+                agg_job_name = (
+                    f"aggregate_{feat_label}_{space}_{mode}_{clf}_"
+                    f"{trial_type}_level-{level}"
+                )
+                agg_context = {
+                    **agg_resources,
+                    "job_name": agg_job_name,
+                    "timestamp": timestamp,
+                    "feature_label": feat_label,
+                    "space": space,
+                    "mode": mode,
+                    "clf": clf,
+                    "cv": cv_resolved,
+                    "analysis_level": level,
+                    "combined": combine_features,
+                    "delete_chunks": delete_chunks,
+                    "trial_type": trial_type,
+                }
+                agg_script = script_dir / f"{agg_job_name}_{timestamp}.sh"
+                render_slurm_script(
+                    "classification_aggregate.sh.j2", agg_context,
+                    output_path=agg_script,
+                )
+                agg_scripts.append(agg_script)
+            agg_array_id = submit_job_array(
+                agg_scripts,
+                f"aggregate_array_{trial_type}_level-{level}", agg_resources,
+                script_dir, timestamp, max_concurrent=max_concurrent,
+                dependencies=[classify_array_id] if classify_array_id else None,
+                dep_type="afterok", dry_run=dry_run,
+            )
+
+        if classify_array_id:
+            all_classify_ids.append(classify_array_id)
+        if agg_array_id:
+            all_agg_ids.append(agg_array_id)
+        all_classify_scripts.extend(level_scripts)
+        all_agg_jobs.extend(level_agg_jobs)
+
+    all_job_ids = all_classify_ids + all_agg_ids
     if all_job_ids:
         manifest_path = log_dir / f"classification_manifest_{trial_type}_{timestamp}.json"
         save_job_manifest(all_job_ids, manifest_path, metadata={
@@ -2282,19 +2294,29 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
             "n_permutations": n_permutations,
             "combine_features": combine_features,
             "n_chunks": n_chunks,
-            "classify_array_job_id": classify_array_id,
-            "aggregate_array_job_id": agg_array_id,
+            "analysis_levels": levels,
+            "classify_array_job_ids": all_classify_ids,
+            "aggregate_array_job_ids": all_agg_ids,
             "features": features,
             "trial_type": trial_type,
             "timestamp": timestamp,
         })
-        msg = f"\n✓ Submitted classification array ({len(classify_scripts)} tasks)"
-        if agg_feature_labels:
-            msg += f" + aggregation array ({len(agg_feature_labels)} tasks)"
+        msg = (
+            f"\n✓ Submitted {len(all_classify_ids)} classification array(s) "
+            f"({len(all_classify_scripts)} tasks total)"
+        )
+        if all_agg_jobs:
+            msg += (
+                f" + {len(all_agg_ids)} aggregation array(s) "
+                f"({len(all_agg_jobs)} tasks total)"
+            )
         print(msg + f"; manifest: {manifest_path}")
     elif dry_run:
-        n_total = len(classifications) * n_chunks + len(agg_feature_labels)
-        print(f"\n[DRY RUN] Would submit {n_total} task(s) across 1-2 job arrays")
+        n_total = len(classifications) * len(levels) * n_chunks
+        print(
+            f"\n[DRY RUN] Would submit {len(levels)} classification array(s) "
+            f"({n_total} task(s)) + optional per-level aggregation arrays"
+        )
 
 
 @task

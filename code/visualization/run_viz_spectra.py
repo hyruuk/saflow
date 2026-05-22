@@ -61,7 +61,12 @@ def find_exponent_results(stats_dir: Path, stat_feature: str, inout_str: str) ->
             f"inout-{inout_str}. Run e.g.:\n"
             f"  invoke analysis.stats --features=fooof --space={stats_dir.name.split('_', 1)[-1]}"
         )
-    # Prefer the subject-spectrum path (FOOOF fit on aggregated spectra).
+    # Prefer the level-average path (subject-spectrum / FOOOF on aggregated
+    # spectra). Falls back to the legacy ``path-subj-spectrum`` filename
+    # token, then to whatever's there.
+    for c in candidates:
+        if "level-average" in c.name:
+            return c
     for c in candidates:
         if "path-subj-spectrum" in c.name:
             return c

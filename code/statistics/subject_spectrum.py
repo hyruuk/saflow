@@ -28,7 +28,7 @@ Trade-offs vs the per-trial path:
   baseline. The manuscript Fig.3 panel J classifier consumes exactly
   these subject-spectrum corrected features (cc_saflow does the same),
   so this loader is intentionally reused by run_classification.py's
-  ``--analysis-mode=subject-spectrum`` path.
+  ``--analysis-level=average`` path (for psd_*/fooof_* features).
 
 Complexity features are not handled here — they are per-trial scalars and
 go through the existing trial-level loader + subject-median aggregation.
@@ -428,7 +428,8 @@ def load_subject_spectrum_features(
             "bad_trial_rule": bad_trial_rule,
             "interp_reject_threshold": interp_reject_threshold,
             "bad_ar2_metadata_present": bool(bad_metadata_present),
-            "analysis_mode": "subject-spectrum",
+            "analysis_level": "average",
+            "loader": "subject-spectrum",
             "fooof_freq_range": list(freq_range),
             "fooof_params": fooof_params,
             "per_subject": per_subject_counts,

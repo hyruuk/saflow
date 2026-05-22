@@ -97,24 +97,39 @@ PVAL_KEYS = {
 # ---------------------------------------------------------------------------
 
 def _stats_file(stats_dir: Path, feature: str, inout: str, trial_type: str) -> Path:
+    # Prefer the new ``level-average`` filename token; fall back to the
+    # legacy ``path-subj-spectrum`` token for pre-refactor files.
     cands = sorted(stats_dir.glob(
         f"feature-{feature}_inout-{inout}_test-paired_ttest"
-        f"_path-subj-spectrum_type-{trial_type}_results.npz"
+        f"_level-average_type-{trial_type}_results.npz"
     ))
     if not cands:
+        cands = sorted(stats_dir.glob(
+            f"feature-{feature}_inout-{inout}_test-paired_ttest"
+            f"_path-subj-spectrum_type-{trial_type}_results.npz"
+        ))
+    if not cands:
         raise FileNotFoundError(
-            f"No stats result for feature={feature} (inout={inout}, "
-            f"type={trial_type}) in {stats_dir}."
+            f"No level-average stats result for feature={feature} "
+            f"(inout={inout}, type={trial_type}) in {stats_dir}."
         )
     return cands[0]
 
 
 def _classif_file(clf_dir: Path, feature: str, inout: str, trial_type: str,
                   clf: str, cv: str, space: str) -> Path:
+    # Prefer the new ``level-average`` filename token; fall back to files
+    # without the level token (pre-refactor).
     cands = sorted(clf_dir.glob(
         f"feature-{feature}_space-{space}_inout-{inout}"
-        f"_clf-{clf}_cv-{cv}_mode-univariate_type-{trial_type}_scores.npz"
+        f"_clf-{clf}_cv-{cv}_mode-univariate_level-average"
+        f"_type-{trial_type}_scores.npz"
     ))
+    if not cands:
+        cands = sorted(clf_dir.glob(
+            f"feature-{feature}_space-{space}_inout-{inout}"
+            f"_clf-{clf}_cv-{cv}_mode-univariate_type-{trial_type}_scores.npz"
+        ))
     if not cands:
         raise FileNotFoundError(
             f"No classification scores for feature={feature} (clf={clf}, "

@@ -12,7 +12,7 @@ echo "  Space:           {{ space }}"
 echo "  Mode:            {{ mode }}"
 echo "  Classifier:      {{ clf }}"
 echo "  CV strategy:     {{ cv }}"
-echo "  Average trials:  {{ average_trials }}"
+echo "  Analysis level:  {{ analysis_level }}"
 echo "  Permutations:    {{ n_permutations }}"
 echo "  Combined:        {{ combine_features }}"
 echo "  Importances:     {{ importances }}"
@@ -34,8 +34,8 @@ python -m code.classification.run_classification \
     --trial-type {{ trial_type }} \
     --zoning {{ zoning }} \
     --n-events-window {{ n_events_window }} \
+    --analysis-level {{ analysis_level }} \
     --standardize {{ standardize }} \
-    {% if not average_trials %}--no-average-trials{% endif %} \
     {% if no_balance %}--no-balance{% endif %} \
     {% if combine_features %}--combine-features{% endif %} \
     {% if importances %}--importances{% endif %} \

@@ -890,12 +890,16 @@ def build_base_name(
     mode: str,
     combined: bool,
     trial_type: str = "alltrials",
+    analysis_level: Optional[str] = None,
 ) -> str:
     base = (
         f"feature-{feature_label}_space-{space}"
         f"_inout-{inout_bounds_to_string(inout_bounds)}"
-        f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}_type-{trial_type}"
+        f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}"
     )
+    if analysis_level is not None:
+        base += f"_level-{analysis_level}"
+    base += f"_type-{trial_type}"
     if combined:
         base += "_combined"
     return base
@@ -915,6 +919,7 @@ def save_results(
     metadata: Dict,
     chunk_info: Optional[Dict] = None,
     trial_type: str = "alltrials",
+    analysis_level: Optional[str] = None,
 ) -> Path:
     """Save NPZ scores + JSON metadata with provenance.
 
@@ -926,7 +931,7 @@ def save_results(
     output_dir.mkdir(parents=True, exist_ok=True)
     base = build_base_name(
         feature_label, space, inout_bounds, clf_name, cv_name, mode, combined,
-        trial_type=trial_type,
+        trial_type=trial_type, analysis_level=analysis_level,
     )
     if chunk_info is not None:
         base += f"_chunk-{chunk_info['chunk_idx']}of{chunk_info['n_chunks']}"
@@ -1019,33 +1024,52 @@ def save_results(
 # Analysis-mode dispatch
 # ---------------------------------------------------------------------------
 
-def _resolve_analysis_mode(
-    analysis_mode: str, feature: str, average_trials: bool
-) -> str:
-    """Pick 'trial' vs 'subject-spectrum' loading for one feature.
+ANALYSIS_LEVELS = ("epoch", "average")
 
-    - subject-spectrum (manuscript Fig.3 path): epoch PSDs are averaged per
-      run, run-means averaged per subject, FOOOF fit once per
-      subject×condition. Available for psd_* / psd_corrected_* / fooof_*.
-    - trial: per-epoch features averaged within subject (legacy path).
 
-    'auto' uses subject-spectrum for PSD/FOOOF features and trial for
-    complexity. Single-trial runs (--no-average-trials) always use 'trial'.
+def _resolve_levels(analysis_level: str) -> List[str]:
+    """Expand --analysis-level into a list of levels to run.
+
+    'both' (default) → ['epoch', 'average']. Single values pass through.
     """
+    if analysis_level == "both":
+        return list(ANALYSIS_LEVELS)
+    if analysis_level in ANALYSIS_LEVELS:
+        return [analysis_level]
+    raise SystemExit(
+        f"--analysis-level={analysis_level!r} invalid. "
+        f"Choose 'both' or one of {ANALYSIS_LEVELS}."
+    )
+
+
+def _loader_for_level(level: str, feature: str) -> str:
+    """Map (analysis level, feature) to the per-feature loader path.
+
+    - epoch: per-epoch features as upstream produced them (sliding-window
+      epochs in our pipeline). Trial loader for all features.
+    - average:
+        psd_/fooof_   → subject-spectrum (pool each (subj, cond)'s good-
+                        epoch PSDs into one mean and fit FOOOF once → 1 IN
+                        + 1 OUT row per subject).
+        complexity_   → subject-mean (per-epoch features averaged per
+                        (subj, class) → 1 IN + 1 OUT row per subject —
+                        complexity has no aperiodic fit to do at subject
+                        level).
+    """
+    if level == "epoch":
+        return "trial"
     is_complexity = feature.startswith("complexity")
-    if not average_trials:
-        return "trial"
-    if analysis_mode == "trial":
-        return "trial"
-    if is_complexity:
-        if analysis_mode == "subject-spectrum":
-            raise SystemExit(
-                "--analysis-mode=subject-spectrum does not support complexity "
-                "features; use --analysis-mode=auto or trial."
-            )
-        return "trial"
-    # auto or subject-spectrum, PSD/FOOOF feature
-    return "subject-spectrum"
+    return "subject-mean" if is_complexity else "subject-spectrum"
+
+
+def _cv_for_level(level: str) -> str:
+    """Default CV strategy for an analysis level.
+
+    'average' produces 1 IN + 1 OUT per subject → GroupKFold(k=6) over
+    subjects. 'epoch' keeps held-out subjects' trials out of training with
+    leave-one-subject-out.
+    """
+    return "logo" if level == "epoch" else "group"
 
 
 # ---------------------------------------------------------------------------
@@ -1140,23 +1164,15 @@ def main():
     parser.add_argument(
         "--cv", default="auto", choices=["auto", "logo", "stratified", "group"],
         help=(
-            "Cross-validation strategy. 'auto' (default) derives it from "
-            "trial averaging: GroupKFold(k=6) over subjects when trials are "
-            "averaged, leave-one-subject-out for single trials. 'logo', "
+            "Cross-validation strategy. 'auto' (default) is resolved from "
+            "--analysis-level: GroupKFold(k=6) over subjects for "
+            "level=average, leave-one-subject-out for level=epoch. 'logo', "
             "'stratified', 'group' force a specific splitter."
         ),
     )
     parser.add_argument("--n-splits", type=int, default=5,
                         help="n_splits for an explicit --cv group/stratified. "
                              "Ignored when --cv=auto (auto uses k=6).")
-    parser.add_argument(
-        "--no-average-trials", dest="average_trials", action="store_false",
-        default=True,
-        help=(
-            "Classify single trials instead of per-subject IN/OUT averages. "
-            "With --cv=auto this switches the splitter to leave-one-subject-out."
-        ),
-    )
     parser.add_argument("--n-permutations", type=int, default=1000)
     parser.add_argument("--no-balance", action="store_true")
     parser.add_argument("--n-jobs", type=int, default=-1)
@@ -1171,16 +1187,18 @@ def main():
         ),
     )
     parser.add_argument(
-        "--analysis-mode", default="auto",
-        choices=["auto", "trial", "subject-spectrum"],
+        "--analysis-level", default="both",
+        choices=["both", *ANALYSIS_LEVELS],
         help=(
-            "How per-subject IN/OUT features are built. 'subject-spectrum' "
-            "(manuscript Fig.3 path) averages epoch PSDs per run, averages "
-            "run-means per subject, and fits FOOOF once per subject×condition "
-            "— the classifier then sees exactly one IN + one OUT row per "
-            "subject. 'trial' uses per-epoch features averaged within "
-            "subject. 'auto' (default) = subject-spectrum for psd/fooof "
-            "features, trial for complexity."
+            "Aggregation level. 'epoch': per-epoch features (each 'epoch' "
+            "is the sliding window produced by the feature pipeline, e.g. "
+            "8 trials wide for n_events_window=8), many rows per subject; "
+            "default cv = leave-one-subject-out. 'average': 1 IN + 1 OUT "
+            "row per subject — for psd_*/fooof_* via subject-spectrum (pool "
+            "each (subj, cond)'s good-epoch PSDs and fit FOOOF once), for "
+            "complexity_* via the mean of per-epoch features; default cv = "
+            "GroupKFold(k=6). 'both' (default) runs both levels in turn, "
+            "saving two output files per feature (one per level)."
         ),
     )
     parser.add_argument(
@@ -1220,14 +1238,14 @@ def main():
         help=(
             "Per-subject feature standardization applied before averaging / "
             "balancing / classification. 'per-subject' z-scores each "
-            "subject's trials independently, so a held-out subject's "
+            "subject's epochs independently, so a held-out subject's "
             "feature distribution overlaps the training set's. Without "
             "this, absolute-scale features (raw log-power) drive LOSO "
-            "balanced-accuracy to exactly 0.5 because every held-out trial "
+            "balanced-accuracy to exactly 0.5 because every held-out epoch "
             "lands on the same side of the learned decision boundary. "
-            "'auto' (default) = per-subject for analysis-mode=trial, none "
-            "for subject-spectrum (already normalized by the per-subject "
-            "FOOOF aperiodic fit)."
+            "'auto' (default) = per-subject for level=epoch, none for "
+            "level=average (already normalized by the per-subject FOOOF "
+            "aperiodic fit / per-subject mean)."
         ),
     )
     parser.add_argument(
@@ -1260,29 +1278,20 @@ def main():
     if not features:
         raise SystemExit("Must pass --feature and/or --feature-set")
 
-    # Resolve CV strategy. 'auto' derives the splitter from trial averaging:
-    # averaged trials -> GroupKFold(k=6) over subjects; single trials -> LOSO.
-    if args.cv == "auto":
-        cv_name = "group" if args.average_trials else "logo"
-        n_splits = 6 if cv_name == "group" else args.n_splits
-    else:
-        cv_name = args.cv
-        n_splits = args.n_splits
+    levels = _resolve_levels(args.analysis_level)
 
     logger.info("=" * 78)
     logger.info("CLASSIFICATION (IN vs OUT)")
     logger.info("=" * 78)
     logger.info(f"features ({len(features)}): {features}")
     logger.info(f"space={args.space}  mode={args.mode}  clf={args.clf}")
-    logger.info(f"scoring={scoring}  analysis_mode={args.analysis_mode}")
     logger.info(
-        f"average_trials={args.average_trials}  cv={cv_name}"
-        + (f"(k={n_splits})" if cv_name in ("group", "stratified") else "")
+        f"scoring={scoring}  analysis_level={args.analysis_level} "
+        f"({'+'.join(levels)})  cv={args.cv}"
     )
     logger.info(f"inout={inout_bounds}  n_permutations={args.n_permutations}")
     logger.info("=" * 78)
 
-    cv = get_cv_strategy(cv_name, n_splits=n_splits)
     data_root = Path(config["paths"]["data_root"])
     output_dir = (
         data_root / config["paths"]["results"] / f"classification_{args.space}" / "group"
@@ -1292,25 +1301,41 @@ def main():
     if chunked and args.mode != "univariate":
         raise SystemExit("--n-chunks only applies to mode=univariate")
 
-    def _run_one(label, feature_list, X, y, groups, metadata,
-                 already_aggregated=False):
-        # Resolve per-subject standardization. 'auto' = on for trial mode
-        # (between-subject absolute scale dominates LOSO), off for subject-
-        # spectrum (already normalized by per-subject FOOOF aperiodic fit).
-        analysis_mode = "subject-spectrum" if already_aggregated else "trial"
+    def _resolve_cv(level: str) -> Tuple[str, int]:
+        if args.cv == "auto":
+            cv_name = _cv_for_level(level)
+            n_splits = 6 if cv_name == "group" else args.n_splits
+        else:
+            cv_name = args.cv
+            n_splits = args.n_splits
+        return cv_name, n_splits
+
+    def _run_one(label, feature_list, X, y, groups, metadata, level, loader):
+        # Resolve standardization. 'auto' = per-subject for level=epoch
+        # (between-subject absolute scale dominates), none for level=average
+        # (already normalized by per-subject FOOOF / per-subject mean).
         standardize = (
             args.standardize if args.standardize != "auto"
-            else ("per-subject" if analysis_mode == "trial" else "none")
+            else ("per-subject" if level == "epoch" else "none")
+        )
+        cv_name, n_splits = _resolve_cv(level)
+        cv = get_cv_strategy(cv_name, n_splits=n_splits)
+        logger.info(
+            f"level={level} ({loader})  cv={cv_name}"
+            + (f"(k={n_splits})" if cv_name in ("group", "stratified") else "")
+            + f"  standardize={standardize}"
         )
 
-        if already_aggregated:
-            # subject-spectrum: X is (1, 2N, n_spatial) — already exactly one
-            # IN + one OUT row per subject, 1:1 balanced. No trial averaging
-            # or class balancing needed; just drop the leading feature axis.
+        metadata["analysis_level"] = level
+        metadata["loader"] = loader
+        metadata["cv_strategy"] = cv_name
+
+        if loader == "subject-spectrum":
+            # Loader emits X as (1, 2N, n_spatial) — exactly 1 IN + 1 OUT
+            # row per subject, 1:1 balanced. No averaging/balancing needed;
+            # drop the leading feature axis.
             if X.ndim == 3 and X.shape[0] == 1:
                 X = X[0]
-            metadata["average_trials"] = True
-            metadata.setdefault("analysis_mode", "subject-spectrum")
             metadata["n_trials"] = int(len(y))
             metadata["n_in"] = int((y == 0).sum())
             metadata["n_out"] = int((y == 1).sum())
@@ -1323,16 +1348,15 @@ def main():
                 f"({metadata.get('n_subjects', '?')} subjects × IN/OUT)"
             )
         else:
-            metadata.setdefault("analysis_mode", "trial")
+            # Trial loader: X is per-epoch (n_trials, n_spatial[, n_features]).
             if standardize == "per-subject":
                 X = standardize_within_subject(X, groups)
                 logger.info(
                     f"Standardized features per subject (z-score) — "
-                    f"{X.shape[0]} trials × {X.shape[1]} spatial units"
+                    f"{X.shape[0]} epochs × {X.shape[1]} spatial units"
                 )
-            if args.average_trials:
+            if loader == "subject-mean":
                 X, y, groups = average_within_subject(X, y, groups)
-                metadata["average_trials"] = True
                 metadata["n_trials"] = int(len(y))
                 metadata["n_in"] = int((y == 0).sum())
                 metadata["n_out"] = int((y == 1).sum())
@@ -1340,15 +1364,13 @@ def main():
                     f"Averaged within subject×class: {len(y)} samples "
                     f"({metadata['n_subjects']} subjects × IN/OUT)"
                 )
-            else:
-                metadata["average_trials"] = False
 
             if not args.no_balance:
                 X_b, y_b, g_b = balance_within_subject(
                     X, y, groups, seed=args.seed
                 )
                 logger.info(
-                    f"Balanced: {len(y_b)} trials (IN={int((y_b == 0).sum())}, "
+                    f"Balanced: {len(y_b)} epochs (IN={int((y_b == 0).sum())}, "
                     f"OUT={int((y_b == 1).sum())})"
                 )
             else:
@@ -1413,21 +1435,20 @@ def main():
             metadata=metadata,
             chunk_info=chunk_info,
             trial_type=args.trial_type,
+            analysis_level=level,
         )
 
     failures: List[Tuple[str, str]] = []
 
     if args.combine_features:
-        if args.analysis_mode == "subject-spectrum":
-            raise SystemExit(
-                "--combine-features is not supported with "
-                "--analysis-mode=subject-spectrum; run features separately "
-                "or use --analysis-mode=trial."
-            )
-        if any(not f.startswith("complexity") for f in features):
+        if "average" in levels and any(
+            not f.startswith("complexity") for f in features
+        ):
             logger.warning(
                 "--combine-features uses the trial-level loader; PSD/FOOOF "
-                "features will NOT use the subject-spectrum (Fig.3) path."
+                "features in level=average will fall back to the "
+                "'subject-mean' loader (per-epoch features averaged within "
+                "subject) instead of the subject-spectrum (Fig.3) path."
             )
         if len(features) < 2:
             logger.warning(
@@ -1437,75 +1458,98 @@ def main():
         label = args.label or f"combined-{len(features)}"
         logger.info(f"Combined run over {len(features)} feature(s) -> label '{label}'")
         try:
-            X, y, groups, metadata = load_combined_features(
-                features=features,
-                space=args.space,
-                inout_bounds=inout_bounds,
-                config=config,
-                drop_bad_trials=not args.keep_bad_trials,
-                trial_type=args.trial_type,
-                zoning=args.zoning,
-                n_events_window=args.n_events_window,
+            X_combined, y_combined, g_combined, metadata_combined = (
+                load_combined_features(
+                    features=features,
+                    space=args.space,
+                    inout_bounds=inout_bounds,
+                    config=config,
+                    drop_bad_trials=not args.keep_bad_trials,
+                    trial_type=args.trial_type,
+                    zoning=args.zoning,
+                    n_events_window=args.n_events_window,
+                )
             )
-            _run_one(label, features, X, y, groups, metadata)
+            for level in levels:
+                # Combined runs share the trial loader; in 'average' mode it
+                # acts as the subject-mean path (per-epoch features → mean
+                # per subj×class). Standardize/CV resolve per-level inside.
+                loader = "trial" if level == "epoch" else "subject-mean"
+                logger.info("")
+                logger.info(f"Combined run, level={level}")
+                logger.info("-" * 78)
+                _run_one(
+                    label, features,
+                    np.asarray(X_combined), y_combined.copy(), g_combined.copy(),
+                    dict(metadata_combined),
+                    level, loader,
+                )
         except Exception as exc:
             logger.error(f"Combined run failed: {exc}", exc_info=True)
             failures.append((label, str(exc)))
             if not args.continue_on_error:
                 raise
     else:
-        for i, feat in enumerate(features, start=1):
-            feat_mode = _resolve_analysis_mode(
-                args.analysis_mode, feat, args.average_trials
-            )
+        # Outer loop = level so the subject-spectrum loader is shared across
+        # features within a level. Inner loop = feature.
+        for level in levels:
             logger.info("")
-            logger.info(f"[{i}/{len(features)}] feature: {feat}  ({feat_mode})")
-            logger.info("-" * 78)
-            try:
-                if feat_mode == "subject-spectrum":
-                    # Manuscript Fig.3 path: epoch PSDs averaged per run,
-                    # run-means averaged per subject, FOOOF fit once per
-                    # subject×condition. Classifier sees one IN + one OUT
-                    # row per subject (same data the paired t-test uses).
-                    from code.statistics.subject_spectrum import (
-                        load_subject_spectrum_features,
+            logger.info("=" * 78)
+            logger.info(f"Analysis level: {level}")
+            logger.info("=" * 78)
+            for i, feat in enumerate(features, start=1):
+                loader = _loader_for_level(level, feat)
+                logger.info("")
+                logger.info(
+                    f"[{i}/{len(features)}] feature: {feat}  "
+                    f"(level={level}, loader={loader})"
+                )
+                logger.info("-" * 78)
+                try:
+                    if loader == "subject-spectrum":
+                        # Manuscript Fig.3 path: pool each (subj, cond)'s
+                        # good-epoch PSDs into one mean PSD and fit FOOOF
+                        # once per condition (2 fits/subject). Classifier
+                        # sees one IN + one OUT row per subject (same
+                        # data the paired t-test uses).
+                        from code.statistics.subject_spectrum import (
+                            load_subject_spectrum_features,
+                        )
+                        ss = load_subject_spectrum_features(
+                            feature_types=[feat],
+                            space=args.space,
+                            inout_bounds=inout_bounds,
+                            config=config,
+                            drop_bad_trials=not args.keep_bad_trials,
+                            n_jobs=args.n_jobs,
+                            trial_type=args.trial_type,
+                            zoning=args.zoning,
+                            n_events_window=args.n_events_window,
+                        )
+                        X, y, groups, metadata = ss[feat]
+                    else:
+                        X, y, groups, metadata = load_classification_data(
+                            feature=feat,
+                            space=args.space,
+                            inout_bounds=inout_bounds,
+                            config=config,
+                            drop_bad_trials=not args.keep_bad_trials,
+                            trial_type=args.trial_type,
+                            zoning=args.zoning,
+                            n_events_window=args.n_events_window,
+                        )
+                    _run_one(feat, [feat], X, y, groups, metadata, level, loader)
+                except Exception as exc:
+                    logger.error(
+                        f"Feature '{feat}' (level={level}) failed: {exc}",
+                        exc_info=True,
                     )
-                    ss = load_subject_spectrum_features(
-                        feature_types=[feat],
-                        space=args.space,
-                        inout_bounds=inout_bounds,
-                        config=config,
-                        drop_bad_trials=not args.keep_bad_trials,
-                        n_jobs=args.n_jobs,
-                        trial_type=args.trial_type,
-                        zoning=args.zoning,
-                        n_events_window=args.n_events_window,
-                    )
-                    X, y, groups, metadata = ss[feat]
-                    _run_one(
-                        feat, [feat], X, y, groups, metadata,
-                        already_aggregated=True,
-                    )
-                else:
-                    X, y, groups, metadata = load_classification_data(
-                        feature=feat,
-                        space=args.space,
-                        inout_bounds=inout_bounds,
-                        config=config,
-                        drop_bad_trials=not args.keep_bad_trials,
-                        trial_type=args.trial_type,
-                        zoning=args.zoning,
-                        n_events_window=args.n_events_window,
-                    )
-                    _run_one(feat, [feat], X, y, groups, metadata)
-            except Exception as exc:
-                logger.error(f"Feature '{feat}' failed: {exc}", exc_info=True)
-                failures.append((feat, str(exc)))
-                if not args.continue_on_error:
-                    raise
+                    failures.append((f"{feat}@{level}", str(exc)))
+                    if not args.continue_on_error:
+                        raise
 
     if failures:
-        logger.warning(f"{len(failures)}/{len(features)} feature(s) failed:")
+        logger.warning(f"{len(failures)} run(s) failed:")
         for f, msg in failures:
             logger.warning(f"  - {f}: {msg}")
 
