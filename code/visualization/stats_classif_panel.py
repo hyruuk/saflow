@@ -22,7 +22,9 @@ metrics. The default FDR uses the ``pvals_fdr_bh`` field (Benjamini-Hochberg
 over the 270 sensors of that feature). Old stats files used the key
 ``pvals_corrected_fdr`` for the same quantity; both are accepted.
 
-Selection of the FOOOF spectra location: most significant exponent t-value.
+Selection of the FOOOF spectra location: strongest exponent IN-vs-OUT
+difference (i.e. largest |t-value| from the FOOOF-exponent stats map),
+regardless of p-value significance.
 
 Output: reports/figures/stats_classif_panel_space-<space>_type-<trial>_correction-<corr>.png
 """
@@ -375,12 +377,20 @@ def main() -> int:
         from code.visualization.render import _get_sensor_info
         info = _get_sensor_info(config, data_root)
 
-    # ---- Channel spectra at most significant exponent sensor -----------
+    # ---- Channel spectra at sensor/region with strongest exponent diff --
+    # Selection criterion: largest |t| on the FOOOF-exponent map (strongest
+    # IN-vs-OUT difference), not the smallest p-value. We want the panel to
+    # showcase the spatial unit where the effect is biggest, even if it
+    # doesn't survive correction.
     logger.info("Loading channel spectra for panels C-F...")
     from code.statistics.subject_spectrum import load_channel_spectra
-    exp_t, exp_p = rows["fooof"][0]
-    ranking = exp_p if exp_p is not None else -np.abs(exp_t)
-    sel_idx = int(np.nanargmin(ranking))
+    exp_t, _exp_p = rows["fooof"][0]
+    sel_idx = int(np.nanargmax(np.abs(exp_t)))
+    spatial_unit_names = roi_names if is_atlas else list(info["ch_names"])
+    sel_name = (spatial_unit_names[sel_idx]
+                if sel_idx < len(spatial_unit_names) else f"unit-{sel_idx}")
+    logger.info("Selected unit: %s (idx=%d, |t|=%.3f)",
+                sel_name, sel_idx, float(np.abs(exp_t[sel_idx])))
 
     sfile_exp = _stats_file(stats_dir, "fooof_exponent", inout_str, args.trial_type)
     meta_path = sfile_exp.with_name(
@@ -443,12 +453,61 @@ def main() -> int:
         else:
             _plot_topomap(ax, vals, mask, info, vmin, vmax, cmap)
 
+    def _draw_selection_inset(ax_d):
+        """Top-right inset on panel D: small topomap (or brain) with the
+        selected sensor/region highlighted, plus its name as a title."""
+        if is_atlas:
+            rect = [0.62, 0.58, 0.40, 0.40]
+        else:
+            rect = [0.74, 0.60, 0.26, 0.40]
+        inset = ax_d.inset_axes(rect)
+        if is_atlas:
+            from code.visualization.plot_surface import (
+                render_inflated_view,
+                roi_to_surface,
+            )
+            roi_label = roi_names[sel_idx]
+            hemi = "right" if roi_label.endswith("-rh") else "left"
+            vals = np.full(len(roi_names), np.nan)
+            vals[sel_idx] = 1.0
+            lh, rh = roi_to_surface(vals, roi_names, args.space)
+            img = render_inflated_view(
+                lh, rh, hemi, "lateral", fsaverage,
+                cmap="autumn", vmin=0.0, vmax=1.0,
+            )
+            inset.imshow(img, interpolation="bilinear", aspect="auto")
+            inset.set_axis_off()
+        else:
+            import mne
+            n_ch = len(info["ch_names"])
+            vals = np.zeros(n_ch)
+            mask = np.zeros(n_ch, dtype=bool)
+            mask[sel_idx] = True
+            mask_params = dict(
+                marker="o", markerfacecolor="red", markeredgecolor="k",
+                linewidth=0.6, markersize=5,
+            )
+            mne.viz.plot_topomap(
+                vals, info, axes=inset, show=False, cmap="Greys",
+                mask=mask, mask_params=mask_params,
+                vlim=(-1, 1), extrapolate="local",
+                outlines="head", sphere=0.15, contours=0,
+            )
+            inset.set_axis_off()
+        inset.set_title(sel_name, fontsize=7, pad=1)
+
+    def _label_with_n_sig(label: str, mask: Optional[np.ndarray]) -> str:
+        if mask is None:
+            return label
+        return f"{label}\n(n={int(mask.sum())} sig)"
+
     def draw_band_row(row_idx, values_list, vmin, vmax, cmap, labels):
         for i, ((vals, pvals), label) in enumerate(zip(values_list, labels)):
             ax = fig.add_subplot(gs[row_idx, i])
             mask = pvals < args.alpha if pvals is not None else None
             _draw_spatial(ax, vals, mask, vmin, vmax, cmap)
-            ax.set_xlabel(label, fontsize=8.5, labelpad=2)
+            ax.set_xlabel(_label_with_n_sig(label, mask),
+                          fontsize=8.5, labelpad=2)
         cax = fig.add_subplot(gs[row_idx, 7])
         return cax
 
@@ -463,7 +522,8 @@ def main() -> int:
             vals, pvals = topo_values[j]
             mask = pvals < args.alpha if pvals is not None else None
             _draw_spatial(ax, vals, mask, vmin, vmax, cmap)
-            ax.set_xlabel(labels[j], fontsize=8.5, labelpad=2)
+            ax.set_xlabel(_label_with_n_sig(labels[j], mask),
+                          fontsize=8.5, labelpad=2)
         cax = fig.add_subplot(gs[row_idx, 7])
         return cax, (ax_l1, ax_l2)
 
@@ -513,6 +573,7 @@ def main() -> int:
         2, [panel_C, panel_D],
         rows["fooof"], vmin_t, vmax_t, CMAP_T, fooof_labels,
     )
+    _draw_selection_inset(axes_CD[1])
     cax_H, axes_EF = draw_middle_row(
         3, [panel_E, panel_F],
         aurows["fooof"], vmin_a, vmax_a, CMAP_AUC, fooof_labels,

@@ -18,6 +18,7 @@ echo "  Combined:        {{ combine_features }}"
 echo "  Importances:     {{ importances }}"
 echo "  Trial type:      {{ trial_type }}"
 echo "  Zoning:          {{ zoning }}"
+echo "  Standardize:     {{ standardize }}"
 {% if n_chunks and n_chunks > 1 %}echo "  Chunk:           {{ chunk_idx }} / {{ n_chunks }}"
 {% endif %}echo ""
 
@@ -33,6 +34,7 @@ python -m code.classification.run_classification \
     --trial-type {{ trial_type }} \
     --zoning {{ zoning }} \
     --n-events-window {{ n_events_window }} \
+    --standardize {{ standardize }} \
     {% if not average_trials %}--no-average-trials{% endif %} \
     {% if no_balance %}--no-balance{% endif %} \
     {% if combine_features %}--combine-features{% endif %} \

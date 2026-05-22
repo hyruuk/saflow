@@ -562,6 +562,34 @@ def balance_within_subject(
 # Trial averaging (collapse each subject to one mean vector per class)
 # ---------------------------------------------------------------------------
 
+def standardize_within_subject(
+    X: np.ndarray, groups: np.ndarray
+) -> np.ndarray:
+    """Z-score features within each subject across the trial axis.
+
+    Removes between-subject absolute-scale differences (e.g. raw log-power
+    that varies by orders of magnitude between sensor calibrations / head
+    sizes but only fractions of a log within a subject). Without this, a
+    leave-one-subject-out classifier on an absolute-scale feature predicts
+    a single class for every held-out trial — balanced accuracy then pins
+    at exactly 0.5 regardless of any within-subject IN-vs-OUT effect.
+
+    Works for 2D (n_trials, n_spatial) and 3D (n_trials, n_spatial, n_features)
+    X. Spatial units with zero within-subject std are left unchanged (sd→1).
+    NaN-aware via np.nanmean / np.nanstd.
+    """
+    X = X.astype(float, copy=True)
+    for g in np.unique(groups):
+        idx = groups == g
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mu = np.nanmean(X[idx], axis=0, keepdims=True)
+            sd = np.nanstd(X[idx], axis=0, keepdims=True)
+        sd = np.where(sd > 0, sd, 1.0)
+        X[idx] = (X[idx] - mu) / sd
+    return X
+
+
 def average_within_subject(
     X: np.ndarray, y: np.ndarray, groups: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1186,6 +1214,23 @@ def main():
         ),
     )
     parser.add_argument(
+        "--standardize",
+        default="auto",
+        choices=["auto", "none", "per-subject"],
+        help=(
+            "Per-subject feature standardization applied before averaging / "
+            "balancing / classification. 'per-subject' z-scores each "
+            "subject's trials independently, so a held-out subject's "
+            "feature distribution overlaps the training set's. Without "
+            "this, absolute-scale features (raw log-power) drive LOSO "
+            "balanced-accuracy to exactly 0.5 because every held-out trial "
+            "lands on the same side of the learned decision boundary. "
+            "'auto' (default) = per-subject for analysis-mode=trial, none "
+            "for subject-spectrum (already normalized by the per-subject "
+            "FOOOF aperiodic fit)."
+        ),
+    )
+    parser.add_argument(
         "--n-events-window",
         type=int,
         default=8,
@@ -1249,6 +1294,15 @@ def main():
 
     def _run_one(label, feature_list, X, y, groups, metadata,
                  already_aggregated=False):
+        # Resolve per-subject standardization. 'auto' = on for trial mode
+        # (between-subject absolute scale dominates LOSO), off for subject-
+        # spectrum (already normalized by per-subject FOOOF aperiodic fit).
+        analysis_mode = "subject-spectrum" if already_aggregated else "trial"
+        standardize = (
+            args.standardize if args.standardize != "auto"
+            else ("per-subject" if analysis_mode == "trial" else "none")
+        )
+
         if already_aggregated:
             # subject-spectrum: X is (1, 2N, n_spatial) — already exactly one
             # IN + one OUT row per subject, 1:1 balanced. No trial averaging
@@ -1260,6 +1314,9 @@ def main():
             metadata["n_trials"] = int(len(y))
             metadata["n_in"] = int((y == 0).sum())
             metadata["n_out"] = int((y == 1).sum())
+            if standardize == "per-subject":
+                X = standardize_within_subject(X, groups)
+                logger.info("Standardized features per subject (z-score)")
             X_b, y_b, g_b = X, y, groups
             logger.info(
                 f"subject-spectrum: {len(y)} rows "
@@ -1267,6 +1324,12 @@ def main():
             )
         else:
             metadata.setdefault("analysis_mode", "trial")
+            if standardize == "per-subject":
+                X = standardize_within_subject(X, groups)
+                logger.info(
+                    f"Standardized features per subject (z-score) — "
+                    f"{X.shape[0]} trials × {X.shape[1]} spatial units"
+                )
             if args.average_trials:
                 X, y, groups = average_within_subject(X, y, groups)
                 metadata["average_trials"] = True
@@ -1290,6 +1353,8 @@ def main():
                 )
             else:
                 X_b, y_b, g_b = X, y, groups
+
+        metadata["standardize"] = standardize
 
         chunk_info = None
         if chunked:

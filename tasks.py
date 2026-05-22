@@ -973,7 +973,7 @@ def classify(c, features="all", clf="logistic", cv="auto",
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
              trial_type="all", zoning="per-run", n_events_window=8,
-             average_trials=True,
+             average_trials=True, standardize="auto",
              slurm_time=None, slurm_mem=None, slurm_cpus=None,
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT) on one or more features.
@@ -1065,6 +1065,7 @@ def classify(c, features="all", clf="logistic", cv="auto",
                 zoning=zoning,
                 n_events_window=n_events_window,
                 average_trials=average_trials,
+                standardize=standardize,
                 slurm_time=slurm_time,
                 slurm_mem=slurm_mem,
                 slurm_cpus=slurm_cpus,
@@ -1094,6 +1095,7 @@ def classify(c, features="all", clf="logistic", cv="auto",
         cmd.extend(["--trial-type", tt])
         cmd.extend(["--zoning", zoning])
         cmd.extend(["--n-events-window", str(n_events_window)])
+        cmd.extend(["--standardize", standardize])
         cmd.extend(["--seed", str(seed)])
         if not average_trials:
             cmd.append("--no-average-trials")
@@ -2101,6 +2103,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                     n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
                     trial_type="alltrials", zoning="per-run",
                     n_events_window=8, average_trials=True,
+                    standardize="auto",
                     slurm_time=None, slurm_mem=None, slurm_cpus=None,
                     dry_run=False):
     """Submit classification jobs to SLURM.
@@ -2222,6 +2225,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                 "trial_type": trial_type,
                 "zoning": zoning,
                 "n_events_window": n_events_window,
+                "standardize": standardize,
                 "timestamp": timestamp,
             }
             script_path = script_dir / f"{job_name}_{timestamp}.sh"
