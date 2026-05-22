@@ -407,6 +407,16 @@ else
     exit 1
 fi
 
+# Check feature-model dependency used by FOOOF/specparam extraction
+if python -c "from specparam import SpectralModel, SpectralGroupModel" 2>/dev/null; then
+    print_success "specparam can be imported"
+else
+    print_error "specparam cannot be imported"
+    echo "  Re-run setup with uv from the repository that contains the updated pyproject.toml:"
+    echo "    ./setup.sh --force"
+    exit 1
+fi
+
 # Check if configuration can be loaded (if config.yaml has no placeholders)
 if python -c "from code.utils.config import load_config; load_config()" 2>/dev/null; then
     print_success "Configuration loads successfully"
