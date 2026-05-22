@@ -1,0 +1,44 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Network-restricted classification (Yeo {{ yeo }}, scope={{ scope }},
+#   network={{ network }}, trial-type={{ trial_type }}) on {{ space }}
+# =============================================================================
+
+echo "Network classification configuration:"
+echo "  Space:           {{ space }}"
+echo "  Yeo granularity: {{ yeo }}"
+echo "  Scope:           {{ scope }}"
+echo "  Network:         {{ network }}"
+echo "  Trial-type:      {{ trial_type }}"
+echo "  Classifier:      {{ clf }}"
+echo "  CV strategy:     {{ cv }}"
+echo "  Permutations:    {{ n_permutations }}"
+echo "  Families:        {{ families }}"
+echo "  Per-feature:     {{ per_feature_features }}"
+echo ""
+
+python -m code.classification.run_network_classification \
+    --space {{ space }} \
+    --yeo {{ yeo }} \
+    --scope {{ scope }} \
+    --network {{ network }} \
+    --trial-type {{ trial_type }} \
+    --clf {{ clf }} \
+    --cv {{ cv }} \
+    --n-permutations {{ n_permutations }} \
+    --n-jobs {{ n_jobs }} \
+    --seed {{ seed }} \
+    --standardize {{ standardize }} \
+    --families "{{ families }}" \
+    --per-feature-features "{{ per_feature_features }}"
+
+EXIT=$?
+if [ $EXIT -eq 0 ]; then
+    echo "Network classification completed successfully"
+else
+    echo "Network classification failed with exit code $EXIT"
+    exit $EXIT
+fi
+{% endblock %}

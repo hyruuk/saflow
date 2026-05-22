@@ -1,0 +1,56 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Multifeature classification — {{ label }} on {{ space }}
+#   axis={{ axis }}  trial-type={{ trial_type }}
+{% if n_chunks and n_chunks > 1 %}#   chunk={{ chunk_idx }}/{{ n_chunks }} (per-cell spatial split){% endif %}
+# =============================================================================
+
+echo "Multifeature classification configuration:"
+echo "  Label:           {{ label }}"
+echo "  Features:        {{ feature_args }}"
+echo "  Space:           {{ space }}"
+echo "  Axis:            {{ axis }}"
+echo "  Trial-type:      {{ trial_type }}"
+echo "  Classifier:      {{ clf }}"
+echo "  CV strategy:     {{ cv }}"
+echo "  Importance:      {{ importance }}"
+echo "  Analysis-level:  {{ analysis_level }}"
+echo "  Permutations:    {{ n_permutations }}"
+echo "  Standardize:     {{ standardize }}"
+echo "  Zoning:          {{ zoning }}"
+echo "  n_events_window: {{ n_events_window }}"
+{% if n_chunks and n_chunks > 1 %}echo "  Chunk:           {{ chunk_idx }} / {{ n_chunks }}"
+{% endif %}echo ""
+
+python -m code.classification.run_multifeature \
+    {{ feature_args }} \
+    --space {{ space }} \
+    --axis {{ axis }} \
+    --clf {{ clf }} \
+    --cv {{ cv }} \
+    --importance {{ importance }} \
+    --importance-n-repeats {{ importance_n_repeats }} \
+    --n-permutations {{ n_permutations }} \
+    --n-jobs {{ n_jobs }} \
+    --seed {{ seed }} \
+    --trial-type {{ trial_type }} \
+    --zoning {{ zoning }} \
+    --n-events-window {{ n_events_window }} \
+    --standardize {{ standardize }} \
+    --analysis-level {{ analysis_level }} \
+    {% if no_per_feature_scale %}--no-per-feature-scale{% endif %} \
+    {% if no_balance %}--no-balance{% endif %} \
+    {% if keep_bad_trials %}--keep-bad-trials{% endif %} \
+    {% if label %}--label {{ label }}{% endif %} \
+    {% if n_chunks and n_chunks > 1 %}--n-chunks {{ n_chunks }} --chunk-idx {{ chunk_idx }}{% endif %}
+
+EXIT=$?
+if [ $EXIT -eq 0 ]; then
+    echo "Multifeature classification completed successfully"
+else
+    echo "Multifeature classification failed with exit code $EXIT"
+    exit $EXIT
+fi
+{% endblock %}

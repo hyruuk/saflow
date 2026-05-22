@@ -2319,6 +2319,199 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
         )
 
 
+def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
+                                 importance, n_permutations, n_jobs,
+                                 per_feature_scale, no_balance, seed,
+                                 trial_type, zoning, n_events_window,
+                                 standardize, analysis_level, n_chunks,
+                                 importance_n_repeats, keep_bad_trials,
+                                 aggregate, slurm_time, slurm_mem, slurm_cpus,
+                                 dry_run):
+    """Submit multifeature classification as a SLURM array job.
+
+    One array task per (axis × trial-type [× chunk for per-cell]). When
+    --axis=all, all four axes are submitted. When trial_type='all', all three
+    trial-type variants are submitted. per-cell axis additionally shards over
+    --n-chunks spatial chunks, with an afterok aggregation array merging them.
+    """
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_job_array,
+    )
+    from code.classification.run_multifeature import AXES
+
+    print(f"\n[SLURM Mode] Submitting multifeature classification array(s)\n")
+
+    config = load_config()
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+
+    classification_resources = slurm_config.get("classification", {})
+    if not classification_resources:
+        print("ERROR: No classification resources in config.yaml "
+              "(computing.slurm.classification)")
+        return
+
+    # Resolve axis × trial-type lists.
+    axes = list(AXES) if axis == "all" else [axis]
+    trial_types = (resolve_trial_types("all")
+                   if trial_type == "all" else [trial_type])
+
+    actual_label = label or f"combined-{len(feature_list)}"
+    feature_args = "--feature " + " ".join(feature_list)
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = (PROJECT_ROOT / "slurm" / "scripts"
+                  / "classify_multifeature")
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = (PROJECT_ROOT / config["paths"]["logs"] / "slurm"
+               / "classify_multifeature")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    cpus_resolved = (slurm_cpus if slurm_cpus is not None
+                     else classification_resources["cpus"])
+    mem_resolved = (slurm_mem if slurm_mem is not None
+                    else classification_resources["mem"])
+    time_resolved = (slurm_time if slurm_time is not None
+                     else classification_resources["time"])
+    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  "
+          f"time={time_resolved}")
+
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=cpus_resolved,
+        mem=mem_resolved,
+        time=time_resolved,
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+    max_concurrent = slurm_config.get("array_throttle", 0)
+
+    # Build per-task scripts. per-cell axis shards over n_chunks; other axes
+    # ignore chunking (n_chunks effectively = 1).
+    task_scripts = []
+    agg_targets: List[Tuple[str, str]] = []  # (axis, trial_type) needing chunk agg
+    for ax in axes:
+        ax_chunks = n_chunks if ax == "per-cell" and n_chunks > 1 else 1
+        for tr in trial_types:
+            for ck in range(ax_chunks):
+                chunk_suffix = (f"_chunk-{ck}of{ax_chunks}"
+                                if ax_chunks > 1 else "")
+                job_name = (f"mfclassify_{actual_label}_{space}_{ax}_"
+                            f"{tr}{chunk_suffix}")
+                context = {
+                    **base_resources,
+                    "job_name": job_name,
+                    "timestamp": timestamp,
+                    "label": actual_label,
+                    "feature_args": feature_args,
+                    "space": space,
+                    "axis": ax,
+                    "clf": clf,
+                    "cv": cv,
+                    "importance": importance,
+                    "importance_n_repeats": importance_n_repeats,
+                    "n_permutations": n_permutations,
+                    "n_jobs": n_jobs,
+                    "seed": seed,
+                    "trial_type": tr,
+                    "zoning": zoning,
+                    "n_events_window": n_events_window,
+                    "standardize": standardize,
+                    "analysis_level": analysis_level,
+                    "no_per_feature_scale": not per_feature_scale,
+                    "no_balance": no_balance,
+                    "keep_bad_trials": keep_bad_trials,
+                    "n_chunks": ax_chunks,
+                    "chunk_idx": ck,
+                }
+                script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                render_slurm_script("classify_multifeature.sh.j2", context,
+                                    output_path=script_path)
+                task_scripts.append(script_path)
+            if ax_chunks > 1 and aggregate:
+                agg_targets.append((ax, tr))
+
+    print(f"Submitting {len(task_scripts)} array task(s) "
+          f"({len(axes)} axis × {len(trial_types)} trial-type" +
+          (f" × {n_chunks} chunk(s) for per-cell" if n_chunks > 1 else "") + ")")
+
+    classify_array_id = submit_job_array(
+        task_scripts,
+        f"mfclassify_array_{actual_label}", base_resources,
+        script_dir, timestamp, max_concurrent=max_concurrent,
+        dry_run=dry_run,
+    )
+
+    # Aggregation array (only when per-cell was chunked).
+    agg_array_id = None
+    if agg_targets:
+        agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
+        agg_scripts = []
+        for ax, tr in agg_targets:
+            job_name = (f"mfclassify_agg_{actual_label}_{space}_{ax}_{tr}")
+            context = {
+                **agg_resources,
+                "job_name": job_name,
+                "timestamp": timestamp,
+                "label": actual_label,
+                "space": space,
+                "clf": clf,
+                "cv": cv,
+                "importance": importance,
+                "trial_type": tr,
+                "analysis_level": analysis_level,
+            }
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script(
+                "classify_multifeature_aggregate.sh.j2", context,
+                output_path=script_path)
+            agg_scripts.append(script_path)
+        agg_array_id = submit_job_array(
+            agg_scripts,
+            f"mfclassify_agg_array_{actual_label}", agg_resources,
+            script_dir, timestamp, max_concurrent=max_concurrent,
+            dependencies=[classify_array_id] if classify_array_id else None,
+            dep_type="afterok", dry_run=dry_run,
+        )
+
+    all_ids = [j for j in (classify_array_id, agg_array_id) if j]
+    if all_ids:
+        manifest_path = log_dir / f"mfclassify_manifest_{timestamp}.json"
+        save_job_manifest(all_ids, manifest_path, metadata={
+            "stage": "classify_multifeature",
+            "space": space,
+            "axes": axes,
+            "trial_types": trial_types,
+            "clf": clf,
+            "cv": cv,
+            "label": actual_label,
+            "n_permutations": n_permutations,
+            "importance": importance,
+            "n_chunks": n_chunks,
+            "classify_array_job_id": classify_array_id,
+            "aggregate_array_job_id": agg_array_id,
+            "features": feature_list,
+            "timestamp": timestamp,
+        })
+        print(f"\n✓ Submitted mf classify array ({len(task_scripts)} tasks)" +
+              (f" + aggregator array" if agg_array_id else "") +
+              f"; manifest: {manifest_path}")
+    elif dry_run:
+        n_total = len(task_scripts)
+        print(f"\n[DRY RUN] Would submit {n_total} mf classify task(s)" +
+              (" + aggregator array" if agg_targets else ""))
+
+
 @task
 def classify_multifeature(c, features="all", label=None,
                           clf="logistic", cv="logo", space="sensor",
@@ -2331,7 +2524,9 @@ def classify_multifeature(c, features="all", label=None,
                           n_chunks=1, chunk_idx=0,
                           importance_n_repeats=5,
                           keep_bad_trials=False, output_dir=None,
-                          aggregate=True, config="config.yaml"):
+                          aggregate=True, config="config.yaml",
+                          slurm=False, slurm_time=None, slurm_mem=None,
+                          slurm_cpus=None, dry_run=False):
     """Run multi-feature classification (IN vs OUT) along one or all axes.
 
     Loads all selected features as one stacked tensor (n_trials, n_spatial,
@@ -2380,6 +2575,22 @@ def classify_multifeature(c, features="all", label=None,
         print(
             f"NOTE: --n-chunks={n_chunks} only takes effect for --axis=per-cell."
         )
+
+    if slurm:
+        _classify_multifeature_slurm(
+            c, feature_list=feature_list, label=label, clf=clf, cv=cv,
+            space=space, axis=axis, importance=importance,
+            n_permutations=n_permutations, n_jobs=n_jobs,
+            per_feature_scale=per_feature_scale, no_balance=no_balance,
+            seed=seed, trial_type=trial_type, zoning=zoning,
+            n_events_window=n_events_window, standardize=standardize,
+            analysis_level=analysis_level, n_chunks=n_chunks,
+            importance_n_repeats=importance_n_repeats,
+            keep_bad_trials=keep_bad_trials, aggregate=aggregate,
+            slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
+            dry_run=dry_run,
+        )
+        return
 
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.classification.run_multifeature",
@@ -2554,15 +2765,35 @@ def networks_coherence(c, space="schaefer_400", trial_type="all",
 def networks_classify(c, space="schaefer_400", scope="all", trial_type="all",
                       yeo=7, clf="logistic", cv="logo", n_permutations=1000,
                       n_jobs=-1, families=None, per_feature_features=None,
-                      subjects=None):
+                      subjects=None, slurm=False,
+                      slurm_time=None, slurm_mem=None, slurm_cpus=None,
+                      aggregate=True, delete_partials=False, dry_run=False):
     """Yeo-network-restricted IN-vs-OUT classification (3 scopes).
 
     Scopes: per-family | per-feature | joint | all
 
+    With --slurm, submits one SLURM array task per (scope × trial-type × network)
+    cell (up to 3 × 3 × {yeo}). A second array depends on the first (afterok)
+    to merge the per-network partials into the combined bundle expected by the
+    panel. Disable the auto-merge with --no-aggregate.
+
     Examples:
         invoke analysis.networks.classify --space=schaefer_400
         invoke analysis.networks.classify --space=schaefer_400 --scope=joint
+        invoke analysis.networks.classify --slurm
+        invoke analysis.networks.classify --slurm --dry-run
     """
+    if slurm:
+        _network_classify_slurm(
+            c, space=space, scope=scope, trial_type=trial_type, yeo=yeo,
+            clf=clf, cv=cv, n_permutations=n_permutations, n_jobs=n_jobs,
+            families=families, per_feature_features=per_feature_features,
+            slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
+            aggregate=aggregate, delete_partials=delete_partials,
+            dry_run=dry_run,
+        )
+        return
+
     python_exe = get_python_executable()
     cmd = [
         python_exe, "-m", "code.classification.run_network_classification",
@@ -2583,6 +2814,211 @@ def networks_classify(c, space="schaefer_400", scope="all", trial_type="all",
         cmd.extend(["--subjects", subjects])
     print(f"Running: {' '.join(cmd)}")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def networks_classify_aggregate(c, space="schaefer_400", scope="all",
+                                trial_type="all", yeo=7, clf="logistic",
+                                cv="logo", delete_partials=False):
+    """Merge per-network classification partials into combined bundles.
+
+    Use after a SLURM run if the afterok aggregator job failed and partials
+    are still on disk.
+
+    Examples:
+        invoke analysis.networks.classify-aggregate --space=schaefer_400
+        invoke analysis.networks.classify-aggregate --space=schaefer_400 --delete-partials
+    """
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.classification.aggregate_network_classification",
+        "--space", space,
+        "--scope", scope,
+        "--trial-type", trial_type,
+        "--yeo", str(yeo),
+        "--clf", clf,
+        "--cv", cv,
+    ]
+    if delete_partials:
+        cmd.append("--delete-partials")
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
+                            n_permutations, n_jobs, families,
+                            per_feature_features, slurm_time, slurm_mem,
+                            slurm_cpus, aggregate, delete_partials, dry_run):
+    """Submit network-restricted classification as a SLURM array job.
+
+    One array task per (scope × trial-type × network). A second array
+    depends on the first to merge the per-network partials.
+    """
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import (
+        render_slurm_script, save_job_manifest, submit_job_array,
+    )
+    from code.utils.yeo_networks import network_order
+    from code.classification.run_network_classification import (
+        SCOPES, DEFAULT_FAMILIES, DEFAULT_PER_FEATURE,
+    )
+
+    print(f"\n[SLURM Mode] Submitting network classification array(s)\n")
+
+    config = load_config()
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+
+    classification_resources = slurm_config.get("classification", {})
+    if not classification_resources:
+        print("ERROR: No classification resources in config.yaml "
+              "(computing.slurm.classification)")
+        return
+
+    # Resolve scope / trial-type / network lists.
+    scopes = list(SCOPES) if scope == "all" else [scope]
+    trial_types = (["alltrials", "correct", "lapse"]
+                   if trial_type == "all" else [trial_type])
+    nets = list(network_order(yeo))
+
+    fams_str = families or " ".join(DEFAULT_FAMILIES)
+    pfeat_str = per_feature_features or " ".join(DEFAULT_PER_FEATURE)
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = (PROJECT_ROOT / "slurm" / "scripts"
+                  / "network_classification")
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = (PROJECT_ROOT / config["paths"]["logs"] / "slurm"
+               / "network_classification")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    cpus_resolved = (slurm_cpus if slurm_cpus is not None
+                     else classification_resources["cpus"])
+    mem_resolved = (slurm_mem if slurm_mem is not None
+                    else classification_resources["mem"])
+    time_resolved = (slurm_time if slurm_time is not None
+                     else classification_resources["time"])
+    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  "
+          f"time={time_resolved}")
+
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=cpus_resolved,
+        mem=mem_resolved,
+        time=time_resolved,
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+    max_concurrent = slurm_config.get("array_throttle", 0)
+
+    # Build per-task scripts: (scope × trial × network)
+    task_scripts = []
+    for sc in scopes:
+        for tr in trial_types:
+            for net in nets:
+                job_name = (f"netclassify_{space}_yeo{yeo}_{sc}_"
+                            f"{tr}_{net}")
+                context = {
+                    **base_resources,
+                    "job_name": job_name,
+                    "timestamp": timestamp,
+                    "space": space,
+                    "yeo": yeo,
+                    "scope": sc,
+                    "network": net,
+                    "trial_type": tr,
+                    "clf": clf,
+                    "cv": cv,
+                    "n_permutations": n_permutations,
+                    "n_jobs": n_jobs,
+                    "seed": 42,
+                    "standardize": "per-subject",
+                    "families": fams_str,
+                    "per_feature_features": pfeat_str,
+                }
+                script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                render_slurm_script("network_classification.sh.j2", context,
+                                    output_path=script_path)
+                task_scripts.append(script_path)
+
+    print(f"Submitting {len(task_scripts)} array task(s) "
+          f"({len(scopes)} scopes × {len(trial_types)} trial-types "
+          f"× {len(nets)} networks)")
+
+    classify_array_id = submit_job_array(
+        task_scripts,
+        f"netclassify_array_yeo{yeo}", base_resources,
+        script_dir, timestamp, max_concurrent=max_concurrent,
+        dry_run=dry_run,
+    )
+
+    # Aggregation array: one task per (scope × trial-type), afterok on
+    # the classify array.
+    agg_array_id = None
+    if aggregate:
+        agg_resources = dict(base_resources, cpus=1, mem="4G", time="0:15:00")
+        agg_scripts = []
+        for sc in scopes:
+            for tr in trial_types:
+                job_name = (f"netclassify_agg_{space}_yeo{yeo}_{sc}_{tr}")
+                context = {
+                    **agg_resources,
+                    "job_name": job_name,
+                    "timestamp": timestamp,
+                    "space": space,
+                    "yeo": yeo,
+                    "scope": sc,
+                    "trial_type": tr,
+                    "clf": clf,
+                    "cv": cv,
+                    "delete_partials": delete_partials,
+                }
+                script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                render_slurm_script(
+                    "network_classification_aggregate.sh.j2", context,
+                    output_path=script_path)
+                agg_scripts.append(script_path)
+        agg_array_id = submit_job_array(
+            agg_scripts,
+            f"netclassify_agg_array_yeo{yeo}", agg_resources,
+            script_dir, timestamp, max_concurrent=max_concurrent,
+            dependencies=[classify_array_id] if classify_array_id else None,
+            dep_type="afterok", dry_run=dry_run,
+        )
+
+    all_ids = [j for j in (classify_array_id, agg_array_id) if j]
+    if all_ids:
+        manifest_path = (log_dir
+                         / f"netclassify_manifest_{timestamp}.json")
+        save_job_manifest(all_ids, manifest_path, metadata={
+            "stage": "network_classification",
+            "space": space,
+            "yeo": yeo,
+            "scopes": scopes,
+            "trial_types": trial_types,
+            "networks": nets,
+            "clf": clf,
+            "cv": cv,
+            "n_permutations": n_permutations,
+            "classify_array_job_id": classify_array_id,
+            "aggregate_array_job_id": agg_array_id,
+            "timestamp": timestamp,
+        })
+        print(f"\n✓ Submitted network-classify array ({len(task_scripts)} "
+              f"tasks)" + (f" + aggregator array" if agg_array_id else "") +
+              f"; manifest: {manifest_path}")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would submit {len(task_scripts)} classify task(s)" +
+              (" + aggregator array" if aggregate else ""))
 
 
 @task
@@ -2851,6 +3287,7 @@ networks = Collection("networks")
 networks.add_task(networks_aggregate_stats, name="aggregate-stats")
 networks.add_task(networks_coherence, name="coherence")
 networks.add_task(networks_classify, name="classify")
+networks.add_task(networks_classify_aggregate, name="classify-aggregate")
 networks.add_task(networks_importance, name="importance")
 networks.add_task(networks_all, name="all")
 

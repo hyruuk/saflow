@@ -1,0 +1,35 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Multifeature classification — per-cell chunk aggregation
+#   {{ label }} on {{ space }}, trial-type={{ trial_type }}, axis=per-cell
+# =============================================================================
+
+echo "Multifeature aggregation configuration:"
+echo "  Label:        {{ label }}"
+echo "  Space:        {{ space }}"
+echo "  Axis:         per-cell"
+echo "  Trial-type:   {{ trial_type }}"
+echo "  Classifier:   {{ clf }}"
+echo "  CV strategy:  {{ cv }}"
+echo ""
+
+python -m code.classification.aggregate_multifeature \
+    --label {{ label }} \
+    --space {{ space }} \
+    --clf {{ clf }} \
+    --cv {{ cv }} \
+    --importance {{ importance }} \
+    --trial-type {{ trial_type }} \
+    --analysis-level {{ analysis_level }} \
+    --axes per-cell
+
+EXIT=$?
+if [ $EXIT -eq 0 ]; then
+    echo "Multifeature aggregation completed successfully"
+else
+    echo "Multifeature aggregation failed with exit code $EXIT"
+    exit $EXIT
+fi
+{% endblock %}

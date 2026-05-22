@@ -328,6 +328,11 @@ def parse_args() -> argparse.Namespace:
                    help="Optional space-separated subject IDs (default: config).")
     p.add_argument("--results-root", default=None)
     p.add_argument("--keep-bad-trials", action="store_true")
+    p.add_argument("--network", default=None,
+                   help="Restrict to a single Yeo network (e.g. 'Default'). "
+                        "Writes a partial *_net-<network>.npz; combine via "
+                        "code.classification.aggregate_network_classification. "
+                        "Used by SLURM array sharding.")
     return p.parse_args()
 
 
@@ -434,7 +439,17 @@ def main() -> None:
 
         # Build the per-network parcel index map ONCE per trial-type.
         net_to_parcels = network_parcel_indices(ch_names, n_networks=args.yeo)
-        networks = network_order(args.yeo)
+        all_networks = network_order(args.yeo)
+        if args.network is not None:
+            if args.network not in all_networks:
+                raise SystemExit(
+                    f"--network={args.network!r} not in Yeo-{args.yeo} order "
+                    f"{list(all_networks)}"
+                )
+            networks = (args.network,)
+            logger.info(f"  restricted to single network: {args.network}")
+        else:
+            networks = all_networks
         for net in networks:
             logger.info(f"    network {net}: {net_to_parcels[net].size} parcels")
 
@@ -471,12 +486,17 @@ def main() -> None:
             else:
                 raise ValueError(f"Unknown scope {scope!r}")
 
-            out_name = (f"classif-networks_yeo{args.yeo}_scope-{scope}_"
-                        f"type-{trial}_clf-{args.clf}_cv-{args.cv}.npz")
+            out_base = (f"classif-networks_yeo{args.yeo}_scope-{scope}_"
+                        f"type-{trial}_clf-{args.clf}_cv-{args.cv}")
+            if args.network is not None:
+                out_name = f"{out_base}_net-{args.network}.npz"
+            else:
+                out_name = f"{out_base}.npz"
             out_path = out_dir / out_name
             np.savez(out_path, **payload,
                      meta=np.asarray(json.dumps(provenance_base | {
                          "trial_type": trial, "scope": scope,
+                         "network_restriction": args.network,
                      })))
             logger.info(f"  wrote {out_path}")
 
