@@ -650,6 +650,12 @@ def save_mf_results(
 
     if "importances" in results:
         npz_payload["importances"] = results["importances"]
+    # Pass through auxiliary metrics + confusion matrices when present.
+    # ``run_*`` populates them when the cell scoring path computes them; if
+    # not, this is a no-op and downstream code falls back to ``observed``.
+    for k, v in results.items():
+        if k.startswith("metrics_") or k == "confusion_matrices":
+            npz_payload[k] = np.asarray(v)
 
     # Save spatial/feature index info so the aggregator can align files.
     # Fall back to numeric labels when the feature npz didn't expose ch_names
@@ -673,6 +679,7 @@ def save_mf_results(
         "classifier": clf_name,
         "cv_strategy": cv_name,
         "axis": axis,
+        "scoring": args_dict.get("scoring") or results.get("scoring"),
         "importance_method": (
             results.get("importance_method", importance)
             if importance != "none" else "none"

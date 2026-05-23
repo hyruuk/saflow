@@ -102,36 +102,54 @@ def _pick(npz: np.lib.npyio.NpzFile, candidates: Sequence[str]) -> Optional[np.n
     return None
 
 
+_STATS_LEVEL_PATTERNS: Dict[str, Tuple[str, ...]] = {
+    "average": (
+        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "_level-average_type-{trial}_results.npz",
+        # legacy pre-`level` token
+        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "_path-subj-spectrum_type-{trial}_results.npz",
+    ),
+    "epoch": (
+        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "_level-epoch_type-{trial}_results.npz",
+        # legacy pre-`level` token
+        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "_path-subj-trial-*_type-{trial}_results.npz",
+    ),
+}
+
+
 def _find_stats_file(stats_dir: Path, feature: str, trial: str,
-                     inout: str) -> Optional[Path]:
-    """Locate one per-parcel stats results.npz for (feature, trial)."""
-    pats = [
-        f"feature-{feature}_inout-{inout}_test-paired_ttest"
-        f"_level-average_type-{trial}_results.npz",
-        f"feature-{feature}_inout-{inout}_test-paired_ttest"
-        f"_path-subj-spectrum_type-{trial}_results.npz",
-        f"feature-{feature}_inout-{inout}_test-paired_ttest"
-        f"_path-subj-trial-*_type-{trial}_results.npz",
-    ]
+                     inout: str, level: str = "average") -> Optional[Path]:
+    """Locate one per-parcel stats results.npz for (feature, trial, level)."""
+    pats = _STATS_LEVEL_PATTERNS.get(level, _STATS_LEVEL_PATTERNS["average"])
     for pat in pats:
-        hits = sorted(stats_dir.glob(pat))
+        hits = sorted(stats_dir.glob(
+            pat.format(feature=feature, inout=inout, trial=trial)))
         if hits:
             return hits[0]
     return None
 
 
-def _find_classif_file(clf_dir: Path, feature: str, trial: str, inout: str,
-                       clf: str, cv: str, space: str) -> Optional[Path]:
-    """Locate one per-spatial mf classification scores npz for (feature, trial)."""
+def _find_classif_file(clf_group_dir: Path, feature: str, trial: str,
+                       inout: str, clf: str, cv: str, space: str,
+                       level: str = "epoch") -> Optional[Path]:
+    """Locate one per-spatial univariate classification scores npz.
+
+    ``clf_group_dir`` must already be ``classification_<space>/group/`` —
+    per-spatial univariate scores live there, not in the parent dir.
+    """
     pats = [
         f"feature-{feature}_space-{space}_inout-{inout}"
-        f"_clf-{clf}_cv-{cv}_mode-univariate_level-average"
+        f"_clf-{clf}_cv-{cv}_mode-univariate_level-{level}"
         f"_type-{trial}_scores.npz",
+        # legacy pre-`level` token
         f"feature-{feature}_space-{space}_inout-{inout}"
         f"_clf-{clf}_cv-{cv}_mode-univariate_type-{trial}_scores.npz",
     ]
     for pat in pats:
-        hits = sorted(clf_dir.glob(pat))
+        hits = sorted(clf_group_dir.glob(pat))
         if hits:
             return hits[0]
     return None
@@ -304,7 +322,14 @@ def _render_brain_into(ax, values: np.ndarray, mask: Optional[np.ndarray],
                        roi_names: List[str], atlas_name: str, fsaverage,
                        vmin: float, vmax: float, cmap: str,
                        yeo_overlay: Optional[int]) -> None:
-    """Render the 2x2 brain composite for a single feature into ``ax``."""
+    """Render the 2x2 brain composite for a single feature into ``ax``.
+
+    If ``mask`` zeroes out every parcel (no significant ROIs), the inflated
+    surface is still drawn — just with no colored overlay — so the panel
+    keeps its slot instead of degrading to a "no data" placeholder. The
+    placeholder only fires when ``values`` is truly missing (handled by
+    the caller).
+    """
     from PIL import Image
 
     from code.visualization.plot_surface import (
@@ -315,9 +340,10 @@ def _render_brain_into(ax, values: np.ndarray, mask: Optional[np.ndarray],
     vals = np.asarray(values, dtype=float).copy()
     if mask is not None:
         vals[~np.asarray(mask, dtype=bool)] = np.nan
-    if not np.isfinite(vals).any():
-        _placeholder(ax)
-        return
+    # NB: previously we returned a placeholder here when nothing was
+    # significant. Keep drawing the brain instead — `plot_surf_stat_map`
+    # treats all-NaN as "no overlay" and renders just the sulci surface,
+    # which is exactly what we want for "no parcels significant".
 
     lh, rh = roi_to_surface(vals, roi_names, atlas_name)
     images = {}
@@ -352,15 +378,42 @@ def _render_brain_into(ax, values: np.ndarray, mask: Optional[np.ndarray],
             [bot, np.full((bot.shape[0], mw - bot.shape[1], 3), 255,
                           dtype=np.uint8)], axis=1)
     composite = np.concatenate([top, bot], axis=0)
-    ax.imshow(composite, interpolation="bilinear", aspect="auto")
-    ax.set_axis_off()
+    # aspect="equal" preserves the natural 2:1-ish aspect of the 2x2 brain
+    # composite so the cortical surface isn't squished vertically inside
+    # near-square axes; matplotlib letterboxes the spare height/width.
+    ax.imshow(composite, interpolation="bilinear", aspect="equal")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
 
-def _tier1_brains(gs, fig, stats_dir: Path, clf_dir: Path,
-                  space: str, trial: str, inout: str, clf: str, cv: str,
-                  features: Sequence[str], alpha: float, correction: str,
+def _label_with_n_sig(label: str, mask: Optional[np.ndarray],
+                      data_available: bool) -> str:
+    """Mirror stats_classif_panel's topomap label: ``<label>\n(n=X sig)``.
+
+    ``data_available=False`` is the "no input" case → just the label
+    (the axes itself has been replaced by a placeholder).
+    """
+    if not data_available:
+        return label
+    if mask is None:
+        return f"{label}\n(n/a sig)"
+    return f"{label}\n(n={int(np.sum(mask))} sig)"
+
+
+def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
+                  space: str, trial: str, inout: str, clf: str,
+                  classif_cv: str, features: Sequence[str], alpha: float,
+                  stats_level: str, stats_correction: str,
+                  classif_level: str, classif_correction: str,
                   yeo_overlay: Optional[int]) -> None:
-    """Tier 1 — two rows of 2x2 brain composites + colorbars."""
+    """Tier 1 — two rows of 2x2 brain composites + colorbars.
+
+    Row A (stats) and Row B (classif) use independent (level, correction)
+    settings so the panel can show e.g. ``average / FDR`` per-parcel
+    t-values together with ``single-epoch / tmax`` per-parcel AUCs.
+    """
     from code.visualization.plot_surface import (
         _get_fsaverage_surfaces,
         _get_roi_names,
@@ -368,35 +421,42 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_dir: Path,
 
     n_feat = len(features)
     # Inner grid: 2 rows (t, AUC) × (n_feat + 1) cols (features + colorbar).
+    # Bias height toward the brain composites so they aren't squeezed
+    # vertically by the xlabel + spacing budget.
     inner = GridSpecFromSubplotSpec(
         2, n_feat + 1, subplot_spec=gs,
         width_ratios=[1.0] * n_feat + [0.06],
-        height_ratios=[1.0, 1.0], hspace=0.10, wspace=0.04,
+        height_ratios=[1.0, 1.0], hspace=0.32, wspace=0.04,
     )
 
-    # ---- collect t-values + classif AUC for each feature
     fsaverage = _get_fsaverage_surfaces()
     roi_names = _get_roi_names(space, [], [])
 
     t_collect: List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]] = []
     auc_collect: List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]] = []
     for feat in features:
-        sp = _find_stats_file(stats_dir, feat, trial, inout)
+        sp = _find_stats_file(stats_dir, feat, trial, inout, level=stats_level)
         if sp is None:
+            logger.info(f"  tier1 stats not found for {feat} "
+                        f"(level={stats_level})")
             t_collect.append((None, None))
         else:
             try:
-                t_collect.append(_load_stats_per_parcel(sp, correction))
+                t_collect.append(_load_stats_per_parcel(sp, stats_correction))
             except Exception as exc:
                 logger.warning(f"  tier1 t-load failed for {feat}: {exc}")
                 t_collect.append((None, None))
 
-        cp = _find_classif_file(clf_dir, feat, trial, inout, clf, cv, space)
+        cp = _find_classif_file(clf_group_dir, feat, trial, inout, clf,
+                                classif_cv, space, level=classif_level)
         if cp is None:
+            logger.info(f"  tier1 classif not found for {feat} "
+                        f"(level={classif_level}, cv={classif_cv})")
             auc_collect.append((None, None))
         else:
             try:
-                auc_collect.append(_load_classif_per_parcel(cp, correction))
+                auc_collect.append(
+                    _load_classif_per_parcel(cp, classif_correction))
             except Exception as exc:
                 logger.warning(f"  tier1 auc-load failed for {feat}: {exc}")
                 auc_collect.append((None, None))
@@ -418,38 +478,53 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_dir: Path,
     else:
         auc_lo, auc_hi = 0.5, 0.7
 
+    row_a_label = (f"Tier 1A · per-parcel t (OUT − IN)\n"
+                   f"{stats_level} / {stats_correction}")
+    row_b_label = (f"Tier 1B · per-parcel AUC\n"
+                   f"{classif_level} / {classif_correction}")
+
     for j, feat in enumerate(features):
-        # row 0 — t-values
+        # ---- row 0: t-values (stats) ----
         ax_t = fig.add_subplot(inner[0, j])
         vals_t, pvals_t = t_collect[j]
+        mask_t = ((pvals_t < alpha) if pvals_t is not None
+                  else None) if vals_t is not None else None
         if vals_t is None:
             _placeholder(ax_t)
         else:
-            mask = (pvals_t < alpha) if pvals_t is not None else None
             _render_brain_into(
-                ax_t, vals_t, mask, roi_names, space, fsaverage,
+                ax_t, vals_t, mask_t, roi_names, space, fsaverage,
                 vmin=-tmax, vmax=tmax, cmap="RdBu_r",
                 yeo_overlay=yeo_overlay,
             )
-        ax_t.set_title(FEATURE_DISPLAY.get(feat, feat),
-                       fontsize=9, pad=4)
+        ax_t.set_xlabel(
+            _label_with_n_sig(FEATURE_DISPLAY.get(feat, feat), mask_t,
+                              data_available=vals_t is not None),
+            fontsize=8.5, labelpad=2,
+        )
         if j == 0:
-            ax_t.set_ylabel("Tier 1A: per-parcel t (OUT − IN)", fontsize=9)
+            ax_t.set_ylabel(row_a_label, fontsize=9)
 
-        # row 1 — AUC
+        # ---- row 1: AUC (classif) ----
         ax_a = fig.add_subplot(inner[1, j])
         vals_a, pvals_a = auc_collect[j]
+        mask_a = ((pvals_a < alpha) if pvals_a is not None
+                  else None) if vals_a is not None else None
         if vals_a is None:
             _placeholder(ax_a)
         else:
-            mask = (pvals_a < alpha) if pvals_a is not None else None
             _render_brain_into(
-                ax_a, vals_a, mask, roi_names, space, fsaverage,
+                ax_a, vals_a, mask_a, roi_names, space, fsaverage,
                 vmin=auc_lo, vmax=auc_hi, cmap="magma",
                 yeo_overlay=yeo_overlay,
             )
+        ax_a.set_xlabel(
+            _label_with_n_sig(FEATURE_DISPLAY.get(feat, feat), mask_a,
+                              data_available=vals_a is not None),
+            fontsize=8.5, labelpad=2,
+        )
         if j == 0:
-            ax_a.set_ylabel("Tier 1B: per-parcel AUC", fontsize=9)
+            ax_a.set_ylabel(row_b_label, fontsize=9)
 
     # Colorbars (one per row in the last column)
     cax_t = fig.add_subplot(inner[0, -1])
@@ -549,7 +624,7 @@ def _tier3_classif(gs, fig, net_dir: Path, trial: str, clf: str, cv: str,
             _draw_network_bar(
                 ax, scores, nets, palette,
                 title=FAMILY_DISPLAY.get(fam, fam),
-                ylabel="balanced acc" if j == 0 else "",
+                ylabel="AUC" if j == 0 else "",
                 sig_mask=sig, axhline=0.5,
                 ylim=(0.4, max(0.7, float(np.nanmax(scores)) + 0.02)
                       if np.isfinite(scores).any() else (0.4, 0.7)),
@@ -572,8 +647,8 @@ def _tier3_classif(gs, fig, net_dir: Path, trial: str, clf: str, cv: str,
                 if np.isfinite(M).any() else 0.7)
         _draw_heatmap(
             ax_hm, M, row_labels=list(nets), col_labels=col_labels,
-            title="per-feature × network balanced accuracy",
-            cmap="magma", vmin=0.45, vmax=vmax, cbar_label="acc",
+            title="per-feature × network AUC",
+            cmap="magma", vmin=0.45, vmax=vmax, cbar_label="AUC",
             sig_mask=sig,
         )
 
@@ -658,11 +733,39 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--trial-type", default="correct",
                    choices=["alltrials", "correct", "lapse"])
     p.add_argument("--yeo", type=int, default=7, choices=[7, 17])
-    p.add_argument("--correction", default="fdr",
-                   choices=list(PVAL_KEYS))
     p.add_argument("--alpha", type=float, default=0.05)
+
+    # Stats vs classif knobs are independent: default panel mixes
+    # subject-level / FDR stats with single-epoch / tmax classification.
+    p.add_argument("--stats-correction", default="fdr", choices=list(PVAL_KEYS),
+                   help="Multiple-comparison correction for the stats row "
+                        "(Tier 1A) + per-network aggregate (Tier 2). "
+                        "Default: fdr.")
+    p.add_argument("--stats-level", default="average",
+                   choices=["average", "epoch"],
+                   help="Granularity for the per-parcel stats input. "
+                        "Default: average (pooled subject means).")
+    p.add_argument("--classif-correction", default="tmax",
+                   choices=list(PVAL_KEYS),
+                   help="Multiple-comparison correction for Tier 1B "
+                        "per-parcel AUC. Default: tmax.")
+    p.add_argument("--classif-level", default="epoch",
+                   choices=["epoch", "average"],
+                   help="Granularity for the per-parcel classification "
+                        "input. Default: epoch (single-trial).")
+    p.add_argument("--classif-cv", default=None,
+                   help="CV strategy token in classification filenames. "
+                        "Defaults: 'logo' for level=epoch, 'group' for "
+                        "level=average.")
+
+    # Legacy aliases — set BOTH stats- and classif- variants when given.
+    p.add_argument("--correction", default=None, choices=list(PVAL_KEYS),
+                   help="(Deprecated) sets both --stats-correction and "
+                        "--classif-correction.")
+    p.add_argument("--cv", default=None,
+                   help="(Deprecated) alias for --classif-cv.")
+
     p.add_argument("--clf", default="logistic")
-    p.add_argument("--cv", default="logo")
     p.add_argument("--mf-label", default="all",
                    help="Label used when the joint mf run was launched "
                         "(filename: feature-<label>_..._axis-joint_...).")
@@ -677,7 +780,16 @@ def parse_args() -> argparse.Namespace:
                    help="Skip the Yeo network boundary overlay on Tier 1 "
                         "(faster, useful while iterating).")
     p.add_argument("--output", default=None)
-    return p.parse_args()
+    args = p.parse_args()
+
+    if args.correction is not None:
+        args.stats_correction = args.correction
+        args.classif_correction = args.correction
+    if args.cv is not None:
+        args.classif_cv = args.cv
+    if args.classif_cv is None:
+        args.classif_cv = "logo" if args.classif_level == "epoch" else "group"
+    return args
 
 
 def main() -> int:
@@ -691,6 +803,7 @@ def main() -> int:
     stats_dir = results_root / f"statistics_{args.space}"
     stats_net_dir = stats_dir / "group" / "networks"
     clf_dir = results_root / f"classification_{args.space}"
+    clf_group_dir = clf_dir / "group"
     classif_net_dir = clf_dir / "group_mf" / "networks"
 
     features = args.features.split()
@@ -712,18 +825,22 @@ def main() -> int:
     # Top: title + Yeo legend; then 4 tiers
     gs = GridSpec(
         nrows=6, ncols=1, figure=fig,
-        height_ratios=[0.5, 0.45, 9.0, 5.0, 7.0, 7.0],
+        height_ratios=[0.5, 0.45, 10.5, 5.0, 7.0, 7.0],
         hspace=0.25, left=0.04, right=0.98, top=0.97, bottom=0.03,
     )
 
     # ---- Title
     ax_title = fig.add_subplot(gs[0])
     ax_title.axis("off")
-    title = (f"Network story panel — space={args.space} · "
-             f"yeo-{args.yeo} · trial-type={args.trial_type} · "
-             f"correction={args.correction}")
+    title = (
+        f"Network story panel — space={args.space} · "
+        f"yeo-{args.yeo} · trial-type={args.trial_type}  |  "
+        f"stats: {args.stats_level}/{args.stats_correction} · "
+        f"classif: {args.classif_level}/{args.classif_correction} "
+        f"(cv={args.classif_cv}, scoring=AUC)"
+    )
     ax_title.text(0.5, 0.5, title, ha="center", va="center",
-                  fontsize=15, fontweight="bold",
+                  fontsize=14, fontweight="bold",
                   transform=ax_title.transAxes)
 
     # ---- Yeo legend
@@ -734,10 +851,14 @@ def main() -> int:
     yeo_overlay = None if args.no_yeo_overlay else args.yeo
     try:
         _tier1_brains(
-            gs[2], fig, stats_dir=stats_dir, clf_dir=clf_dir,
+            gs[2], fig, stats_dir=stats_dir, clf_group_dir=clf_group_dir,
             space=args.space, trial=args.trial_type, inout=inout_str,
-            clf=args.clf, cv=args.cv, features=features,
-            alpha=args.alpha, correction=args.correction,
+            clf=args.clf, classif_cv=args.classif_cv,
+            features=features, alpha=args.alpha,
+            stats_level=args.stats_level,
+            stats_correction=args.stats_correction,
+            classif_level=args.classif_level,
+            classif_correction=args.classif_correction,
             yeo_overlay=yeo_overlay,
         )
     except Exception as exc:
@@ -749,7 +870,7 @@ def main() -> int:
     try:
         _tier2_network_bars(
             gs[3], fig, net_dir=stats_net_dir,
-            trial=args.trial_type, correction=args.correction,
+            trial=args.trial_type, correction=args.stats_correction,
             features=features, n_networks=args.yeo, alpha=args.alpha,
         )
     except Exception as exc:
@@ -761,7 +882,7 @@ def main() -> int:
     try:
         _tier3_classif(
             gs[4], fig, net_dir=classif_net_dir,
-            trial=args.trial_type, clf=args.clf, cv=args.cv,
+            trial=args.trial_type, clf=args.clf, cv=args.classif_cv,
             n_networks=args.yeo, families=families,
             per_feature_subset=per_feature_subset, alpha=args.alpha,
         )
@@ -775,7 +896,7 @@ def main() -> int:
         _tier4_importance_coherence(
             gs[5], fig, classif_net_dir=classif_net_dir,
             stats_net_dir=stats_net_dir, trial=args.trial_type,
-            clf=args.clf, cv=args.cv, label=args.mf_label,
+            clf=args.clf, cv=args.classif_cv, label=args.mf_label,
             n_networks=args.yeo, features=features,
         )
     except Exception as exc:

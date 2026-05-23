@@ -315,7 +315,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cv", default="logo")
     p.add_argument("--n-splits", type=int, default=5)
     p.add_argument("--n-permutations", type=int, default=1000)
-    p.add_argument("--scoring", default="balanced_accuracy")
+    p.add_argument("--scoring", default="roc_auc")
     p.add_argument("--standardize", default="per-subject",
                    choices=["per-subject", "none"])
     p.add_argument("--no-balance", action="store_true")

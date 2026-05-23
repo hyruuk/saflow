@@ -332,6 +332,32 @@ def precommit(c):
     print("=" * 80)
 
 
+@task
+def docs_mermaid(c, check=False, target=None):
+    """Render every mermaid block under docs/ into PNG files.
+
+    Output: docs/images/<doc-stem>-<n>.png (one PNG per mermaid block).
+
+    Args:
+        check: exit non-zero if any PNG is missing or older than its source
+            markdown (intended for CI).
+        target: render just one markdown file (default: every .md under
+            docs/ that contains a ```mermaid block).
+
+    Examples:
+        invoke dev.docs-mermaid
+        invoke dev.docs-mermaid --check
+        invoke dev.docs-mermaid --target=docs/analysis_workflow.md
+    """
+    script = PROJECT_ROOT / "scripts" / "render_mermaid_docs.sh"
+    cmd = ["bash", str(script)]
+    if check:
+        cmd.append("--check")
+    if target:
+        cmd.append(target)
+    c.run(" ".join(cmd), pty=True)
+
+
 # ==============================================================================
 # env.* Tasks - Environment Management
 # ==============================================================================
@@ -1242,45 +1268,67 @@ def spectra(c, space="sensor", stat_feature="fooof_exponent", select_by="correct
 
 @task
 def stats_classif_panel(c, space="sensor", trial_type="alltrials",
-                        correction="fdr", clf="logistic", cv="group",
+                        stats_correction="fdr", stats_level="average",
+                        classif_correction="tmax", classif_level="epoch",
+                        classif_cv=None, clf="logistic",
                         alpha=0.05, n_events_window=8,
-                        output=None, config="config.yaml"):
+                        output=None, config="config.yaml",
+                        correction=None, cv=None):
     """Render the paper-ready stats + classification multi-panel (Fig. 3).
 
     A single composite figure (panels A-J): per-band t-values and AUC for
     raw and corrected PSD, FOOOF parameter t-values and AUC, plus the
     IN-vs-OUT FOOOF spectral decomposition lines (raw, aperiodic,
-    corrected, periodic). Significance is computed within each topomap
-    (per feature), never pooled across bands/metrics.
+    corrected, periodic). Significance is computed within each topomap /
+    brain (per feature), never pooled across bands/metrics.
+
+    Default mixes analysis modes per the project convention:
+      - stats rows (A, G, I): subject-level / FDR
+      - classif rows (B, H, J): single-epoch / tmax / cv=logo
+      - classification scoring metric: AUC
 
     Args:
         space: 'sensor' (topomaps) or an atlas name like 'schaefer_400' /
             'aparc.a2009s' (inflated-brain panels). Vertex-level 'source'
             is not wired.
         trial_type: alltrials | correct | lapse.
-        correction: significance mask -- fdr (default) | tmax | bonferroni |
-            uncorrected. Always applied per-feature.
-        clf, cv: classifier file selectors (default logistic/group). The
-            panel is necessarily univariate.
+        stats_correction / stats_level: t-test side of the panel.
+        classif_correction / classif_level / classif_cv: classification
+            side. ``classif_cv`` auto-resolves to 'logo' for level=epoch
+            and 'group' for level=average when left unset.
+        clf: classifier file selector (default logistic). Panel is
+            necessarily univariate.
         alpha: significance threshold for the mask (default 0.05).
         n_events_window: trials per welch window (welch desc suffix).
         output: override output path. Default writes to
-            reports/figures/stats_classif_panel_space-<space>_type-<trial>_correction-<corr>.png.
+            reports/figures/stats_classif_panel_space-<space>_type-<trial>
+            _stats-<lvl>-<corr>_classif-<lvl>-<corr>.png.
+        correction / cv: legacy aliases — when set, apply to both halves.
 
     Examples:
-        invoke viz.stats-classif-panel
+        invoke viz.stats-classif-panel --space=schaefer_400
         invoke viz.stats-classif-panel --trial-type=correct
-        invoke viz.stats-classif-panel --trial-type=lapse --correction=tmax
+        invoke viz.stats-classif-panel --classif-level=average      # all-average panel
+        invoke viz.stats-classif-panel --correction=tmax            # tmax on both halves
     """
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.visualization.stats_classif_panel",
            "--config", config,
            "--space", space,
            "--trial-type", trial_type,
-           "--correction", correction,
-           "--clf", clf, "--cv", cv,
+           "--stats-correction", stats_correction,
+           "--stats-level", stats_level,
+           "--classif-correction", classif_correction,
+           "--classif-level", classif_level,
+           "--clf", clf,
            "--alpha", str(alpha),
            "--n-events-window", str(n_events_window)]
+    if classif_cv is not None:
+        cmd.extend(["--classif-cv", classif_cv])
+    if correction is not None:
+        cmd.extend(["--correction", correction])
+    if cv is not None:
+        cmd.extend(["--cv", cv])
     if output:
         cmd.extend(["--output", output])
 
@@ -3082,19 +3130,31 @@ def networks_all(c, space="schaefer_400", trial_type="all", yeo=7,
 
 @task
 def viz_network_panel(c, space="schaefer_400", trial_type="correct", yeo=7,
-                      correction="fdr", alpha=0.05, clf="logistic", cv="logo",
+                      stats_correction="fdr", stats_level="average",
+                      classif_correction="tmax", classif_level="epoch",
+                      classif_cv=None, alpha=0.05, clf="logistic",
                       mf_label="all", no_yeo_overlay=False, output=None,
-                      config="config.yaml"):
+                      config="config.yaml",
+                      correction=None, cv=None):
     """Render the composite Yeo-network story panel (single PNG, 4 tiers).
 
     Reads from results/statistics_<space>/group/networks/ and
     results/classification_<space>/group_mf/networks/. Sections without
     inputs degrade to "no data" placeholders (useful while pipelines run).
 
+    Default mixes analysis modes per the project convention:
+      - stats row (Tier 1A + Tier 2): subject-level / FDR
+      - classif row (Tier 1B + Tier 3/4): single-epoch / tmax / cv=logo
+      - classification scoring metric: AUC
+
     Examples:
         invoke viz.networks.panel --space=schaefer_400 --trial-type=correct
         invoke viz.networks.panel --space=schaefer_400 --trial-type=lapse --yeo=17
         invoke viz.networks.panel --no-yeo-overlay   # faster, skip Tier-1 outlines
+        invoke viz.networks.panel --stats-level=epoch --classif-level=average
+
+    Legacy kwargs ``correction`` / ``cv`` still work — they apply to both
+    stats and classification when set.
     """
     python_exe = get_python_executable()
     cmd = [
@@ -3102,13 +3162,21 @@ def viz_network_panel(c, space="schaefer_400", trial_type="correct", yeo=7,
         "--space", space,
         "--trial-type", trial_type,
         "--yeo", str(yeo),
-        "--correction", correction,
+        "--stats-correction", stats_correction,
+        "--stats-level", stats_level,
+        "--classif-correction", classif_correction,
+        "--classif-level", classif_level,
         "--alpha", str(alpha),
         "--clf", clf,
-        "--cv", cv,
         "--mf-label", mf_label,
         "--config", config,
     ]
+    if classif_cv is not None:
+        cmd.extend(["--classif-cv", classif_cv])
+    if correction is not None:
+        cmd.extend(["--correction", correction])
+    if cv is not None:
+        cmd.extend(["--cv", cv])
     if no_yeo_overlay:
         cmd.append("--no-yeo-overlay")
     if output:
@@ -3133,6 +3201,7 @@ dev.add_task(test)
 dev.add_task(test_fast, name="test-fast")
 dev.add_task(clean)
 dev.add_task(precommit)
+dev.add_task(docs_mermaid, name="docs-mermaid")
 dev.add_collection(check)  # Nested: dev.check.*
 
 # Environment tasks

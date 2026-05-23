@@ -96,36 +96,39 @@ PVAL_KEYS = {
 # File discovery + loading
 # ---------------------------------------------------------------------------
 
-def _stats_file(stats_dir: Path, feature: str, inout: str, trial_type: str) -> Path:
-    # Prefer the new ``level-average`` filename token; fall back to the
-    # legacy ``path-subj-spectrum`` token for pre-refactor files.
+# Legacy filename tokens kept as fallbacks so pre-refactor stats files still load.
+_STATS_LEGACY_TOKEN = {"average": "path-subj-spectrum", "epoch": "path-subj-trial-*"}
+
+
+def _stats_file(stats_dir: Path, feature: str, inout: str, trial_type: str,
+                level: str = "average") -> Path:
     cands = sorted(stats_dir.glob(
         f"feature-{feature}_inout-{inout}_test-paired_ttest"
-        f"_level-average_type-{trial_type}_results.npz"
+        f"_level-{level}_type-{trial_type}_results.npz"
     ))
     if not cands:
         cands = sorted(stats_dir.glob(
             f"feature-{feature}_inout-{inout}_test-paired_ttest"
-            f"_path-subj-spectrum_type-{trial_type}_results.npz"
+            f"_{_STATS_LEGACY_TOKEN.get(level, 'path-subj-spectrum')}"
+            f"_type-{trial_type}_results.npz"
         ))
     if not cands:
         raise FileNotFoundError(
-            f"No level-average stats result for feature={feature} "
+            f"No level-{level} stats result for feature={feature} "
             f"(inout={inout}, type={trial_type}) in {stats_dir}."
         )
     return cands[0]
 
 
 def _classif_file(clf_dir: Path, feature: str, inout: str, trial_type: str,
-                  clf: str, cv: str, space: str) -> Path:
-    # Prefer the new ``level-average`` filename token; fall back to files
-    # without the level token (pre-refactor).
+                  clf: str, cv: str, space: str, level: str = "average") -> Path:
     cands = sorted(clf_dir.glob(
         f"feature-{feature}_space-{space}_inout-{inout}"
-        f"_clf-{clf}_cv-{cv}_mode-univariate_level-average"
+        f"_clf-{clf}_cv-{cv}_mode-univariate_level-{level}"
         f"_type-{trial_type}_scores.npz"
     ))
     if not cands:
+        # legacy pre-`level` token
         cands = sorted(clf_dir.glob(
             f"feature-{feature}_space-{space}_inout-{inout}"
             f"_clf-{clf}_cv-{cv}_mode-univariate_type-{trial_type}_scores.npz"
@@ -133,9 +136,33 @@ def _classif_file(clf_dir: Path, feature: str, inout: str, trial_type: str,
     if not cands:
         raise FileNotFoundError(
             f"No classification scores for feature={feature} (clf={clf}, "
-            f"cv={cv}, type={trial_type}) in {clf_dir}."
+            f"cv={cv}, level={level}, type={trial_type}) in {clf_dir}."
         )
     return cands[0]
+
+
+def _check_scoring_metadata(path: Path) -> None:
+    """Warn if a classification scores npz wasn't computed with roc_auc.
+
+    The panel labels every classification colorbar/axis "AUC", so a silent
+    mismatch (e.g. someone re-ran with --scoring=balanced_accuracy) would
+    mislead the reader. Read the sibling metadata.json and warn — don't
+    fail — so missing/older metadata doesn't break the figure.
+    """
+    meta_path = path.with_name(path.stem.replace("_scores", "_metadata") + ".json")
+    if not meta_path.exists():
+        return
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return
+    scoring = meta.get("scoring") or meta.get("provenance", {}).get("scoring")
+    if scoring and scoring != "roc_auc":
+        logger.warning(
+            "Classification file %s was scored with %r, not 'roc_auc' — "
+            "panel labels it as AUC. Re-run with --scoring=roc_auc to "
+            "match.", path.name, scoring,
+        )
 
 
 def _pick_pvals(npz, candidate_keys: List[str]) -> Optional[np.ndarray]:
@@ -200,6 +227,16 @@ def _plot_brain(ax, values: np.ndarray, mask: Optional[np.ndarray],
 
     Significance masking is applied by NaN-ing non-significant ROIs before
     surface mapping (those vertices are then transparent on the brain).
+    When the mask zeroes out every ROI, the sulci surface still renders —
+    nilearn's plot_surf_stat_map treats all-NaN as "no overlay", which is
+    what we want for "no parcels significant". The placeholder is only
+    used when ``values`` itself is unavailable.
+
+    ``aspect="equal"`` preserves the natural ~4:3 aspect of the 2x2
+    composite so it isn't stretched into near-square axes (matplotlib
+    letterboxes spare height/width instead). The xlabel set by the caller
+    stays visible because we turn off ticks/spines explicitly instead of
+    calling ``set_axis_off`` (which would hide the xlabel as well).
     """
     from code.visualization.plot_surface import (
         render_inflated_view,
@@ -209,12 +246,6 @@ def _plot_brain(ax, values: np.ndarray, mask: Optional[np.ndarray],
     vals = np.asarray(values, dtype=float).copy()
     if mask is not None:
         vals[~np.asarray(mask, dtype=bool)] = np.nan
-
-    if not np.isfinite(vals).any():
-        ax.text(0.5, 0.5, "no data", ha="center", va="center",
-                transform=ax.transAxes, fontsize=8, color="gray")
-        ax.set_axis_off()
-        return None
 
     lh_data, rh_data = roi_to_surface(vals, roi_names, atlas_name)
 
@@ -252,8 +283,11 @@ def _plot_brain(ax, values: np.ndarray, mask: Optional[np.ndarray],
         bot = np.concatenate([bot, pad], axis=1)
     composite = np.concatenate([top, bot], axis=0)
 
-    ax.imshow(composite, interpolation="bilinear", aspect="auto")
-    ax.set_axis_off()
+    ax.imshow(composite, interpolation="bilinear", aspect="equal")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
     return None
 
 
@@ -300,21 +334,62 @@ def main() -> int:
     parser.add_argument("--trial-type", default="alltrials",
                         choices=["alltrials", "correct", "lapse"])
     parser.add_argument("--clf", default="logistic")
-    parser.add_argument("--cv", default="group")
+    parser.add_argument("--alpha", type=float, default=0.05)
+
+    # Stats vs classif knobs are independent. Default panel mixes
+    # subject-level / FDR stats with single-epoch / tmax classification.
     parser.add_argument(
-        "--correction", default="fdr",
-        choices=list(PVAL_KEYS.keys()),
-        help="P-value correction for the significance mask. Computed "
-             "within each topomap (per-feature, never pooled across "
+        "--stats-correction", default="fdr", choices=list(PVAL_KEYS.keys()),
+        help="P-value correction for stats topomaps/brains (rows A, G, I). "
+             "Computed per spatial map (per-feature, never pooled across "
              "bands/metrics). Default: fdr.",
     )
-    parser.add_argument("--alpha", type=float, default=0.05)
+    parser.add_argument(
+        "--stats-level", default="average", choices=["average", "epoch"],
+        help="Granularity for the per-spatial-unit stats input. "
+             "Default: average (pooled subject means → t-test).",
+    )
+    parser.add_argument(
+        "--classif-correction", default="tmax", choices=list(PVAL_KEYS.keys()),
+        help="P-value correction for classification topomaps/brains "
+             "(rows B, H, J). Default: tmax.",
+    )
+    parser.add_argument(
+        "--classif-level", default="epoch", choices=["epoch", "average"],
+        help="Granularity for the per-spatial-unit classification input. "
+             "Default: epoch (single-trial).",
+    )
+    parser.add_argument(
+        "--classif-cv", default=None,
+        help="CV strategy token in classification filenames. Defaults: "
+             "'logo' for level=epoch, 'group' for level=average.",
+    )
+
+    # Legacy aliases — set BOTH stats- and classif- variants when given.
+    parser.add_argument(
+        "--correction", default=None, choices=list(PVAL_KEYS.keys()),
+        help="(Deprecated) sets both --stats-correction and "
+             "--classif-correction.",
+    )
+    parser.add_argument("--cv", default=None,
+                        help="(Deprecated) alias for --classif-cv.")
+
     parser.add_argument("--n-events-window", type=int, default=8)
     parser.add_argument("--output", default=None,
                         help="Output path. Default: "
                              "reports/figures/stats_classif_panel_space-<space>"
-                             "_type-<trial-type>_correction-<corr>.png")
+                             "_type-<trial-type>_stats-<lvl>-<corr>"
+                             "_classif-<lvl>-<corr>.png")
     args = parser.parse_args()
+
+    # Resolve legacy aliases / defaults that depend on other args.
+    if args.correction is not None:
+        args.stats_correction = args.correction
+        args.classif_correction = args.correction
+    if args.cv is not None:
+        args.classif_cv = args.cv
+    if args.classif_cv is None:
+        args.classif_cv = "logo" if args.classif_level == "epoch" else "group"
 
     if args.space == "source":
         raise NotImplementedError(
@@ -337,8 +412,12 @@ def main() -> int:
     fooof_features = [f"fooof_{p}" for p in FOOOF_PARAMS]
 
     # ---- Load results ----------------------------------------------------
-    logger.info("Loading statistics + classification results (correction=%s)...",
-                args.correction)
+    logger.info(
+        "Loading stats (level=%s, correction=%s) + classification "
+        "(level=%s, cv=%s, correction=%s)…",
+        args.stats_level, args.stats_correction,
+        args.classif_level, args.classif_cv, args.classif_correction,
+    )
     rows: Dict[str, List[Tuple[np.ndarray, Optional[np.ndarray]]]] = {}
     aurows: Dict[str, List[Tuple[np.ndarray, Optional[np.ndarray]]]] = {}
 
@@ -348,11 +427,14 @@ def main() -> int:
         rows[tag] = []
         aurows[tag] = []
         for feat in features:
-            sfile = _stats_file(stats_dir, feat, inout_str, args.trial_type)
+            sfile = _stats_file(stats_dir, feat, inout_str, args.trial_type,
+                                level=args.stats_level)
             cfile = _classif_file(clf_dir, feat, inout_str, args.trial_type,
-                                  args.clf, args.cv, args.space)
-            t, pt = _load_stats(sfile, args.correction)
-            auc, pa = _load_classif(cfile, args.correction)
+                                  args.clf, args.classif_cv, args.space,
+                                  level=args.classif_level)
+            _check_scoring_metadata(cfile)
+            t, pt = _load_stats(sfile, args.stats_correction)
+            auc, pa = _load_classif(cfile, args.classif_correction)
             rows[tag].append((t, pt))
             aurows[tag].append((auc, pa))
 
@@ -375,7 +457,8 @@ def main() -> int:
         )
 
         meta_any = _stats_file(stats_dir, "fooof_exponent",
-                               inout_str, args.trial_type)
+                               inout_str, args.trial_type,
+                               level=args.stats_level)
         meta_any = meta_any.with_name(
             meta_any.stem.replace("_results", "_metadata") + ".json"
         )
@@ -407,7 +490,8 @@ def main() -> int:
     logger.info("Selected unit: %s (idx=%d, |t|=%.3f)",
                 sel_name, sel_idx, float(np.abs(exp_t[sel_idx])))
 
-    sfile_exp = _stats_file(stats_dir, "fooof_exponent", inout_str, args.trial_type)
+    sfile_exp = _stats_file(stats_dir, "fooof_exponent", inout_str,
+                            args.trial_type, level=args.stats_level)
     meta_path = sfile_exp.with_name(
         sfile_exp.stem.replace("_results", "_metadata") + ".json"
     )
@@ -438,21 +522,29 @@ def main() -> int:
     # 8 columns: 7 topomap-slot columns + 1 narrow colorbar column.
     # All topomaps occupy exactly one column (same width across rows).
     # Middle-row line plots each span 2 topomap columns.
+    #
+    # Brain composites (atlas mode) are ~square (2×2 grid of ~square views).
+    # Topomaps are also ~square. So a single spatial_row_h works for both.
+    # Earlier sizing inflated atlas rows to 1.6 — that left ~35% letterbox
+    # height in each brain cell. Use 1.0 across the board.
+    #
+    # hspace was 0.45 (≈45% inter-row gap relative to row height); reduced
+    # to 0.10 so blank space between rows is ~10–15% of a row instead of
+    # nearly an entire row.
     n_cols = 8
     col_widths = [1.0] * 7 + [0.10]
-    # Brain rows need ~2:1 aspect (4 views in 2x2); topomaps are ~1:1.
-    spatial_row_h = 1.6 if is_atlas else 1.0
+    spatial_row_h = 1.0
     row_heights = [spatial_row_h, spatial_row_h,
                    1.10, 1.10,
                    spatial_row_h, spatial_row_h]
     fig_w = 13.2
-    fig_h = 13.0 + (4 * (spatial_row_h - 1.0) * 1.0)
+    fig_h = 13.0
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=150, facecolor="white")
     gs = GridSpec(
         nrows=6, ncols=n_cols, figure=fig,
         width_ratios=col_widths, height_ratios=row_heights,
-        left=0.045, right=0.965, top=0.965, bottom=0.045,
-        hspace=0.45, wspace=0.12,
+        left=0.045, right=0.965, top=0.97, bottom=0.045,
+        hspace=0.10, wspace=0.12,
     )
 
     band_labels = ["Theta\n(4-8Hz)", "Alpha\n(8-12Hz)",
@@ -469,10 +561,18 @@ def main() -> int:
             _plot_topomap(ax, vals, mask, info, vmin, vmax, cmap)
 
     def _draw_selection_inset(ax_d):
-        """Top-right inset on panel D: small topomap (or brain) with the
-        selected sensor/region highlighted, plus its name as a title."""
+        """Top-right inset on panel D: small topomap (or brain) showing the
+        selected sensor/region, with the region name as a title.
+
+        Rect is sized to keep the inset fully inside the parent axes
+        (max x = 0.99, max y = 0.97 leaves room for the title) and to give
+        the brain a 4:3-ish aspect so ``aspect="equal"`` doesn't waste
+        space. ``set_axis_off`` would hide the title too, so we strip
+        ticks/spines individually instead.
+        """
         if is_atlas:
-            rect = [0.62, 0.58, 0.40, 0.40]
+            # Wider than tall — fits a single lateral hemisphere with title.
+            rect = [0.54, 0.54, 0.45, 0.42]
         else:
             rect = [0.74, 0.60, 0.26, 0.40]
         inset = ax_d.inset_axes(rect)
@@ -490,8 +590,7 @@ def main() -> int:
                 lh, rh, hemi, "lateral", fsaverage,
                 cmap="autumn", vmin=0.0, vmax=1.0,
             )
-            inset.imshow(img, interpolation="bilinear", aspect="auto")
-            inset.set_axis_off()
+            inset.imshow(img, interpolation="bilinear", aspect="equal")
         else:
             import mne
             n_ch = len(info["ch_names"])
@@ -508,7 +607,11 @@ def main() -> int:
                 vlim=(-1, 1), extrapolate="local",
                 outlines="head", sphere=0.15, contours=0,
             )
-            inset.set_axis_off()
+        # Strip ticks + spines (but keep the axes "on" so set_title renders).
+        inset.set_xticks([])
+        inset.set_yticks([])
+        for spine in inset.spines.values():
+            spine.set_visible(False)
         inset.set_title(sel_name, fontsize=7, pad=1)
 
     def _label_with_n_sig(label: str, mask: Optional[np.ndarray]) -> str:
@@ -528,8 +631,13 @@ def main() -> int:
 
     def draw_middle_row(row_idx, line_panels, topo_values, vmin, vmax,
                         cmap, labels):
+        # ax_l2 shares Y with ax_l1 — the two line plots in a middle row
+        # show the same log-power scale (C+D = raw PSD vs. aperiodic;
+        # E+F = corrected vs. periodic). Sharing locks the scale and lets
+        # us drop the right-panel y-tick labels + ylabel.
         ax_l1 = fig.add_subplot(gs[row_idx, 0:2])
-        ax_l2 = fig.add_subplot(gs[row_idx, 2:4])
+        ax_l2 = fig.add_subplot(gs[row_idx, 2:4], sharey=ax_l1)
+        plt.setp(ax_l2.get_yticklabels(), visible=False)
         for ax, panel in zip([ax_l1, ax_l2], line_panels):
             panel(ax)
         for j in range(3):
@@ -545,6 +653,11 @@ def main() -> int:
     cax_A = draw_band_row(0, rows["psd"], vmin_t, vmax_t, CMAP_T, band_labels)
     cax_B = draw_band_row(1, aurows["psd"], vmin_a, vmax_a, CMAP_AUC, band_labels)
 
+    # Panels C/D share Y (raw spectrum vs. aperiodic component) — both are
+    # log power on the same scale. Panels E/F share Y (corrected spectrum
+    # vs. periodic component) — both are residual/periodic log power.
+    # The ylabel sits on the left panel only; the right panel inherits the
+    # scale via sharey and hides its tick labels (see draw_middle_row).
     def panel_C(ax):
         _plot_spectrum(
             ax, f_full,
@@ -553,7 +666,8 @@ def main() -> int:
             show_legend=True,
         )
         ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
-        ax.set_ylabel("PSD (log$_{10}$ power)", fontsize=8.5)
+        ax.set_ylabel("PSD (log$_{10}$ power) — raw / aperiodic",
+                      fontsize=8.5)
 
     def panel_D(ax):
         _plot_spectrum(
@@ -562,7 +676,6 @@ def main() -> int:
             spectra["OUT"]["aperiodic"][:, full_mask],
         )
         ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
-        ax.set_ylabel("PSD (log$_{10}$ power)", fontsize=8.5)
 
     def panel_E(ax):
         _plot_spectrum(
@@ -572,7 +685,8 @@ def main() -> int:
             axhline_zero=True,
         )
         ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
-        ax.set_ylabel("PSDc (log$_{10}$ power)", fontsize=8.5)
+        ax.set_ylabel("Log$_{10}$ power — corrected / periodic",
+                      fontsize=8.5)
 
     def panel_F(ax):
         _plot_spectrum(
@@ -582,7 +696,6 @@ def main() -> int:
             axhline_zero=True,
         )
         ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
-        ax.set_ylabel("Periodic power (log$_{10}$)", fontsize=8.5)
 
     cax_G, axes_CD = draw_middle_row(
         2, [panel_C, panel_D],
@@ -665,7 +778,10 @@ def main() -> int:
     out_path = (Path(args.output) if args.output
                 else Path("reports") / "figures"
                 / (f"stats_classif_panel_space-{args.space}"
-                   f"_type-{args.trial_type}_correction-{args.correction}.png"))
+                   f"_type-{args.trial_type}"
+                   f"_stats-{args.stats_level}-{args.stats_correction}"
+                   f"_classif-{args.classif_level}-"
+                   f"{args.classif_correction}.png"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)

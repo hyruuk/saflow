@@ -32,14 +32,23 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import yaml
 from joblib import Parallel, delayed
+from sklearn.exceptions import UndefinedMetricWarning
+from sklearn.metrics import confusion_matrix as _sk_confusion_matrix
 from sklearn.model_selection import (
     GroupKFold,
     LeaveOneGroupOut,
     StratifiedKFold,
+    cross_val_predict,
     cross_val_score,
+    cross_validate,
     permutation_test_score,
 )
 from tqdm import tqdm
+
+# LOGO CV + label permutation routinely produces single-class test folds where
+# ROC AUC is undefined; the NaN return is handled downstream. Silence the warning
+# globally so it doesn't balloon slurm logs into hundreds of MB.
+warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 from code.classification.classifiers import get_classifier
 from code.features.utils import select_window_mask
@@ -665,6 +674,64 @@ def _score_one_spatial(clf, X_slice, y, cv, groups, scoring="roc_auc"):
     return float(np.mean(scores))
 
 
+# Auxiliary metrics computed alongside the primary `scoring` metric. The
+# primary metric is what permutation tests / p-values are based on; the
+# auxiliaries are observed-only — no permutation null — and exist so the
+# panel can show e.g. balanced_accuracy + AUC side by side post-hoc.
+_AUX_METRICS = ("roc_auc", "balanced_accuracy", "accuracy")
+
+
+def _compute_metrics_one_spatial(clf_factory, X_slice, y, cv, groups
+                                 ) -> Dict[str, object]:
+    """Return per-CV-averaged metrics + pooled confusion matrix for one slice.
+
+    Output keys: ``roc_auc``, ``balanced_accuracy``, ``accuracy``,
+    ``confusion_matrix`` (shape (2, 2), pooled across CV folds via
+    ``cross_val_predict``).
+
+    Degenerate slices (NaN features, single-class subset, single-group CV
+    folds) return NaN metrics + a zero CM, mirroring ``_score_one_spatial``.
+    """
+    nan_out: Dict[str, object] = {m: float("nan") for m in _AUX_METRICS}
+    nan_out["confusion_matrix"] = np.zeros((2, 2), dtype=int)
+
+    if X_slice.ndim == 1:
+        X_slice = X_slice.reshape(-1, 1)
+    finite = ~np.isnan(X_slice).any(axis=1)
+    if not finite.all():
+        X_slice, y, groups = X_slice[finite], y[finite], groups[finite]
+    if len(y) < 2 or len(np.unique(y)) < 2:
+        return nan_out
+    if _is_group_cv(cv) and len(np.unique(groups)) < 2:
+        return nan_out
+
+    kw = {"groups": groups} if _is_group_cv(cv) else {}
+    try:
+        cv_res = cross_validate(
+            clf_factory(), X_slice, y, cv=cv,
+            scoring=list(_AUX_METRICS), n_jobs=1, **kw,
+        )
+        out: Dict[str, object] = {
+            m: float(np.mean(cv_res[f"test_{m}"])) for m in _AUX_METRICS
+        }
+        # Pool predictions across folds for a single representative CM.
+        # (Per-fold CMs aren't useful — most folds are <50 trials.)
+        y_pred = cross_val_predict(
+            clf_factory(), X_slice, y, cv=cv, n_jobs=1, **kw,
+        )
+        labels = np.unique(y)
+        cm = _sk_confusion_matrix(y, y_pred, labels=labels)
+        if cm.shape != (2, 2):
+            full = np.zeros((2, 2), dtype=int)
+            full[: cm.shape[0], : cm.shape[1]] = cm
+            cm = full
+        out["confusion_matrix"] = cm.astype(int)
+        return out
+    except Exception as exc:
+        logger.debug(f"  multi-metric fail on slice: {exc}")
+        return nan_out
+
+
 def _permute_y_within_groups(y, groups, rng):
     y_perm = y.copy()
     for g in np.unique(groups):
@@ -753,6 +820,24 @@ def run_univariate_with_tmax(
         )
     )
 
+    # Auxiliary metrics + confusion matrices — observed only (no permutation
+    # null). Cheap relative to the n_permutations × n_spatial permutation
+    # phase below (factor of ~2 vs the observed pass).
+    logger.info("Computing auxiliary metrics + confusion matrices…")
+    aux = Parallel(n_jobs=n_jobs)(
+        delayed(_compute_metrics_one_spatial)(
+            clf_factory, _slice_spatial(X, s), y, cv, groups
+        )
+        for s in range(n_spatial)
+    )
+    metrics_per_spatial: Dict[str, np.ndarray] = {
+        f"metrics_{m}": np.asarray([d[m] for d in aux], dtype=float)
+        for m in _AUX_METRICS
+    }
+    confusion_matrices = np.stack(
+        [d["confusion_matrix"] for d in aux], axis=0,
+    ).astype(int)  # (n_spatial, 2, 2)
+
     logger.info("Running permutations with shared label shuffles…")
     rng = np.random.default_rng(seed)
     perm_scores = np.zeros((n_permutations, n_spatial), dtype=float)
@@ -819,7 +904,10 @@ def run_univariate_with_tmax(
         "pvals_tmax": pvals_tmax,
         "pvals_fdr_bh": pvals_fdr,
         "pvals_bonferroni": pvals_bonf,
+        "confusion_matrices": confusion_matrices,
+        "scoring": scoring,
     }
+    out.update(metrics_per_spatial)  # metrics_roc_auc / balanced_accuracy / accuracy
     if importances is not None:
         out["feature_importances"] = importances  # (n_spatial, n_features)
     return out
@@ -860,12 +948,19 @@ def run_multivariate(
         f"Multivariate: score={score:.3f}, p-value={pvalue:.4f} "
         f"(perm mean={np.mean(perm_scores):.3f})"
     )
+
+    # Auxiliary metrics + confusion matrix on the same data.
+    aux = _compute_metrics_one_spatial(clf_factory, X, y, cv, groups)
     out = {
         "mode": "multivariate",
         "observed": float(score),
         "perm_scores": np.asarray(perm_scores),
         "pvalue": float(pvalue),
+        "scoring": scoring,
+        "confusion_matrices": aux["confusion_matrix"][None, ...],  # (1, 2, 2) for uniformity
     }
+    for m in _AUX_METRICS:
+        out[f"metrics_{m}"] = float(aux[m])
     if fit_importances:
         importances = _fit_full_and_get_importances(clf_factory(), X, y)
         if importances is not None:
@@ -939,8 +1034,18 @@ def save_results(
     npz_payload: Dict[str, np.ndarray] = {}
     summary: Dict[str, object] = {}
 
+    # Auxiliary metrics + confusion matrices live alongside the primary
+    # `observed` array in every output (univariate, multivariate, and
+    # chunked). Pulled out once here so each branch can include them.
+    aux_payload: Dict[str, np.ndarray] = {
+        k: np.asarray(v) for k, v in results.items()
+        if k.startswith("metrics_") or k == "confusion_matrices"
+    }
+
     if chunk_info is not None:
-        # Partial output: just observed + perm_scores (and importances if any)
+        # Partial output: observed + perm_scores + the aux metrics/CMs so
+        # the aggregator can concatenate without re-running. P-values are
+        # still deferred to the merge step.
         npz_payload.update(
             observed=results["observed"],
             perm_scores=results["perm_scores"],
@@ -948,6 +1053,7 @@ def save_results(
             spatial_stop=np.array(chunk_info["stop"]),
             n_spatial_total=np.array(chunk_info["n_spatial_total"]),
         )
+        npz_payload.update(aux_payload)
         summary = {
             "chunk_idx": chunk_info["chunk_idx"],
             "n_chunks": chunk_info["n_chunks"],
@@ -966,6 +1072,7 @@ def save_results(
             pvals_fdr_bh=results["pvals_fdr_bh"],
             pvals_bonferroni=results["pvals_bonferroni"],
         )
+        npz_payload.update(aux_payload)
         summary = {
             "max_score": float(results["observed"].max()),
             "mean_score": float(results["observed"].mean()),
@@ -973,16 +1080,27 @@ def save_results(
             "n_significant_fdr_bh_a05": int((results["pvals_fdr_bh"] < 0.05).sum()),
             "n_permutations": int(results["perm_scores"].shape[0]),
         }
+        for m in _AUX_METRICS:
+            key = f"metrics_{m}"
+            if key in results:
+                arr = np.asarray(results[key], dtype=float)
+                summary[f"mean_{m}"] = float(np.nanmean(arr))
+                summary[f"max_{m}"] = float(np.nanmax(arr))
     else:
         npz_payload.update(
             observed=np.asarray(results["observed"]),
             perm_scores=results["perm_scores"],
         )
+        npz_payload.update(aux_payload)
         summary = {
             "score": float(results["observed"]),
             "pvalue": float(results["pvalue"]),
             "n_permutations": int(len(results["perm_scores"])),
         }
+        for m in _AUX_METRICS:
+            key = f"metrics_{m}"
+            if key in results:
+                summary[m] = float(results[key])
 
     if "feature_importances" in results:
         npz_payload["feature_importances"] = results["feature_importances"]
@@ -998,6 +1116,9 @@ def save_results(
         "classifier": clf_name,
         "cv_strategy": cv_name,
         "mode": mode,
+        "scoring": results.get("scoring"),
+        "metrics_computed": list(_AUX_METRICS),
+        "has_confusion_matrices": "confusion_matrices" in results,
         "timestamp": datetime.now().isoformat(),
         "git_hash": get_git_hash(),
         "data_metadata": metadata,

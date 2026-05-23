@@ -96,6 +96,14 @@ def aggregate(
     observed_parts: List[np.ndarray] = []
     perm_parts: List[np.ndarray] = []
     importance_parts: List[np.ndarray] = []
+    # Auxiliary metrics + confusion matrices (one per spatial unit per chunk).
+    # Only aggregated if every chunk carries them; older chunks without
+    # them degrade silently to "not concatenated".
+    aux_metric_parts: Dict[str, List[np.ndarray]] = {}
+    cm_parts: List[np.ndarray] = []
+    aux_present_in_all = True
+    cm_present_in_all = True
+    last_scoring: Optional[str] = None
     seeds: set = set()
     n_perms_set: set = set()
     n_spatial_total: Optional[int] = None
@@ -119,12 +127,25 @@ def aggregate(
             chunk_meta_list.append(chunk_meta)
             last_data_metadata = chunk_meta.get("data_metadata", last_data_metadata)
             last_feature_list = chunk_meta.get("feature_list", last_feature_list)
+            if chunk_meta.get("scoring") is not None:
+                last_scoring = chunk_meta["scoring"]
         with np.load(score_path) as npz:
             observed_parts.append(npz["observed"])
             perm_parts.append(npz["perm_scores"])
             n_perms_set.add(int(npz["perm_scores"].shape[0]))
             if "feature_importances" in npz.files:
                 importance_parts.append(npz["feature_importances"])
+            # Per-spatial auxiliary metrics — keys like ``metrics_roc_auc``.
+            chunk_aux_keys = [k for k in npz.files if k.startswith("metrics_")]
+            if chunk_aux_keys:
+                for k in chunk_aux_keys:
+                    aux_metric_parts.setdefault(k, []).append(npz[k])
+            else:
+                aux_present_in_all = False
+            if "confusion_matrices" in npz.files:
+                cm_parts.append(npz["confusion_matrices"])
+            else:
+                cm_present_in_all = False
 
     if len(seeds) > 1:
         raise ValueError(
@@ -181,6 +202,11 @@ def aggregate(
     )
     if importances is not None:
         npz_payload["feature_importances"] = importances
+    if aux_present_in_all and aux_metric_parts:
+        for k, parts in aux_metric_parts.items():
+            npz_payload[k] = np.concatenate(parts, axis=0)
+    if cm_present_in_all and cm_parts:
+        npz_payload["confusion_matrices"] = np.concatenate(cm_parts, axis=0)
 
     out_npz = output_dir / f"{base}_scores.npz"
     np.savez_compressed(out_npz, **npz_payload)
@@ -194,6 +220,9 @@ def aggregate(
         "classifier": clf_name,
         "cv_strategy": cv_name,
         "mode": mode,
+        "scoring": last_scoring,
+        "has_confusion_matrices": cm_present_in_all and bool(cm_parts),
+        "aux_metrics_present": aux_present_in_all and bool(aux_metric_parts),
         "timestamp": datetime.now().isoformat(),
         "data_metadata": last_data_metadata,
         "summary": {

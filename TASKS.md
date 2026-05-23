@@ -731,6 +731,8 @@ Yeo-network-restricted IN-vs-OUT classification across three scopes.
 - `joint`: one classifier per network using all features at once.
 - `all` (default): run all three scopes.
 
+The underlying script's default scoring is `roc_auc` (was `balanced_accuracy` before 2026-05-23) to match the AUC labels in `viz.networks.panel`. Pass `--scoring=...` to the underlying script directly if you need a different metric.
+
 With `--slurm`, submits one SLURM array task per `(scope × trial-type × network)` cell (up to `3 × 3 × {yeo}`). A second array depends on the first (afterok) to merge the per-network partials into the combined bundle expected by `viz.networks.panel`.
 
 **Arguments:**
@@ -934,39 +936,52 @@ A single composite figure with letter labels A–J:
 
 | Panel | Content |
 |-------|---------|
-| A | Per-band t-values for raw PSD (7 topomaps) |
-| B | Per-band AUC for raw PSD (7 topomaps) |
+| A | Per-band t-values for raw PSD (7 spatial maps) |
+| B | Per-band AUC for raw PSD (7 spatial maps) |
 | C | Raw spectrum (PSD) — IN vs OUT line plot |
 | D | Aperiodic component — IN vs OUT line plot |
 | E | Corrected spectrum (PSDc) — IN vs OUT line plot |
 | F | Periodic components — IN vs OUT line plot |
-| G | FOOOF t-values (exponent, offset, R²) (3 topomaps) |
-| H | FOOOF AUC (exponent, offset, R²) (3 topomaps) |
-| I | Per-band t-values for corrected PSD (7 topomaps) |
-| J | Per-band AUC for corrected PSD (7 topomaps) |
+| G | FOOOF t-values (exponent, offset, R²) (3 spatial maps) |
+| H | FOOOF AUC (exponent, offset, R²) (3 spatial maps) |
+| I | Per-band t-values for corrected PSD (7 spatial maps) |
+| J | Per-band AUC for corrected PSD (7 spatial maps) |
 
-Significance is computed within each topomap independently per feature — never pooled across bands or metrics. The spectral lines (C–F) are picked at the sensor/region with the most significant FOOOF exponent t-value.
+For `--space=sensor`, the spatial panels are MNE topomaps; for an atlas space (e.g. `schaefer_400`, `aparc.a2009s`) they become 2×2 inflated-brain composites (left/right × lateral/medial), drawn with `aspect="equal"` so they aren't squeezed. When a panel has zero significant parcels, the cortical surface is still rendered (no overlay) instead of falling back to a "no data" placeholder. Each spatial panel's xlabel reports the band/parameter and the number of significant units (e.g. `Theta (4–8Hz) · n=12 sig`).
 
-**Requires:** Both `analysis.stats` and `analysis.classify` must have been run for the chosen `--space` and `--trial-type` (raw + corrected PSD bands and the three FOOOF parameters).
+Significance is computed within each spatial map independently per feature — never pooled across bands or metrics. The spectral lines (C–F) are picked at the sensor/region with the largest |t| on the FOOOF-exponent map.
+
+**Default mixes analysis modes:**
+- Stats rows (A, G, I): subject-level pooled-mean (`level-average`) + FDR.
+- Classification rows (B, H, J): single-epoch (`level-epoch`) + tmax + `cv-logo`.
+- Classification scoring metric is AUC (`roc_auc`); the loader warns if any input file was scored with something else.
+
+**Requires:** Both `analysis.stats` and `analysis.classify` must have been run for the chosen `--space` and `--trial-type` at the required granularity (raw + corrected PSD bands and the three FOOOF parameters).
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--space` | string | sensor | Analysis space: `sensor` (topomaps) or an atlas name like `schaefer_400` / `aparc.a2009s` (inflated-brain panels). Vertex-level `source` is not wired |
 | `--trial-type` | string | alltrials | `alltrials`, `correct`, `lapse` |
-| `--correction` | string | fdr | Significance mask: `fdr`, `tmax`, `bonferroni`, `uncorrected` (applied per-feature) |
+| `--stats-correction` | string | fdr | Stats mask: `fdr`, `tmax`, `bonferroni`, `uncorrected` (applied per-feature) |
+| `--stats-level` | string | average | Stats granularity: `average` (subject-level pooled) or `epoch` (single-trial) |
+| `--classif-correction` | string | tmax | Classification mask correction |
+| `--classif-level` | string | epoch | Classification granularity |
+| `--classif-cv` | string | auto | Classification CV token. Auto: `logo` for level=epoch, `group` for level=average |
 | `--clf` | string | logistic | Classifier used in the classification results to load |
-| `--cv` | string | group | Cross-validation scheme used in the classification results |
 | `--alpha` | float | 0.05 | Significance threshold for the mask |
 | `--n-events-window` | int | 8 | Trials per Welch window (welch desc suffix) |
-| `--output` | PATH | none | Override output path. Default: `reports/figures/stats_classif_panel_space-<space>_type-<trial>_correction-<corr>.png` |
+| `--correction` | string | none | (Legacy) sets both `--stats-correction` and `--classif-correction` |
+| `--cv` | string | none | (Legacy) alias for `--classif-cv` |
+| `--output` | PATH | none | Override output path. Default: `reports/figures/stats_classif_panel_space-<space>_type-<trial>_stats-<lvl>-<corr>_classif-<lvl>-<corr>.png` |
 | `--config` | PATH | config.yaml | Config file path |
 
 **Examples:**
 ```bash
-invoke viz.stats-classif-panel
+invoke viz.stats-classif-panel --space=schaefer_400
 invoke viz.stats-classif-panel --trial-type=correct
-invoke viz.stats-classif-panel --trial-type=lapse --correction=tmax
+invoke viz.stats-classif-panel --classif-level=average      # all-average panel
+invoke viz.stats-classif-panel --correction=tmax            # tmax on both halves (legacy)
 ```
 
 ---
@@ -998,7 +1013,12 @@ invoke viz.behavior --output=reports/figures/behavior_sub04.png
 
 Render the composite Yeo-network story panel as a single PNG (four tiers: parcel maps, network-level stats, network-restricted classification, joint-axis importance).
 
-Reads from `results/statistics_<space>/group/networks/` and `results/classification_<space>/group_mf/networks/`. Sections without inputs degrade to "no data" placeholders, which is useful while pipelines are still running.
+Reads from `results/statistics_<space>/`, `results/statistics_<space>/group/networks/`, `results/classification_<space>/group/`, and `results/classification_<space>/group_mf/networks/`. Sections without inputs degrade to "no data" placeholders, which is useful while pipelines are still running. Tier-1 brain composites use `aspect="equal"` (no squeeze) and still render the cortical surface when zero parcels are significant. Each Tier-1 brain gets a `<feature display>\n(n=X sig)` xlabel mirroring the topomap convention.
+
+**Default mixes analysis modes:**
+- Stats rows (Tier 1A + Tier 2): `level-average` + FDR.
+- Classification rows (Tier 1B + Tier 3 + Tier 4): `level-epoch` + tmax + `cv-logo`.
+- Classification scoring metric is AUC (`roc_auc`).
 
 **Arguments:**
 | Argument | Type | Default | Description |
@@ -1006,11 +1026,17 @@ Reads from `results/statistics_<space>/group/networks/` and `results/classificat
 | `--space` | string | schaefer_400 | Atlas (Schaefer or aparc.a2009s) |
 | `--trial-type` | string | correct | `alltrials`, `correct`, or `lapse` |
 | `--yeo` | int | 7 | Yeo network resolution (`7` or `17`) |
-| `--correction` | string | fdr | Significance mask correction |
+| `--stats-correction` | string | fdr | Stats mask: `fdr`, `tmax`, `bonferroni`, `uncorrected` |
+| `--stats-level` | string | average | Stats granularity: `average` or `epoch` |
+| `--classif-correction` | string | tmax | Classification mask correction |
+| `--classif-level` | string | epoch | Classification granularity |
+| `--classif-cv` | string | auto | Classification CV token. Auto: `logo` for level=epoch, `group` for level=average |
 | `--alpha` | float | 0.05 | Significance threshold |
-| `--clf` / `--cv` | string | logistic / logo | Classification result filters |
+| `--clf` | string | logistic | Classification result filter |
 | `--mf-label` | string | all | Multi-feature label for the importance tier |
 | `--no-yeo-overlay` | flag | false | Skip Tier-1 Yeo outlines (faster) |
+| `--correction` | string | none | (Legacy) sets both `--stats-correction` and `--classif-correction` |
+| `--cv` | string | none | (Legacy) alias for `--classif-cv` |
 | `--output` | PATH | from config | Override output PNG path |
 | `--config` | PATH | config.yaml | Config file path |
 
@@ -1019,6 +1045,7 @@ Reads from `results/statistics_<space>/group/networks/` and `results/classificat
 invoke viz.networks.panel --space=schaefer_400 --trial-type=correct
 invoke viz.networks.panel --space=schaefer_400 --trial-type=lapse --yeo=17
 invoke viz.networks.panel --no-yeo-overlay   # faster, skip Tier-1 outlines
+invoke viz.networks.panel --classif-level=average    # subject-level classification panel
 ```
 
 ---

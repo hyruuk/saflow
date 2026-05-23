@@ -12,12 +12,12 @@ flowchart TD
     A[Raw MEG<br/>BIDS] --> B[Resample + bandpass + notch]
     B --> C[Apply gradient compensation]
     C --> D[AR1 first pass<br/>fit only on Freq/Rare epochs]
-    D --> E{Find globally bad<br/>channels<br/>bad-or-interp rate &gt; threshold}
+    D --> E{"Find globally bad<br/>channels<br/>bad-or-interp rate &gt; threshold"}
     E --> F[Mark bads in info<br/>preproc / raw_filt / epochs_filt]
     F --> G[ICA fit<br/>on AR1-good epochs<br/>excluding info bads]
-    G --> H[Detect ECG/EOG components<br/>CTPS ∩ correlation; EOG z-score]
-    H --> I[ICA apply → cleaned continuous]
-    I --> J[Interpolate bad channels<br/>spherical splines, reset_bads=True]
+    G --> H["Detect ECG/EOG components<br/>CTPS ∩ correlation; EOG z-score"]
+    H --> I["ICA apply → cleaned continuous"]
+    I --> J["Interpolate bad channels<br/>spherical splines, reset_bads=True"]
     J --> K[Re-epoch from cleaned raw<br/>Freq/Rare, no reject_dict]
     K --> L[Pre-AR2 PTP outlier filter]
     L --> M[AR2 second pass<br/>FIT ONLY — flag bad epochs]
