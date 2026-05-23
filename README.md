@@ -39,8 +39,11 @@ Saflow implements a complete MEG analysis pipeline for the gradCPT (gradual Cont
 - ✅ **VTC-based trial classification** - separate trials by attentional state
 - ✅ **Config-driven** - no hardcoded paths, fully reproducible
 - ✅ **Comprehensive logging** - provenance tracking with git hash
-- ✅ **HPC-ready** - SLURM integration for cluster computing
-- ✅ **Two-pass preprocessing** - ICA + AutoReject with comparison reports
+- ✅ **HPC-ready** - SLURM job arrays + afterok aggregators
+- ✅ **Two-pass preprocessing** - ICA + AutoReject with aggregate QC reports
+- ✅ **Group statistics** - paired t-tests with tmax/FDR/Bonferroni corrections
+- ✅ **Classification** - single-feature, multi-feature (4 axes), and Yeo-network-restricted
+- ✅ **Composite figures** - paper-ready stats+classif panels, FOOOF spectral decomposition, network story panels
 - ✅ **Modern Python** - type hints, dataclasses, invoke task runner
 
 ---
@@ -195,16 +198,20 @@ code/
 ├── bids/              # Stage 0: Raw → BIDS conversion
 ├── preprocessing/     # Stage 1: Filtering, ICA, AutoReject
 ├── source_reconstruction/  # Stage 2: MNE inverse solutions
-├── features/          # Stages 3+: PSD, FOOOF, complexity
-├── statistics/        # Group-level stats (planned)
-├── classification/    # Decoding analyses (planned)
-├── visualization/     # Plotting utilities
+├── features/          # Stage 3: PSD, FOOOF/specparam, complexity
+├── statistics/        # Stage 4: Group stats (IN/OUT), Yeo-network aggregation, coherence
+├── classification/    # Stage 4: Single- and multi-feature decoding, network-restricted
+├── visualization/     # Stage 5: Topomaps, surfaces, spectra, composite story panels
+├── qc/                # Dataset completeness and QC reports
 └── utils/             # Shared utilities
     ├── behavioral.py     # VTC computation, trial classification
     ├── config.py         # Configuration loading
+    ├── data_loading.py   # Feature loading, dataset balancing
     ├── logging_config.py # Logging setup
     ├── validation.py     # Input validation
-    └── slurm.py          # HPC job submission
+    ├── slurm.py          # SLURM job arrays + manifests
+    ├── yeo_networks.py   # Schaefer parcel → Yeo 7/17 mapping
+    └── specparam_compat.py  # FOOOF-compatible specparam wrapper
 ```
 
 ### No Separate Sensor/Source Code
@@ -255,10 +262,10 @@ nano config.yaml
 python -c "from code.utils.config import load_config; print('✓ Saflow installed')"
 
 # Validate configuration
-invoke validate-config
+invoke env.validate-config
 
 # Check data availability
-invoke validate-inputs
+invoke pipeline.validate-inputs
 ```
 
 ---
@@ -275,16 +282,16 @@ The pipeline is designed to run in order, with each stage building on previous o
 │ ─────────────────────────────────────────────────────────── │
 │ Raw CTF → BIDS format + behavioral enrichment               │
 │ Output: BIDS dataset with VTC, RT, performance metrics      │
-│ Command: invoke bids                                         │
+│ Command: invoke pipeline.bids                                │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Stage 1: Preprocessing (30-60 min/run)                      │
 │ ─────────────────────────────────────────────────────────── │
 │ Filter → ICA (ECG/EOG removal) → AutoReject (2-pass)        │
-│ Output: Clean continuous + 2 epoch versions (ICA, ICA+AR)   │
-│ Command: invoke preprocess --subject 04                     │
-│          invoke preprocess --slurm  (HPC: all subjects)     │
+│ Output: Clean continuous + canonical ICA epochs             │
+│ Command: invoke pipeline.preprocess --subject=04             │
+│          invoke pipeline.preprocess --slurm  (HPC array)    │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -292,28 +299,49 @@ The pipeline is designed to run in order, with each stage building on previous o
 │ ─────────────────────────────────────────────────────────── │
 │ Coregistration → Forward → Inverse → Morph to fsaverage     │
 │ Output: Source estimates (vertices), optional atlas ROIs    │
-│ Command: invoke source-recon --subject 04                   │
-│          invoke source-recon --slurm  (HPC: all subjects)   │
+│ Command: invoke pipeline.source-recon --subject=04           │
+│          invoke pipeline.source-recon --slurm  (HPC array)  │
+│          invoke pipeline.atlas --slurm                       │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Stage 3: Feature Extraction (varies by feature)             │
 │ ─────────────────────────────────────────────────────────── │
-│ Welch PSD → FOOOF → Complexity metrics                      │
-│ Output: Trial-level features with IN/OUT classification     │
+│ Welch PSD → FOOOF/specparam → Complexity metrics            │
+│ Output: Trial- or 8-trial-window features with IN/OUT tags  │
 │ Commands:                                                    │
-│   python -m code.features.compute_welch_psd \               │
-│     --subject 04 --run 02 --space sensor                    │
-│   python -m code.features.compute_fooof \                   │
-│     --subject 04 --run 02 --space sensor                    │
-│   python -m code.features.compute_complexity \              │
-│     --subject 04 --run 02 --space sensor                    │
+│   invoke pipeline.features.psd --subject=04                 │
+│   invoke pipeline.features.fooof --subject=04               │
+│   invoke pipeline.features.complexity --subject=04          │
+│   invoke pipeline.features.all --slurm                      │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Stage 4+: Statistics & Classification (planned)             │
+│ Stage 4: Group Statistics & Classification                  │
 │ ─────────────────────────────────────────────────────────── │
-│ Group stats, IN/OUT contrasts, ML decoding                  │
+│ IN vs OUT t-tests + permutation correction (tmax/FDR)       │
+│ Single-feature classifiers (LDA/SVM/RF/logistic) + tmax     │
+│ Multi-feature: per-spatial / per-feature / per-cell / joint │
+│ Yeo-network restricted classification + permutation         │
+│   importance aggregation                                    │
+│ Commands:                                                    │
+│   invoke analysis.stats --features=all                      │
+│   invoke analysis.classify --features=all --slurm           │
+│   invoke analysis.classify-multifeature --axis=all          │
+│   invoke analysis.networks.all --space=schaefer_400         │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 5: Visualization                                       │
+│ ─────────────────────────────────────────────────────────── │
+│ Topomaps & inflated-brain surfaces, spectra, composite      │
+│ stats/classif and Yeo-network story panels.                 │
+│ Commands:                                                    │
+│   invoke viz.maps --metric=balanced_accuracy --space=sensor │
+│   invoke viz.spectra                                        │
+│   invoke viz.stats-classif-panel                            │
+│   invoke viz.networks.panel --space=schaefer_400            │
+│   invoke viz.auto             # render everything on disk   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -321,32 +349,38 @@ The pipeline is designed to run in order, with each stage building on previous o
 
 ```bash
 # 1. Validate inputs
-invoke validate-inputs --verbose
+invoke pipeline.validate-inputs --verbose
 
 # 2. Convert to BIDS (all subjects)
-invoke bids
+invoke pipeline.bids
 
 # 3. Preprocess one subject locally (testing)
-invoke preprocess --subject 04 --runs "02"
+invoke pipeline.preprocess --subject=04 --runs="02"
 
-# 4. Preprocess all subjects on HPC
-invoke preprocess --slurm
+# 4. Preprocess all subjects on HPC (SLURM array job)
+invoke pipeline.preprocess --slurm
 
-# 5. Source reconstruction on HPC
-invoke source-recon --slurm
+# 5. Source reconstruction + atlas parcellation on HPC
+invoke pipeline.source-recon --slurm
+invoke pipeline.atlas --slurm
 
-# 6. Extract features (per subject/run, parallelizable)
-# Sensor-level Welch PSD
-for subj in 04 05 06; do
-  for run in 02 03 04 05 06 07; do
-    python -m code.features.compute_welch_psd \
-      --subject $subj --run $run --space sensor
-  done
-done
+# 6. Extract features (8-trial windowing aligns with cc_saflow; --n-events-window=1
+#    falls back to single-trial mode)
+invoke pipeline.features.all --slurm                  # sensor space
+invoke pipeline.features.all --space=schaefer_400 --slurm
 
-# Specparam fitting (FOOOF-compatible feature names; loads Welch PSDs)
-python -m code.features.compute_fooof \
-  --subject 04 --run 02 --space sensor --inout-bounds 25 75
+# 7. Group statistics + classification on every feature × trial-type
+invoke analysis.stats --features=all --space=sensor --slurm
+invoke analysis.classify --features=all --space=sensor --slurm
+
+# 8. Optional multi-feature decoding + Yeo-network pipeline
+invoke analysis.classify-multifeature --axis=all --space=schaefer_400 --slurm
+invoke analysis.networks.all --space=schaefer_400
+
+# 9. Render every available figure
+invoke viz.auto
+invoke viz.stats-classif-panel
+invoke viz.networks.panel --space=schaefer_400
 ```
 
 ### HPC Workflow
@@ -354,10 +388,14 @@ python -m code.features.compute_fooof \
 For cluster computing (SLURM):
 
 ```bash
-# Submit all preprocessing jobs (192 jobs: 32 subjects × 6 runs)
-invoke preprocess --slurm
+# Submit a preprocessing array job (one task per subject×run)
+invoke pipeline.preprocess --slurm
 
-# Check job status
+# Inspect / cancel jobs from inside invoke (glob-aware)
+invoke slurm.jobs --pattern='preproc_*'
+invoke slurm.cancel --pattern='classify_*' --state=PD --dry-run
+
+# Native SLURM commands also work
 squeue -u $USER
 
 # Monitor logs
@@ -366,6 +404,8 @@ tail -f logs/slurm/preprocessing/preproc_sub-04_run-02_*.out
 # After completion, check job manifest
 cat logs/slurm/preprocessing/preprocessing_manifest_*.json
 ```
+
+Analysis tasks (`analysis.stats`, `analysis.classify`, `analysis.classify-multifeature`, `analysis.networks.classify`) also accept `--slurm` and fan out via job arrays. The network and chunked-classify variants additionally schedule an `afterok` aggregator job that merges per-cell / per-chunk partials into the bundles expected by the visualization tasks.
 
 ---
 
@@ -482,56 +522,68 @@ metadata = {
 source env/bin/activate
 
 # Stage 0: BIDS conversion (just this subject)
-invoke bids --subjects "04"
+invoke pipeline.bids --subjects="04"
 
 # Stage 1: Preprocessing
-invoke preprocess --subject 04 --runs "02 03"
+invoke pipeline.preprocess --subject=04 --runs="02 03"
 
-# Check preprocessing report
-firefox data/derivatives/preprocessed/sub-04/meg/*_desc-report_meg.html
+# Refresh the per-subject QC summary (run automatically at the end of preprocess too)
+invoke pipeline.preprocess-report --subject=04
+firefox <data_root>/derivatives/preprocessed/sub-04/meg/sub-04_preprocessing-summary.html
 
-# Stage 2: Source reconstruction
-invoke source-recon --subject 04 --runs "02 03"
+# Stage 2: Source reconstruction + atlas parcellation
+invoke pipeline.source-recon --subject=04 --runs="02 03"
+invoke pipeline.atlas --subject=04 --atlases="schaefer_400"
 
-# Stage 3a: Welch PSD (sensor level)
-python -m code.features.compute_welch_psd \
-  --subject 04 --run 02 --space sensor
+# Stage 3: Feature extraction (sensor + atlas, 8-trial windows)
+invoke pipeline.features.all --subject=04 --space=sensor
+invoke pipeline.features.all --subject=04 --space=schaefer_400
+```
 
-# Stage 3b: Specparam / FOOOF-compatible features (loads Welch PSD)
-python -m code.features.compute_fooof \
-  --subject 04 --run 02 --space sensor \
-  --inout-bounds 25 75
+### Group Analysis & Visualization
 
-# Stage 3c: Complexity metrics
-python -m code.features.compute_complexity \
-  --subject 04 --run 02 --space sensor
+```bash
+# Stage 4: Stats + classification at sensor level
+invoke analysis.stats --features=all --space=sensor
+invoke analysis.classify --features=all --space=sensor
+
+# Multi-feature decoding on a Schaefer atlas
+invoke analysis.classify-multifeature --axis=all --space=schaefer_400
+
+# Full Yeo-network pipeline (stats agg → coherence → restricted classif → importance)
+invoke analysis.networks.all --space=schaefer_400
+
+# Stage 5: Reproduce paper figures + render every available map
+invoke viz.stats-classif-panel
+invoke viz.spectra
+invoke viz.networks.panel --space=schaefer_400 --trial-type=correct
+invoke viz.auto
 ```
 
 ### Multi-Space Analysis
 
 ```bash
-# Extract same features at all levels
-for space in sensor source atlas; do
-  python -m code.features.compute_welch_psd \
-    --subject 04 --run 02 --space $space
+# Extract features at sensor + multiple atlases
+for space in sensor aparc.a2009s schaefer_400; do
+  invoke pipeline.features.all --space=$space --slurm
+done
 
-  python -m code.features.compute_fooof \
-    --subject 04 --run 02 --space $space
+# Compare classification accuracy across spaces
+for space in sensor aparc.a2009s schaefer_400; do
+  invoke analysis.classify --features=all --space=$space --slurm
 done
 ```
 
 ### Alternative IN/OUT Bounds
 
-```bash
-# Median split (50/50)
-python -m code.features.compute_fooof \
-  --subject 04 --run 02 --space sensor \
-  --inout-bounds 50 50
+IN/OUT percentile bounds are set globally in `config.yaml` under
+`analysis.inout_bounds` (default `[25, 75]`). Common alternatives: `[50, 50]`
+(median split), `[10, 90]` (conservative extremes), `[33, 67]` (tercile
+split). Behavioral visualization can preview alternative bounds without
+recomputing features:
 
-# Conservative (10/90 percentile)
-python -m code.features.compute_fooof \
-  --subject 04 --run 02 --space sensor \
-  --inout-bounds 10 90
+```bash
+invoke viz.behavior --inout-bounds="10 90"
 ```
 
 ---
@@ -547,15 +599,17 @@ paths:
   data_root: /media/storage/DATA/saflow  # Root data directory
   bids: bids/                            # Relative to data_root
   derivatives: derivatives/              # Relative to data_root
+  processed: processed/                  # Per-subject feature npz files
+  results: results/                      # Group-level stats + classification outputs
   freesurfer_subjects_dir: fs_subjects/  # Relative to data_root
 
 bids:
-  subjects:  # List of subject IDs to process
+  subjects:  # Subject IDs (32 subjects, 16/25/27 excluded — no data)
     - "04"
     - "05"
-    # ... up to "38" (excluding 16, 25, 27)
+    # ... up to "38"
 
-  task_runs:  # Task run numbers
+  task_runs:  # Task run numbers (gradCPT)
     - "02"
     - "03"
     - "04"
@@ -564,7 +618,7 @@ bids:
     - "07"
 
 analysis:
-  inout_bounds: [25, 75]  # VTC percentile thresholds
+  inout_bounds: [25, 75]  # VTC percentile thresholds (IN < 25th, OUT >= 75th)
 
 features:
   fooof:
@@ -572,6 +626,8 @@ features:
     peak_width_limits: [1, 8]      # Peak width (Hz)
     max_n_peaks: 4                 # Max peaks to fit
     aperiodic_mode: "fixed"        # fixed only; knee mode is unsupported
+  welch:
+    n_events_window: 8             # Trials per Welch window (cc_saflow default)
 ```
 
 See `config.yaml.template` for all options.
@@ -583,21 +639,25 @@ See `config.yaml.template` for all options.
 ```
 saflow/
 ├── code/                      # All analysis code
-│   ├── bids/                  # BIDS conversion
-│   ├── preprocessing/         # Filtering, ICA, AutoReject
-│   ├── source_reconstruction/ # MNE inverse solutions
-│   ├── features/              # Feature extraction
-│   ├── utils/                 # Shared utilities
-│   ├── statistics/            # Stats (planned)
-│   └── visualization/         # Plotting
+│   ├── bids/                  # Stage 0: BIDS conversion
+│   ├── preprocessing/         # Stage 1: filtering, ICA, AutoReject, aggregate reports
+│   ├── source_reconstruction/ # Stage 2: MNE inverse solutions + atlas parcellation
+│   ├── features/              # Stage 3: PSD, FOOOF/specparam, complexity
+│   ├── statistics/            # Stage 4: group stats, network aggregation, coherence
+│   ├── classification/        # Stage 4: single- and multi-feature decoding, network-restricted
+│   ├── visualization/         # Stage 5: topomaps, surfaces, spectra, composite panels
+│   ├── qc/                    # Dataset completeness + QC reports
+│   └── utils/                 # Shared utilities (config, slurm, yeo_networks, ...)
 ├── config.yaml                # User configuration (gitignored)
 ├── config.yaml.template       # Config template
-├── pyproject.toml             # Package definition
-├── tasks.py                   # Invoke task runner
-├── setup.sh                   # Environment setup
+├── pyproject.toml             # Package definition + uv-managed deps
+├── uv.lock                    # Pinned dependency lockfile (used by setup.sh)
+├── tasks.py                   # Invoke task runner (3000+ lines, namespaced)
+├── slurm/templates/           # Jinja2 SLURM script templates (base + per-stage + array)
+├── setup.sh                   # Environment setup (uv by default, --installer pip fallback)
 ├── AGENTS.md                  # Development guidelines
-├── PROGRESS.md                # Implementation tracker
-└── TASKS.md                   # Task documentation
+├── CHANGELOG.md               # Version history
+└── TASKS.md                   # Per-task command reference
 ```
 
 ### Data Directory (separate)
@@ -624,23 +684,31 @@ saflow/
 │   ├── morphed_sources/       # Stage 2: Source estimates (fsaverage)
 │   ├── atlased_sources_*/     # Stage 2: Atlas-parcellated sources
 │   └── noise_covariance/      # Noise covariance matrices
-├── processed/                 # Feature extraction outputs
+├── processed/                 # Feature extraction outputs (subject-level npz)
 │   ├── welch_psds_sensor/     # Stage 3: Welch PSDs (sensor-level)
 │   │   └── sub-04/
-│   │       └── *_desc-welch_psds.npz
-│   ├── welch_psds_source/     # Stage 3: Welch PSDs (source-level)
-│   ├── features_fooof_sensor/ # Stage 3: FOOOF results (sensor)
-│   │   └── sub-04/
-│   │       └── *_desc-fooof.pkl
-│   └── features_fooof_source/ # Stage 3: FOOOF results (source)
+│   │       └── *_desc-welch{N}_psds.npz       # N = trials per window (1 or 8)
+│   ├── welch_psds_<atlas>/    # Stage 3: Welch PSDs per atlas space
+│   ├── features_fooof_sensor/ # Stage 3: specparam aperiodic params + corrected PSDs
+│   ├── features_fooof_<atlas>/
+│   ├── features_complexity_sensor/  # Stage 3: LZC, entropies, fractals
+│   └── features_complexity_<atlas>/
+├── results/                   # Stage 4 group-level outputs
+│   ├── statistics_<space>/    # Per-feature t-tests (one file per feature × trial × level)
+│   │   └── group/networks/    # Yeo-network-aggregated stats
+│   ├── classification_<space>/        # Single-feature classification scores
+│   │   ├── group_mf/          # Multi-feature classification bundles
+│   │   └── group_mf/networks/ # Network-restricted classification results
+│   └── statistics_<space>/group/networks/coherence/   # Within/between network coherence
 └── fs_subjects/               # FreeSurfer subjects
     └── fsaverage/
 ```
 
 **Directory philosophy**:
-- **bids/**: Immutable ground truth (VTC, trial metadata from behavioral data)
-- **derivatives/**: Preprocessing outputs (cleaned signals, source estimates)
-- **processed/**: Feature extraction outputs (PSDs, FOOOF, complexity metrics)
+- **bids/**: Immutable ground truth (VTC, trial metadata from behavioral data).
+- **derivatives/**: Preprocessing + source reconstruction outputs (cleaned signals, source estimates).
+- **processed/**: Feature extraction outputs (PSDs, FOOOF, complexity metrics) — one npz per subject × run × space.
+- **results/**: Group-level statistics, classification, and network analyses — the input space for the visualization tasks.
 
 ---
 
@@ -658,13 +726,13 @@ saflow/
 
 ```bash
 # Run tests
-invoke test
+invoke dev.test
 
 # Code quality checks
-invoke check  # Runs: lint + format + typecheck
+invoke dev.check.code  # Runs: lint + format + typecheck
 
 # Pre-commit checks
-invoke precommit  # Runs: format + lint + test
+invoke dev.precommit  # Runs: code quality + tests
 ```
 
 ### Guidelines
@@ -703,7 +771,7 @@ MIT License - See LICENSE file for details
 
 - **Issues**: https://github.com/your-org/saflow/issues
 - **Documentation**: See TASKS.md for detailed command reference
-- **Development**: See AGENTS.md and PROGRESS.md
+- **Development**: See AGENTS.md and CHANGELOG.md
 
 ---
 

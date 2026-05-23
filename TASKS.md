@@ -18,8 +18,11 @@ Tasks are organized into namespaces:
 | `get.*` | Data downloads (atlases) |
 | `pipeline.*` | Main pipeline stages (BIDS, preprocess, source-recon, atlas) |
 | `pipeline.features.*` | Feature extraction (psd, fooof, complexity, all) |
-| `analysis.*` | Statistical analysis (stats, classify) |
-| `viz.*` | Visualization (stats, behavior) |
+| `analysis.*` | Group-level analysis (stats, classify, classify-multifeature) |
+| `analysis.networks.*` | Yeo-network analysis (stats agg, coherence, classify, importance) |
+| `viz.*` | Visualization (stats, maps, spectra, stats-classif-panel, behavior, auto) |
+| `viz.networks.*` | Network visualizations (composite story panel) |
+| `slurm.*` | SLURM job management (jobs, cancel) |
 
 ---
 
@@ -157,6 +160,30 @@ invoke pipeline.preprocess --slurm --dry-run    # Preview jobs
 
 ---
 
+### `invoke pipeline.preprocess-report`
+
+Generate aggregate preprocessing QC reports from existing per-run params JSON sidecars.
+
+**What it does:**
+- Per-subject report: aggregates each subject's runs into a single HTML/JSON summary (`sub-XX_preprocessing-summary.{html,json}`).
+- Dataset-level report: aggregates all subjects into a group HTML/JSON with interactive Plotly distributions (`group_preprocessing-summary.{html,json}`). When `--dataset` is passed, subject-level reports are regenerated first.
+
+The per-run preprocessing task already generates a subject-level report at the end; use this task to refresh subject or group summaries on demand.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--subject` | string | none | Subject ID for a single-subject report (mutually exclusive with `--dataset`) |
+| `--dataset` | flag | false | Generate the group dataset report (also regenerates all subject reports) |
+
+**Examples:**
+```bash
+invoke pipeline.preprocess-report --subject=04
+invoke pipeline.preprocess-report --dataset
+```
+
+---
+
 ### `invoke pipeline.source-recon`
 
 Run source reconstruction (Stage 2 of pipeline).
@@ -240,32 +267,39 @@ invoke pipeline.atlas --slurm --dry-run
 
 All feature extraction tasks are under `pipeline.features.*`.
 
+All feature extraction tasks share a common `--n-events-window` knob that controls the windowing of consecutive stimulus trials:
+
+- `--n-events-window=1`: single-trial mode (one PSD per epoch).
+- `--n-events-window=8` (default): cc_saflow-compatible sliding window — 8 consecutive stim trials per Welch window. This is the canonical setting used by the analysis/visualization tasks downstream.
+
+The chosen window determines both which Welch profile is loaded and the `welch{N}` desc suffix written into output filenames.
+
 ### `invoke pipeline.features.psd`
 
 Extract power spectral density features using Welch's method.
 
 **What it computes:**
-- Welch PSD estimates per trial/epoch
+- Welch PSD estimates per trial/window
 - Band power for configured frequency bands
-- Saves with IN/OUT classification metadata
+- Saves with IN/OUT classification metadata and channel names
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--subject` | string | required* | Subject ID to process |
+| `--subject` | string | all | Subject ID (processes all if not specified) |
 | `--runs` | string | all | Space-separated run numbers |
 | `--space` | string | sensor | Analysis space: `sensor`, or atlas name (e.g., `aparc.a2009s`) |
+| `--n-events-window` | int | 8 | Trials per Welch window (1 = single-trial, 8 = cc_saflow default) |
 | `--skip-existing` | flag | true | Skip if output files exist |
-| `--slurm` | flag | false | Submit jobs to SLURM cluster |
+| `--slurm` | flag | false | Submit jobs to SLURM cluster (array job, one task per subject×run) |
 | `--dry-run` | flag | false | Generate SLURM scripts without submitting |
-
-*Required for local execution
 
 **Examples:**
 ```bash
 invoke pipeline.features.psd --subject=04
 invoke pipeline.features.psd --subject=04 --space=aparc.a2009s
 invoke pipeline.features.psd --slurm
+invoke pipeline.features.psd --n-events-window=1   # single-trial mode
 ```
 
 ---
@@ -282,19 +316,20 @@ existing FOOOF-compatible task name and `fooof_*` output feature names.
 
 Specparam fitting parameters (`freq_range`, `aperiodic_mode`, etc.) are
 configured in `config.yaml`. `aperiodic_mode` must be `fixed`; other modes
-are intentionally rejected during config validation.
+are intentionally rejected during config validation. FOOOF loads the Welch
+PSDs that match `--n-events-window`, so make sure
+`pipeline.features.psd --n-events-window=N` ran first with the same N.
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--subject` | string | required* | Subject ID to process |
+| `--subject` | string | all | Subject ID (processes all if not specified) |
 | `--runs` | string | all | Space-separated run numbers |
 | `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
+| `--n-events-window` | int | 8 | Trials per Welch window (must match PSD window) |
 | `--skip-existing` | flag | true | Skip if output files exist |
 | `--slurm` | flag | false | Submit jobs to SLURM cluster |
 | `--dry-run` | flag | false | Generate SLURM scripts without submitting |
-
-*Required for local execution
 
 **Examples:**
 ```bash
@@ -317,15 +352,14 @@ Extract complexity and entropy measures.
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--subject` | string | required* | Subject ID to process |
+| `--subject` | string | all | Subject ID (processes all if not specified) |
 | `--runs` | string | all | Space-separated run numbers |
 | `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
 | `--complexity-type` | string | "lzc entropy fractal" | Space-separated types to compute |
+| `--n-events-window` | int | 8 | Trials per epoch window |
 | `--overwrite` | flag | false | Overwrite existing files |
 | `--slurm` | flag | false | Submit jobs to SLURM cluster |
 | `--dry-run` | flag | false | Generate SLURM scripts without submitting |
-
-*Required for local execution
 
 **Examples:**
 ```bash
@@ -345,14 +379,13 @@ Extract all feature types (PSD, FOOOF, complexity) in sequence.
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--subject` | string | required* | Subject ID to process |
+| `--subject` | string | all | Subject ID (processes all if not specified) |
 | `--runs` | string | all | Space-separated run numbers |
 | `--space` | string | sensor | Analysis space: `sensor`, or atlas name |
+| `--n-events-window` | int | 8 | Trials per Welch window |
 | `--overwrite` | flag | false | Overwrite existing files |
 | `--slurm` | flag | false | Submit jobs to SLURM cluster |
 | `--dry-run` | flag | false | Generate SLURM scripts without submitting |
-
-*Required for local execution
 
 **Examples:**
 ```bash
@@ -365,9 +398,9 @@ invoke pipeline.features.all --slurm
 
 ## Analysis Tasks
 
-`analysis.stats` and `analysis.classify` share the same `--features` interface so they can be called identically.
+`analysis.stats` and `analysis.classify` share the same `--features` and `--trial-type` interfaces so they can be called identically.
 
-**`--features` accepts:**
+**`--features` accepts (default: `all`):**
 - A single feature name: `fooof_exponent`, `psd_alpha`, `complexity_lzc_median`, ...
 - A space-separated list: `"fooof_exponent psd_alpha"`
 - A shortcut name (expands to the family below):
@@ -375,9 +408,18 @@ invoke pipeline.features.all --slurm
   - `psds_corrected` → `psd_corrected_<band>` for every band
   - `fooof` → `fooof_exponent`, `fooof_offset`, `fooof_r_squared`
   - `complexity` → all 10 complexity sub-metrics (LZC, entropies, fractals)
-  - `all` → union of `fooof` + `psds` + `psds_corrected` + `complexity` (29 features)
+  - `all` → union of `fooof` + `psds` + `psds_corrected` + `complexity`
 
-By default each feature is processed independently (single-feature framework). For classification you can also pass `--combine-features` to stack everything into one model.
+**`--trial-type` accepts (default: `all`):**
+- A single type: `alltrials`, `correct`, `rare`, `lapse`, `correct_commission`.
+- The shortcut `all` runs three variants in a single invocation: `alltrials`, `correct` (baseline), and `lapse`. Each is written to its own `_type-<...>` result file.
+
+**`--analysis-level` accepts (default: `both`):**
+- `epoch`: per-epoch / per-trial test or classification.
+- `average`: one IN + one OUT row per subject — subject-spectrum (pool → FOOOF) for `psd_*` and `fooof_*`, per-subject median/mean for `complexity_*`.
+- `both`: run both levels, saving one result file per level (`_level-epoch` / `_level-average`).
+
+By default each feature is processed independently (single-feature framework). `analysis.classify-multifeature` is a separate task for joint multi-feature models.
 
 ---
 
@@ -385,25 +427,34 @@ By default each feature is processed independently (single-feature framework). F
 
 Run group-level statistical analysis (IN vs OUT attentional states) on one or more features.
 
-Complexity features are routed through the same `run_group_statistics` schema as PSD/FOOOF so a single run can mix families freely.
+Complexity features are routed through the same `run_group_statistics` schema as PSD/FOOOF so a single run can mix families freely. With no arguments, runs every feature through every trial-type variant at every analysis level.
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--features` | string | required | Single feature, space-separated list, or shortcut (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
+| `--features` | string | all | Single feature, space-separated list, or shortcut (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
 | `--space` | string | sensor | Analysis space: `sensor`, or atlas name (e.g. `schaefer_400`, `aparc.a2009s`) |
 | `--test` | string | paired_ttest | `paired_ttest` or `independent_ttest` |
-| `--correction` | string | tmax | `none`, `fdr`, `bonferroni`, or `tmax` (FWER via permutation) |
-| `--fdr-method` | string | config | `bh` or `by` when using `--correction=fdr` |
+| `--correction` | string | fdr | `none`, `fdr`, `bonferroni`, or `tmax` (FWER via permutation) |
 | `--alpha` | float | 0.05 | Significance threshold |
 | `--n-permutations` | int | 10000 | Permutations for `tmax` |
 | `--n-jobs` | int | 1 | Parallel jobs (`-1` = all cores) |
-| `--average-trials` / `--no-average-trials` | flag | true | Subject-level paired t-test (default) vs trial-level independent t-test |
-| `--visualize` | flag | false | Generate visualization figures |
+| `--analysis-level` | string | both | `epoch`, `average`, or `both` (writes one file per level) |
+| `--aggregate` | string | median | Per-subject reducer for `level=average` on `complexity_*` (`median` or `mean`) |
+| `--trial-type` | string | all | `alltrials`, `correct`, `rare`, `lapse`, `correct_commission`, or `all` (runs 3 variants) |
+| `--zoning` | string | per-run | IN/OUT zoning policy (matches feature-extraction `zoning`) |
+| `--n-events-window` | int | 8 | Trials per Welch window (must match feature extraction) |
+| `--visualize` | flag | false | Generate visualization figures alongside results |
 | `--continue-on-error` / `--no-continue-on-error` | flag | true | Keep going if a feature family fails |
+| `--slurm` | flag | false | Submit as SLURM array (one task per trial-type) |
+| `--slurm-time` / `--slurm-mem` / `--slurm-cpus` | string/int | from config | Per-job resource overrides |
+| `--dry-run` | flag | false | Preview SLURM submissions without running |
 
 **Examples:**
 ```bash
+# Default: every feature × every trial-type × every level
+invoke analysis.stats
+
 # Single feature
 invoke analysis.stats --features=fooof_exponent
 
@@ -412,17 +463,16 @@ invoke analysis.stats --features=psds
 invoke analysis.stats --features=fooof --space=schaefer_400
 
 # Every feature on disk (single-feature framework: each tested independently)
-invoke analysis.stats --features=all
 invoke analysis.stats --features=all --space=schaefer_400 --n-jobs=4
 
-# Mixed list
-invoke analysis.stats --features="fooof_exponent psd_alpha psd_theta"
+# Per-epoch only (skip subject-level paired test)
+invoke analysis.stats --features="psd_alpha psd_theta" --analysis-level=epoch
 
-# Switch to trial-level independent t-test
-invoke analysis.stats --features=psds --no-average-trials
+# Lapse-only trials, FDR correction
+invoke analysis.stats --features=fooof --trial-type=lapse --correction=fdr
 
-# FDR instead of tmax (faster, less stringent)
-invoke analysis.stats --features=complexity --correction=fdr
+# SLURM (one job per trial-type variant)
+invoke analysis.stats --features=all --slurm
 ```
 
 ---
@@ -431,14 +481,35 @@ invoke analysis.stats --features=complexity --correction=fdr
 
 Run classification analysis (decode IN vs OUT from neural features) on one or more features.
 
+With no arguments, runs every feature through every trial-type variant at every analysis level.
+
+**Spatial mode:**
+- `univariate` (default): per-channel/ROI classifier + shared-permutation t-max correction.
+- `multivariate`: pool spatial dim into one feature vector, single `permutation_test_score`.
+
+**Analysis level & CV:**
+- `--analysis-level=epoch`: per-epoch classification. Default CV resolves to `logo` (leave-one-subject-out).
+- `--analysis-level=average`: subject-level (1 IN + 1 OUT row per subject). Default CV resolves to `group` (GroupKFold, k=6).
+- `--analysis-level=both` (default): run both levels, one scores file per level.
+- `--cv=auto` (default) resolves from the level; `--cv` (`logo`|`stratified`|`group`) forces a specific splitter.
+
+**Standardization:**
+- `--standardize=auto` (default): per-subject z-scoring for epoch-level trial classification (avoids the between-subject baseline pinning balanced-accuracy at 0.5), no standardization otherwise.
+- Explicit values: `per-subject`, `none`, or any sklearn-compatible scaler key.
+
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--features` | string | required | Single feature, space-separated list, or shortcut (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
-| `--clf` | string | lda | Classifier: `lda`, `svm`, `rf`, `logistic` |
-| `--cv` | string | logo | Cross-validation: `logo`, `stratified`, `group` |
-| `--space` | string | sensor | Analysis space (sensor or atlas name) |
+| `--features` | string | all | Single feature, space-separated list, or shortcut (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
+| `--clf` | string | logistic | Classifier: `lda`, `svm`, `rf`, `logistic` |
+| `--cv` | string | auto | Cross-validation: `auto`, `logo`, `stratified`, `group` |
+| `--space` | string | sensor | Analysis space (`sensor` or atlas name) |
 | `--mode` | string | univariate | `univariate` (per-channel + tmax) or `multivariate` (pool spatial dim) |
+| `--analysis-level` | string | both | `epoch`, `average`, or `both` |
+| `--standardize` | string | auto | `auto`, `per-subject`, `none`, ... |
+| `--trial-type` | string | all | `alltrials`, `correct`, `rare`, `lapse`, `correct_commission`, or `all` |
+| `--zoning` | string | per-run | IN/OUT zoning policy |
+| `--n-events-window` | int | 8 | Trials per Welch window (must match feature extraction) |
 | `--n-permutations` | int | 1000 | Permutations for significance testing |
 | `--no-balance` | flag | false | Disable class balancing within subjects |
 | `--n-jobs` | int | -1 | Parallel jobs (`-1` = all cores) |
@@ -446,23 +517,29 @@ Run classification analysis (decode IN vs OUT from neural features) on one or mo
 | `--importances` | flag | false | Save RF feature importances (use with `--clf=rf`) |
 | `--label` | string | auto | Output label override (only with `--combine-features`) |
 | `--n-chunks` | int | 1 | Spatial-dim chunking (univariate + SLURM only) |
+| `--aggregate` / `--no-aggregate` | flag | true | Auto-merge per-chunk SLURM outputs via afterok aggregator job |
+| `--delete-chunks` | flag | false | Delete per-chunk files after successful aggregation |
+| `--continue-on-error` / `--no-continue-on-error` | flag | false | Keep going if a feature fails |
 | `--seed` | int | 42 | Random seed for permutations |
-| `--slurm` | flag | false | Submit each classification as its own SLURM job |
+| `--slurm` | flag | false | Submit each classification as its own SLURM job (or array) |
 | `--slurm-time` / `--slurm-mem` / `--slurm-cpus` | string/int | from config | Per-job resource overrides |
 | `--dry-run` | flag | false | Preview SLURM submissions without running |
 
 **Examples:**
 ```bash
-# Single feature (recommended starting point)
+# Default: every feature × every trial-type × every level
+invoke analysis.classify
+
+# Single feature, per-channel LDA + tmax
 invoke analysis.classify --features=fooof_exponent --clf=lda
 
 # Whole family — one classification per feature
 invoke analysis.classify --features=psds --space=sensor
 
-# Every feature on disk, each as its own classification (single-feature framework)
-invoke analysis.classify --features=all --space=schaefer_400
+# Per-epoch only with explicit LOSO CV
+invoke analysis.classify --features=fooof_exponent --analysis-level=epoch --cv=logo
 
-# Combine all complexity metrics into one RF model + save feature importances
+# Combine all complexity metrics into one RF model + save importances
 invoke analysis.classify --features=complexity --space=schaefer_400 \
     --clf=rf --combine-features --importances
 
@@ -470,9 +547,283 @@ invoke analysis.classify --features=complexity --space=schaefer_400 \
 invoke analysis.classify --features=all --combine-features \
     --mode=multivariate --clf=rf --importances
 
-# Fan out to SLURM — one job per feature
+# Fan out to SLURM — one job per feature, chunk the spatial dim for big atlases
 invoke analysis.classify --features=all --slurm
 invoke analysis.classify --features=psds --slurm --n-chunks=8
+```
+
+---
+
+### `invoke analysis.classify-multifeature`
+
+Multi-feature classification (IN vs OUT) along one or all axes of the (trials × spatial × features) tensor.
+
+Loads all selected features as a single stacked tensor and runs decoding along one or more axes:
+
+| Axis | Classifier configuration | Output |
+|------|--------------------------|--------|
+| `per-spatial` | One classifier per sensor/ROI, all features as input | `scores(n_spatial,)`, `importance(n_spatial, n_feat)` |
+| `per-feature` | One classifier per feature, all spatial units as input | `scores(n_features,)`, `importance(n_features, n_sp)` |
+| `per-cell` | One classifier per (sensor, feature) pair | `scores(n_spatial, n_features)` |
+| `joint` | One classifier on flattened `n_spatial * n_features` | scalar score, `importance(n_spatial, n_feat)` |
+| `all` (default) | Run all four axes, one file per axis | bundled aggregate JSON |
+
+**Feature-importance backends (`--importance`):**
+- `permutation` (default): CV-fold permutation importance, model-agnostic, averaged across folds.
+- `coef`: signed coefficients (linear models only: `lda`, `logistic`, `svm`).
+- `tree`: `feature_importances_` (RF only).
+- `none`: skip importance.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--features` | string | all | Same conventions as `analysis.classify` |
+| `--label` | string | auto | Output label (default: `combined-<N>`) |
+| `--clf` | string | logistic | Classifier choice |
+| `--cv` | string | logo | Cross-validation scheme |
+| `--space` | string | sensor | Analysis space |
+| `--axis` | string | all | `per-spatial`, `per-feature`, `per-cell`, `joint`, or `all` |
+| `--importance` | string | permutation | Importance backend |
+| `--importance-n-repeats` | int | 5 | Permutation-importance repeats per CV fold |
+| `--n-permutations` | int | 1000 | Significance-test permutations |
+| `--per-feature-scale` / `--no-per-feature-scale` | flag | true | Standardize each feature independently before stacking |
+| `--no-balance` | flag | false | Disable per-subject class balancing |
+| `--trial-type` | string | alltrials | Single trial-type only (no `all` shortcut for now) |
+| `--zoning` | string | per-run | IN/OUT zoning policy |
+| `--n-events-window` | int | 8 | Trials per Welch window |
+| `--standardize` | string | per-subject | Pre-stacking scaler |
+| `--analysis-level` | string | epoch | `epoch` or `average` |
+| `--n-chunks` / `--chunk-idx` | int | 1 / 0 | Chunked execution for `--axis=per-cell` |
+| `--keep-bad-trials` | flag | false | Skip the AR1/AR2-bad mask |
+| `--output-dir` | PATH | from config | Override results directory |
+| `--aggregate` / `--no-aggregate` | flag | true | Auto-bundle outputs when `--axis=all` |
+| `--slurm` | flag | false | Submit each axis (and `per-cell` chunks) as SLURM jobs with an afterok bundle aggregator |
+| `--slurm-time` / `--slurm-mem` / `--slurm-cpus` | string/int | from config | Per-job resource overrides |
+| `--dry-run` | flag | false | Preview SLURM submissions without running |
+
+**Examples:**
+```bash
+# All four axes, all features, sensor space, logreg + permutation importance
+invoke analysis.classify-multifeature
+
+# Per-feature axis only on schaefer_400, RF + tree importance
+invoke analysis.classify-multifeature --axis=per-feature \
+    --space=schaefer_400 --clf=rf --importance=tree
+
+# Joint axis with bundled aggregation
+invoke analysis.classify-multifeature --axis=joint --features=all
+
+# Fan out per-cell to SLURM with chunking
+invoke analysis.classify-multifeature --axis=per-cell --space=schaefer_400 \
+    --n-chunks=8 --slurm
+```
+
+---
+
+### `invoke analysis.classify-multifeature-aggregate`
+
+Bundle per-axis multi-feature classification outputs (from `--axis=all`) into a single file.
+
+Useful when `--aggregate=False` was used at submission, or when the afterok aggregator job failed and per-axis files are still on disk.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--label` | string | required | Bundle label used at submission |
+| `--space` | string | required | Analysis space |
+| `--clf` / `--cv` / `--importance` | string | logistic / logo / permutation | Match the original submission |
+| `--trial-type` | string | alltrials | Trial-type filter |
+| `--analysis-level` | string | epoch | Level filter |
+| `--axes` | string | all on disk | Restrict to a subset (e.g. `"per-feature joint"`) |
+| `--output-dir` | PATH | from config | Override results directory |
+| `--config` | PATH | config.yaml | Config file path |
+
+**Examples:**
+```bash
+invoke analysis.classify-multifeature-aggregate --label=combined-19 --space=sensor
+invoke analysis.classify-multifeature-aggregate --label=all --space=schaefer_400 \
+    --axes="joint per-feature"
+```
+
+---
+
+### `invoke analysis.classify-aggregate`
+
+Manually aggregate per-chunk classification outputs from `analysis.classify --n-chunks=N --slurm` runs.
+
+Use this when `--aggregate=False` was used at submission, or when the afterok aggregator job failed and chunk files are still on disk.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--feature` | string | required | Feature name or `combined-<N>` label |
+| `--space` | string | required | Analysis space |
+| `--clf` / `--cv` / `--mode` | string | lda / logo / univariate | Match the original submission |
+| `--combined` | flag | false | Set when aggregating a `--combine-features` run |
+| `--trial-type` | string | alltrials | Trial-type filter |
+| `--delete-chunks` | flag | false | Delete per-chunk files after merging |
+| `--config` | PATH | config.yaml | Config file path |
+
+**Examples:**
+```bash
+invoke analysis.classify-aggregate --feature=psd_alpha --space=sensor
+invoke analysis.classify-aggregate --feature=combined-10 --space=schaefer_400 --combined
+```
+
+---
+
+## Network Analysis Tasks (`analysis.networks.*`)
+
+Yeo-network-restricted analysis layer that aggregates per-parcel results to Yeo 7/17 networks. Requires Schaefer (or compatible Yeo-tagged) atlas space and that the underlying parcel-level stats/classification have already been computed.
+
+Outputs land under `<results>/statistics_<space>/group/networks/` and `<results>/classification_<space>/group_mf/networks/`.
+
+### `invoke analysis.networks.aggregate-stats`
+
+Aggregate per-parcel statistical results to Yeo networks.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | schaefer_400 | Schaefer/Yeo-tagged atlas |
+| `--trial-type` | string | all | Trial-type filter |
+| `--correction` | string | fdr | P-value correction used in input stats |
+| `--yeo` | int | 7 | Yeo network resolution (`7` or `17`) |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--inout-token` | string | 2575 | IN/OUT bounds token (e.g., `2575` for the 25/75 percentile split) |
+
+**Examples:**
+```bash
+invoke analysis.networks.aggregate-stats --space=schaefer_400
+invoke analysis.networks.aggregate-stats --space=schaefer_400 --yeo=17 --correction=tmax
+```
+
+---
+
+### `invoke analysis.networks.coherence`
+
+Compute within- and between-network coherence of IN-OUT contrasts at the network level.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | schaefer_400 | Atlas |
+| `--trial-type` | string | all | Trial-type filter |
+| `--feature` | string | none | Restrict to one feature (default: all) |
+| `--yeo` | int | 7 | Yeo network resolution |
+| `--aggregate` | string | median | Per-network reducer (`median` or `mean`) |
+
+**Examples:**
+```bash
+invoke analysis.networks.coherence --space=schaefer_400
+invoke analysis.networks.coherence --space=schaefer_400 --feature=fooof_exponent
+```
+
+---
+
+### `invoke analysis.networks.classify`
+
+Yeo-network-restricted IN-vs-OUT classification across three scopes.
+
+**Scopes:**
+- `per-family`: one classifier per (network × feature-family) cell.
+- `per-feature`: one classifier per (network × feature) cell.
+- `joint`: one classifier per network using all features at once.
+- `all` (default): run all three scopes.
+
+With `--slurm`, submits one SLURM array task per `(scope × trial-type × network)` cell (up to `3 × 3 × {yeo}`). A second array depends on the first (afterok) to merge the per-network partials into the combined bundle expected by `viz.networks.panel`.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | schaefer_400 | Atlas |
+| `--scope` | string | all | `per-family`, `per-feature`, `joint`, or `all` |
+| `--trial-type` | string | all | Trial-type filter (`all` runs alltrials + correct + lapse) |
+| `--yeo` | int | 7 | Yeo network resolution |
+| `--clf` | string | logistic | Classifier |
+| `--cv` | string | logo | Cross-validation |
+| `--n-permutations` | int | 1000 | Significance permutations |
+| `--n-jobs` | int | -1 | Parallel jobs |
+| `--families` | string | from script | Override default family list for `per-family` scope |
+| `--per-feature-features` | string | from script | Override default feature list for `per-feature` scope |
+| `--subjects` | string | all | Restrict to a subject subset |
+| `--aggregate` / `--no-aggregate` | flag | true | Auto-merge partials after the classify array completes |
+| `--delete-partials` | flag | false | Delete per-network partials after merge |
+| `--slurm` | flag | false | Submit array jobs (classify + aggregator) |
+| `--slurm-time` / `--slurm-mem` / `--slurm-cpus` | string/int | from config | Per-job resource overrides |
+| `--dry-run` | flag | false | Preview SLURM submissions without running |
+
+**Examples:**
+```bash
+invoke analysis.networks.classify --space=schaefer_400
+invoke analysis.networks.classify --space=schaefer_400 --scope=joint
+invoke analysis.networks.classify --slurm
+invoke analysis.networks.classify --slurm --dry-run
+```
+
+---
+
+### `invoke analysis.networks.classify-aggregate`
+
+Merge per-network classification partials into combined bundles. Use after a SLURM run if the afterok aggregator job failed and partials remain on disk.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` / `--scope` / `--trial-type` / `--yeo` / `--clf` / `--cv` | various | match submission | Selectors |
+| `--delete-partials` | flag | false | Delete partials after merging |
+
+**Examples:**
+```bash
+invoke analysis.networks.classify-aggregate --space=schaefer_400
+invoke analysis.networks.classify-aggregate --space=schaefer_400 --delete-partials
+```
+
+---
+
+### `invoke analysis.networks.importance`
+
+Aggregate joint-axis multi-feature permutation importance to networks. Requires that `analysis.classify-multifeature --axis=joint --importance=permutation` has been executed for the matching `(space, clf, cv, trial-type)`.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | schaefer_400 | Atlas |
+| `--label` | string | all | Multi-feature label (default: `all`) |
+| `--trial-type` | string | all | Trial-type filter |
+| `--yeo` | int | 7 | Yeo network resolution |
+| `--clf` / `--cv` | string | logistic / logo | Match the multifeature submission |
+| `--importance` | string | permutation | Importance backend |
+| `--analysis-level` | string | epoch | Level of the multifeature run |
+| `--input` | PATH | auto-discovered | Override path to the joint-axis scores file |
+
+**Examples:**
+```bash
+invoke analysis.networks.importance --space=schaefer_400
+invoke analysis.networks.importance --input=/path/to/feature-all_..._scores.npz --yeo=7
+```
+
+---
+
+### `invoke analysis.networks.all`
+
+Run the full network-layer pipeline end-to-end: stats aggregation → coherence → network-restricted classification → joint-axis importance aggregation.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | schaefer_400 | Atlas |
+| `--trial-type` | string | all | Trial-type filter |
+| `--yeo` | int | 7 | Yeo network resolution |
+| `--correction` | string | fdr | Stats correction |
+| `--clf` / `--cv` | string | logistic / logo | Classifier settings |
+| `--n-permutations` | int | 1000 | Significance permutations |
+| `--label` | string | all | Multi-feature label for `networks_importance` |
+
+**Examples:**
+```bash
+invoke analysis.networks.all --space=schaefer_400
+invoke analysis.networks.all --space=schaefer_400 --yeo=17
 ```
 
 ---
@@ -481,23 +832,96 @@ invoke analysis.classify --features=psds --slurm --n-chunks=8
 
 ### `invoke viz.stats`
 
-Visualize saved statistical results.
+Visualize saved statistical results as topographic (sensor) or surface (source/atlas) maps.
 
-Loads previously computed statistics and displays summary. The statistics must have been computed first using `invoke analysis.stats`.
+Loads previously computed statistics produced by `analysis.stats`. Sensor space renders topomaps of t-values; source/atlas spaces render inflated brain surfaces.
+
+By convention (for contrast colormaps): **red = OUT > IN** (positive t-values), **blue = IN > OUT** (negative).
 
 **Arguments:**
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--feature-type` | string | complexity | Feature type to visualize |
-| `--space` | string | sensor | Analysis space |
-| `--alpha` | float | 0.05 | Significance threshold for display |
-| `--show` | flag | false | Open figure in viewer |
+| `--feature-type` | string | fooof_exponent | Feature to visualize (e.g., `fooof_exponent`, `psd_alpha`) |
+| `--space` | string | sensor | Analysis space (`sensor`, `source`, or atlas name) |
+| `--alpha` | float | 0.05 | Significance threshold for marking |
+| `--trial-type` | string | alltrials | Trial-type filter |
+| `--cmap` | string | from config | Override colormap |
+| `--show` | flag | false | Display the figure interactively |
+| `--save` / `--no-save` | flag | true | Write figure to `reports/figures/` |
 
 **Examples:**
 ```bash
-invoke viz.stats
-invoke viz.stats --feature-type=complexity --show
-invoke viz.stats --feature-type=fooof
+invoke viz.stats --feature-type=fooof_exponent --show
+invoke viz.stats --feature-type=psd_alpha --space=schaefer_400
+invoke viz.stats --feature-type=psd --space=aparc.a2009s
+invoke viz.stats --feature-type=psd --cmap=coolwarm
+```
+
+---
+
+### `invoke viz.maps`
+
+Unified rows-of-maps visualization for stats + classification results, across sensor and atlas spaces.
+
+Auto-discovers result files matching the chosen metric and renders one row of topomaps (sensor) or inflated-brain panels (source/atlas) per feature family. Prints the exact command to run when nothing is found.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--metric` | string | required | `tval`, `contrast`, or `balanced_accuracy` |
+| `--space` | string | sensor | `sensor`, `source`, or atlas name |
+| `--feature` | string | none | Space-separated feature names (e.g., `"psd_alpha psd_theta"`) |
+| `--feature-set` | string | none | Shortcut family (`psds`, `psds_corrected`, `fooof`, `complexity`, `all`) |
+| `--family` | string | none | Filter rendering to one family when features span multiple |
+| `--clf` / `--cv` / `--mode` | string | lda / logo / univariate | Classification result filters |
+| `--test` | string | paired_ttest | Statistics test filter |
+| `--trial-type` | string | alltrials | Trial-type variant to plot |
+| `--correction` | string | auto | `auto`, `tmax`, `fdr_bh`, `bonferroni`, `uncorrected` |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--cmap` | string | from metric | Override colormap |
+| `--output-subdir` | string | classification | Subfolder under `reports/figures/` |
+
+**Examples:**
+```bash
+invoke viz.maps --metric=balanced_accuracy --space=sensor --feature-set=psds
+invoke viz.maps --metric=balanced_accuracy --space=schaefer_400 --feature-set=all
+invoke viz.maps --metric=tval --space=sensor --feature=fooof_exponent
+invoke viz.maps --metric=contrast --space=sensor --feature-set=psds --trial-type=lapse
+```
+
+---
+
+### `invoke viz.spectra`
+
+Reproduce Figure 3 C–F: the FOOOF spectral decomposition panel.
+
+Selects the most significant sensor/region from the FOOOF exponent group-statistics map, then renders, at that unit, a four-panel plot of:
+
+| Panel | Content |
+|-------|---------|
+| C | Raw spectrum (PSD) — IN vs OUT |
+| D | Aperiodic component — IN vs OUT |
+| E | Corrected spectrum (PSDc) — IN vs OUT |
+| F | Periodic components — IN vs OUT |
+
+Curves are group means ± SEM unless `--subject` pins a single subject (the manuscript's example-subject case).
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | sensor | `sensor` or atlas name (e.g., `schaefer_400`) |
+| `--stat-feature` | string | fooof_exponent | Statistics map used to pick the unit |
+| `--select-by` | string | corrected | Rank by `corrected` or `uncorrected` p-values |
+| `--subject` | string | none | Restrict spectra to one subject (default: group average) |
+| `--n-events-window` | int | 8 | Trials per Welch window (welch desc suffix) |
+| `--show` | flag | false | Display the figure interactively |
+| `--save` / `--no-save` | flag | true | Save to `reports/figures/statistics/` |
+
+**Examples:**
+```bash
+invoke viz.spectra
+invoke viz.spectra --space=sensor --select-by=uncorrected
+invoke viz.spectra --subject=07
 ```
 
 ---
@@ -566,6 +990,67 @@ invoke viz.behavior
 invoke viz.behavior --subject=04 --run=3
 invoke viz.behavior --inout-bounds="10 90"
 invoke viz.behavior --output=reports/figures/behavior_sub04.png
+```
+
+---
+
+### `invoke viz.networks.panel`
+
+Render the composite Yeo-network story panel as a single PNG (four tiers: parcel maps, network-level stats, network-restricted classification, joint-axis importance).
+
+Reads from `results/statistics_<space>/group/networks/` and `results/classification_<space>/group_mf/networks/`. Sections without inputs degrade to "no data" placeholders, which is useful while pipelines are still running.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--space` | string | schaefer_400 | Atlas (Schaefer or aparc.a2009s) |
+| `--trial-type` | string | correct | `alltrials`, `correct`, or `lapse` |
+| `--yeo` | int | 7 | Yeo network resolution (`7` or `17`) |
+| `--correction` | string | fdr | Significance mask correction |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--clf` / `--cv` | string | logistic / logo | Classification result filters |
+| `--mf-label` | string | all | Multi-feature label for the importance tier |
+| `--no-yeo-overlay` | flag | false | Skip Tier-1 Yeo outlines (faster) |
+| `--output` | PATH | from config | Override output PNG path |
+| `--config` | PATH | config.yaml | Config file path |
+
+**Examples:**
+```bash
+invoke viz.networks.panel --space=schaefer_400 --trial-type=correct
+invoke viz.networks.panel --space=schaefer_400 --trial-type=lapse --yeo=17
+invoke viz.networks.panel --no-yeo-overlay   # faster, skip Tier-1 outlines
+```
+
+---
+
+### `invoke viz.auto`
+
+Scan the results folder and render every available visualization.
+
+Walks `<results>/` for `statistics_<space>` and `classification_<space>` folders, discovers which metrics, spaces, trial-types, and (for classification) clf/cv/mode combinations actually have result files on disk, and runs `viz.maps` once per discovered combination. Every filter defaults to "discover and render all" — pass a value to restrict to it.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--results-dir` | PATH | from config | Override the results root |
+| `--metric` | string | all | Restrict to one metric |
+| `--space` | string | all | Restrict to one space |
+| `--trial-type` | string | all | Restrict to one trial-type |
+| `--clf` / `--cv` / `--mode` | string | all | Restrict classification combinations |
+| `--test` | string | all | Restrict statistics test |
+| `--feature-set` | string | all | Feature family set forwarded to `viz.maps` |
+| `--correction` | string | auto | Forwarded to `viz.maps` |
+| `--alpha` | float | 0.05 | Significance threshold |
+| `--cmap` | string | from metric | Override colormap |
+| `--dry-run` | flag | false | Print the planned commands without running |
+| `--continue-on-error` / `--no-continue-on-error` | flag | true | Keep going if a render fails |
+
+**Examples:**
+```bash
+invoke viz.auto                  # everything found on disk
+invoke viz.auto --dry-run        # preview the plan
+invoke viz.auto --space=sensor   # only sensor maps
+invoke viz.auto --metric=tval    # only t-value statistics maps
 ```
 
 ---
@@ -812,19 +1297,23 @@ invoke pipeline.preprocess --subject=04 --slurm
 invoke pipeline.preprocess --slurm --dry-run
 ```
 
+Most pipeline stages now use SLURM **job arrays** for fan-out (one array task per subject×run or per parameter cell), so a single invocation submits one array job rather than many independent jobs.
+
 ### Supported Tasks
 
 | Task | SLURM Support |
 |------|---------------|
-| `pipeline.preprocess` | Yes |
-| `pipeline.source-recon` | Yes |
-| `pipeline.atlas` | Yes |
-| `pipeline.features.psd` | Yes |
-| `pipeline.features.fooof` | Yes |
-| `pipeline.features.complexity` | Yes |
-| `pipeline.features.all` | Yes |
-| `analysis.stats` | Not yet |
-| `analysis.classify` | Yes (`--slurm`) |
+| `pipeline.preprocess` | Yes (array) |
+| `pipeline.source-recon` | Yes (array) |
+| `pipeline.atlas` | Yes (array) |
+| `pipeline.features.psd` | Yes (array) |
+| `pipeline.features.fooof` | Yes (array) |
+| `pipeline.features.complexity` | Yes (array) |
+| `pipeline.features.all` | Yes (array) |
+| `analysis.stats` | Yes (one array task per trial-type) |
+| `analysis.classify` | Yes (`--slurm`, chunkable with `--n-chunks`) |
+| `analysis.classify-multifeature` | Yes (one job per axis, `per-cell` chunkable) |
+| `analysis.networks.classify` | Yes (array per scope×trial-type×network + afterok aggregator) |
 
 ### Configuration
 
@@ -869,6 +1358,56 @@ When submitting SLURM jobs, manifests are saved to `logs/slurm/{stage}/` with:
 - Submission timestamp
 - Subjects and runs processed
 - Stage metadata
+
+---
+
+## SLURM Management Tasks (`slurm.*`)
+
+Helper tasks for inspecting and cancelling SLURM jobs without leaving the invoke CLI.
+
+### `invoke slurm.jobs`
+
+List your running/queued SLURM jobs, optionally filtered by name glob and/or state.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--pattern` | string | all | Glob-style name filter (e.g., `'classify_*'`, `'*chunk-0*'`) |
+| `--state` | string | all | SLURM state code (`R`, `PD`, `CG`, ...) |
+| `--user` | string | current | SLURM username to query |
+
+**Examples:**
+```bash
+invoke slurm.jobs
+invoke slurm.jobs --pattern='classify_*'
+invoke slurm.jobs --pattern='aggregate_*' --state=PD
+```
+
+---
+
+### `invoke slurm.cancel`
+
+Cancel SLURM jobs matching a name glob (or explicit IDs).
+
+Safety: by default, prints what would be cancelled and asks for confirmation. Pass `--yes` to skip the prompt, or `--dry-run` to print without cancelling.
+
+**Arguments:**
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--pattern` | string | none | Glob-style name filter |
+| `--job-ids` | string | none | Comma- or space-separated explicit job IDs (overrides pattern) |
+| `--state` | string | all | SLURM state code (useful with `--pattern`) |
+| `--user` | string | current | SLURM username to query |
+| `--dry-run` | flag | false | Print matches without cancelling |
+| `--yes` | flag | false | Skip the confirmation prompt |
+
+**Examples:**
+```bash
+invoke slurm.cancel --pattern='classify_psd_*' --dry-run
+invoke slurm.cancel --pattern='aggregate_*' --state=PD --yes
+invoke slurm.cancel --pattern='*chunk-0of*'
+invoke slurm.cancel --job-ids='123,124,125'
+```
 
 ---
 
