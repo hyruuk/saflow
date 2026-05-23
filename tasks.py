@@ -2046,7 +2046,7 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
 
         array_job_id = submit_job_array(
             level_scripts,
-            f"stats_array_{trial_type}_level-{level}", base_resources,
+            f"stats_array_{space}_{trial_type}_level-{level}", base_resources,
             script_dir, timestamp, max_concurrent=max_concurrent,
             dry_run=dry_run,
         )
@@ -2229,7 +2229,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 
         classify_array_id = submit_job_array(
             level_scripts,
-            f"classify_array_{trial_type}_level-{level}", base_resources,
+            f"classify_array_{space}_{trial_type}_level-{level}", base_resources,
             script_dir, timestamp, max_concurrent=max_concurrent,
             dry_run=dry_run,
         )
@@ -2269,7 +2269,7 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
                 agg_scripts.append(agg_script)
             agg_array_id = submit_job_array(
                 agg_scripts,
-                f"aggregate_array_{trial_type}_level-{level}", agg_resources,
+                f"aggregate_array_{space}_{trial_type}_level-{level}", agg_resources,
                 script_dir, timestamp, max_concurrent=max_concurrent,
                 dependencies=[classify_array_id] if classify_array_id else None,
                 dep_type="afterok", dry_run=dry_run,

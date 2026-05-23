@@ -63,6 +63,9 @@ export PYTHONPATH={{ project_root }}:$PYTHONPATH
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export NUMEXPR_NUM_THREADS=$SLURM_CPUS_PER_TASK
+# Disable tqdm in non-tty slurm stderr — \r-based progress bars otherwise
+# collapse into one giant log line per loop.
+export TQDM_DISABLE=1
 
 # Change to project directory
 cd {{ project_root }}
