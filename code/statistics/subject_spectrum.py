@@ -47,6 +47,7 @@ from tqdm import tqdm
 
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
+from code.utils.data_loading import safe_npz_load
 from code.utils.specparam_compat import (
     get_aperiodic_params,
     get_fit_freqs,
@@ -240,25 +241,24 @@ def load_subject_spectrum_features(
                 except Exception:
                     pass
 
-            with np.load(file_path, allow_pickle=True) as npz:
-                meta = npz["trial_metadata"].item()
-                # Use window_vtc_mean as the anchor in window mode, else
-                # per-trial VTC_filtered.
-                if "window_vtc_mean" in meta:
-                    run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
-                else:
-                    run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
-                all_vtc.append(run_vtc)
-                all_task.append(np.asarray(meta["task"]))
-                if "included_task" in meta:
-                    all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
-                else:
-                    all_inc_task.append([np.array([t]) for t in meta["task"]])
-                all_bad.append(
-                    compute_run_bad_mask(
-                        meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
-                    )
+            meta = safe_npz_load(file_path, ["trial_metadata"])["trial_metadata"].item()
+            # Use window_vtc_mean as the anchor in window mode, else
+            # per-trial VTC_filtered.
+            if "window_vtc_mean" in meta:
+                run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
+            else:
+                run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
+            all_vtc.append(run_vtc)
+            all_task.append(np.asarray(meta["task"]))
+            if "included_task" in meta:
+                all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
+            else:
+                all_inc_task.append([np.array([t]) for t in meta["task"]])
+            all_bad.append(
+                compute_run_bad_mask(
+                    meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
                 )
+            )
 
         if not run_psd_files:
             continue
@@ -286,9 +286,9 @@ def load_subject_spectrum_features(
         for file_path, vtc, task, inc_task_run, bad in zip(
             run_psd_files, all_vtc, all_task, all_inc_task, all_bad
         ):
-            with np.load(file_path, allow_pickle=True) as npz:
-                psd_block = np.asarray(npz["psds"])  # (n_epochs, n_chans, n_freqs)
-                freqs = np.asarray(npz["freqs"])
+            loaded = safe_npz_load(file_path, ["psds", "freqs"])
+            psd_block = np.asarray(loaded["psds"])  # (n_epochs, n_chans, n_freqs)
+            freqs = np.asarray(loaded["freqs"])
 
             if zoning == "per-run":
                 if np.all(np.isnan(vtc)):
@@ -593,23 +593,22 @@ def load_channel_spectra(
                 continue
             file_path = files[0]
             run_psd_files.append(file_path)
-            with np.load(file_path, allow_pickle=True) as npz:
-                meta = npz["trial_metadata"].item()
-                if "window_vtc_mean" in meta:
-                    run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
-                else:
-                    run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
-                all_vtc.append(run_vtc)
-                all_task.append(np.asarray(meta["task"]))
-                if "included_task" in meta:
-                    all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
-                else:
-                    all_inc_task.append([np.array([t]) for t in meta["task"]])
-                all_bad.append(
-                    compute_run_bad_mask(
-                        meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
-                    )
+            meta = safe_npz_load(file_path, ["trial_metadata"])["trial_metadata"].item()
+            if "window_vtc_mean" in meta:
+                run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
+            else:
+                run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
+            all_vtc.append(run_vtc)
+            all_task.append(np.asarray(meta["task"]))
+            if "included_task" in meta:
+                all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
+            else:
+                all_inc_task.append([np.array([t]) for t in meta["task"]])
+            all_bad.append(
+                compute_run_bad_mask(
+                    meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
                 )
+            )
 
         if not run_psd_files:
             continue
@@ -627,9 +626,9 @@ def load_channel_spectra(
         for file_path, vtc, task, inc_task_run, bad in zip(
             run_psd_files, all_vtc, all_task, all_inc_task, all_bad
         ):
-            with np.load(file_path, allow_pickle=True) as npz:
-                psd_block = np.asarray(npz["psds"])  # (n_epochs, n_chans, n_freqs)
-                freqs = np.asarray(npz["freqs"], dtype=float)
+            loaded = safe_npz_load(file_path, ["psds", "freqs"])
+            psd_block = np.asarray(loaded["psds"])  # (n_epochs, n_chans, n_freqs)
+            freqs = np.asarray(loaded["freqs"], dtype=float)
             if freqs_full is None:
                 freqs_full = freqs
             if channel_index >= psd_block.shape[1]:

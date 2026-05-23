@@ -12,8 +12,9 @@ All functions use logging and avoid hardcoded paths.
 
 import logging
 import os
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,55 @@ import pickle
 from scipy.stats import zscore
 
 logger = logging.getLogger(__name__)
+
+
+def safe_npz_load(
+    path: Union[str, Path],
+    keys: Optional[Iterable[str]] = None,
+    *,
+    retries: int = 3,
+    base_delay: float = 2.0,
+    allow_pickle: bool = True,
+) -> Dict[str, np.ndarray]:
+    """Open an .npz, eagerly read named arrays, and return them as a dict.
+
+    Wraps ``np.load`` + key access in a retry loop so transient OSError /
+    EIO from a networked filesystem (Lustre, NFS, HPC scratch) is absorbed
+    rather than killing the whole array task. The file is re-opened on
+    every attempt — a zipfile that errored mid-read cannot be recovered
+    by retrying the slice alone.
+
+    Args:
+        path: Path to the .npz file.
+        keys: Iterable of keys to read. ``None`` reads every key in the file.
+        retries: Number of retries *after* the first failure. Default 3 →
+            up to 4 total attempts.
+        base_delay: Seconds slept before the first retry; doubles each attempt.
+        allow_pickle: Forwarded to ``np.load`` (needed for trial_metadata dicts).
+
+    Returns:
+        Dict ``{key: array}`` with every requested array fully materialised
+        in memory (the npz handle is already closed on return).
+    """
+    path_str = str(path)
+    last_exc: Optional[OSError] = None
+    for attempt in range(retries + 1):
+        try:
+            with np.load(path_str, allow_pickle=allow_pickle) as npz:
+                wanted = list(npz.files) if keys is None else list(keys)
+                return {k: npz[k] for k in wanted}
+        except OSError as exc:
+            last_exc = exc
+            if attempt == retries:
+                break
+            delay = base_delay * (2 ** attempt)
+            logger.warning(
+                "safe_npz_load: %s reading %s (attempt %d/%d); retrying in %.1fs",
+                type(exc).__name__, path_str, attempt + 1, retries + 1, delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 def load_features(
