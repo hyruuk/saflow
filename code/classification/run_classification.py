@@ -116,6 +116,25 @@ COMPLEXITY_METRICS = [
     "fractal_dfa",
 ]
 
+# These metrics come out 97-99.8% NaN at the source on this dataset (every
+# subject), because their antropy implementations raise inside
+# compute_complexity_for_channel and the caught exception writes NaN. They are
+# kept in COMPLEXITY_METRICS so the feature loader still recognises the npz
+# keys, but excluded from shortcut expansion so 'all'/'complexity' produce
+# usable feature sets. Fix the extraction first (see compute_complexity.py)
+# before re-adding them here.
+BROKEN_COMPLEXITY_METRICS = {
+    "entropy_sample",
+    "entropy_approximate",
+    "fractal_higuchi",
+    "fractal_katz",
+    "fractal_dfa",
+}
+
+USABLE_COMPLEXITY_METRICS = [
+    m for m in COMPLEXITY_METRICS if m not in BROKEN_COMPLEXITY_METRICS
+]
+
 
 def expand_feature_set(name: str, config: Dict) -> List[str]:
     """Expand a feature-set name to a list of individual feature names.
@@ -124,7 +143,8 @@ def expand_feature_set(name: str, config: Dict) -> List[str]:
         psds            -> psd_<band> for each band in config.features.frequency_bands
         psds_corrected  -> psd_corrected_<band> for each band
         fooof           -> fooof_exponent, fooof_offset, fooof_r_squared
-        complexity      -> complexity_<metric> for every npz key in COMPLEXITY_METRICS
+        complexity      -> complexity_<metric> for usable complexity metrics
+                           (BROKEN_COMPLEXITY_METRICS are excluded — see above)
         all             -> union of fooof + psds + psds_corrected + complexity
     """
     bands = list(config.get("features", {}).get("frequency_bands", {}).keys())
@@ -135,13 +155,13 @@ def expand_feature_set(name: str, config: Dict) -> List[str]:
     if name == "fooof":
         return list(FOOOF_FEATURES)
     if name == "complexity":
-        return [f"complexity_{m}" for m in COMPLEXITY_METRICS]
+        return [f"complexity_{m}" for m in USABLE_COMPLEXITY_METRICS]
     if name == "all":
         return (
             list(FOOOF_FEATURES)
             + [f"psd_{b}" for b in bands]
             + [f"psd_corrected_{b}" for b in bands]
-            + [f"complexity_{m}" for m in COMPLEXITY_METRICS]
+            + [f"complexity_{m}" for m in USABLE_COMPLEXITY_METRICS]
         )
     raise ValueError(
         f"Unknown feature-set '{name}'. Choose: psds, psds_corrected, fooof, "
