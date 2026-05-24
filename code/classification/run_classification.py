@@ -51,6 +51,14 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 from code.classification.classifiers import get_classifier
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    RunMeta,
+    build_run_meta_from_welch,
+    compute_inout_zones,
+    concat_zones,
+    inout_selection_token,
+)
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
 from code.statistics.corrections import (
@@ -194,6 +202,7 @@ def load_classification_data(
     trial_type: str = "alltrials",
     zoning: str = "per-subject",
     n_events_window: int = 1,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load per-epoch feature data, split into IN/OUT using VTC quartiles.
 
@@ -265,11 +274,11 @@ def load_classification_data(
             continue
 
         subj_data = []
-        subj_vtc = []
         subj_task = []
         subj_inc_task: List[List[np.ndarray]] = []  # length-N per-epoch task arrays
         subj_bad: List[np.ndarray] = []
         subj_run_idx: List[np.ndarray] = []  # per-epoch run index (for per-run zoning)
+        run_metas: List[RunMeta] = []
 
         for run_pos, run in enumerate(runs):
             files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_suffix}"))
@@ -316,14 +325,8 @@ def load_classification_data(
                 spatial_names = list(npz["ch_names"])
 
             subj_data.append(feat)
-            # In windowed mode the per-epoch VTC anchor is window_vtc_mean
-            # (mean of the constituent trial VTCs). Fall back to the scalar
-            # VTC_filtered for single-trial mode.
-            if "window_vtc_mean" in meta:
-                run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
-            else:
-                run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
-            subj_vtc.append(run_vtc)
+            rm = build_run_meta_from_welch(meta)
+            run_metas.append(rm)
             subj_task.append(np.asarray(meta["task"]))
 
             # included_task: length-N arrays per epoch (windowed mode) or
@@ -333,7 +336,7 @@ def load_classification_data(
             else:
                 subj_inc_task.append([np.array([t]) for t in meta["task"]])
 
-            run_n = len(run_vtc)
+            run_n = rm.n_windows
             subj_bad.append(
                 compute_run_bad_mask(meta, run_n, bad_trial_rule, interp_reject_threshold)
             )
@@ -343,33 +346,23 @@ def load_classification_data(
             continue
 
         subj_data = np.concatenate(subj_data, axis=0)
-        subj_vtc = np.concatenate(subj_vtc)
         subj_task = np.concatenate(subj_task)
         subj_inc_task_flat = [arr for run_list in subj_inc_task for arr in run_list]
-        subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.zeros_like(subj_vtc, dtype=bool)
-        subj_run_idx_arr = np.concatenate(subj_run_idx) if subj_run_idx else np.zeros_like(subj_vtc, dtype=int)
+        subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.array([], dtype=bool)
+        subj_run_idx_arr = np.concatenate(subj_run_idx) if subj_run_idx else np.array([], dtype=int)
         if subj_bad_arr.any():
             bad_metadata_present = True
 
-        # IN/OUT thresholds. ``per-run`` matches cc_saflow (bounds computed
-        # within each run); ``per-subject`` pools all runs for this subject.
-        if zoning == "per-run":
-            inbound_arr = np.full_like(subj_vtc, np.nan, dtype=float)
-            outbound_arr = np.full_like(subj_vtc, np.nan, dtype=float)
-            for rp in np.unique(subj_run_idx_arr):
-                run_sel = subj_run_idx_arr == rp
-                run_v = subj_vtc[run_sel]
-                if np.all(np.isnan(run_v)):
-                    continue
-                inbound_arr[run_sel] = np.nanpercentile(run_v, inout_bounds[0])
-                outbound_arr[run_sel] = np.nanpercentile(run_v, inout_bounds[1])
-            in_zone = subj_vtc <= inbound_arr
-            out_zone = subj_vtc >= outbound_arr
-        else:
-            inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
-            outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
-            in_zone = subj_vtc <= inbound
-            out_zone = subj_vtc >= outbound
+        # Window-level IN/OUT zones from the configured selection strategy.
+        # ``per-run`` matches cc_saflow (bounds within each run); ``per-subject``
+        # pools all runs for this subject (saflow default).
+        per_run_zones = compute_inout_zones(
+            run_metas,
+            strategy=inout_selection,
+            inout_bounds=inout_bounds,
+            zoning=zoning,
+        )
+        in_zone, out_zone = concat_zones(per_run_zones)
 
         # Trial-type filter (mirrors cc_saflow's select_epoch)
         task_mask = select_window_mask(
@@ -394,7 +387,7 @@ def load_classification_data(
         n_in = int(in_mask.sum())
         n_out = int(out_mask.sum())
         per_subject[subject] = {
-            "n_total": int(len(subj_vtc)),
+            "n_total": int(in_zone.size),
             "n_in": n_in,
             "n_out": n_out,
             "n_mid": int(mid_mask_full.sum()),
@@ -472,6 +465,7 @@ def load_combined_features(
     trial_type: str = "alltrials",
     zoning: str = "per-subject",
     n_events_window: int = 1,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load multiple features and stack along a new feature axis.
 
@@ -500,6 +494,7 @@ def load_combined_features(
             trial_type=trial_type,
             zoning=zoning,
             n_events_window=n_events_window,
+            inout_selection=inout_selection,
         )
         if y_ref is None:
             y_ref = y_f
@@ -986,10 +981,11 @@ def build_base_name(
     combined: bool,
     trial_type: str = "alltrials",
     analysis_level: Optional[str] = None,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> str:
     base = (
         f"feature-{feature_label}_space-{space}"
-        f"_inout-{inout_bounds_to_string(inout_bounds)}"
+        f"_inout-{inout_bounds_to_string(inout_bounds)}{inout_selection_token(inout_selection)}"
         f"_clf-{clf_name}_cv-{cv_name}_mode-{mode}"
     )
     if analysis_level is not None:
@@ -1015,6 +1011,7 @@ def save_results(
     chunk_info: Optional[Dict] = None,
     trial_type: str = "alltrials",
     analysis_level: Optional[str] = None,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Path:
     """Save NPZ scores + JSON metadata with provenance.
 
@@ -1027,6 +1024,7 @@ def save_results(
     base = build_base_name(
         feature_label, space, inout_bounds, clf_name, cv_name, mode, combined,
         trial_type=trial_type, analysis_level=analysis_level,
+        inout_selection=inout_selection,
     )
     if chunk_info is not None:
         base += f"_chunk-{chunk_info['chunk_idx']}of{chunk_info['n_chunks']}"
@@ -1383,6 +1381,9 @@ def main():
 
     config = load_config(Path(args.config))
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
+    inout_selection = str(
+        config.get("analysis", {}).get("inout_selection", DEFAULT_INOUT_STRATEGY)
+    )
     scoring = args.scoring or config.get("classification", {}).get(
         "scoring", "roc_auc"
     )
@@ -1557,6 +1558,7 @@ def main():
             chunk_info=chunk_info,
             trial_type=args.trial_type,
             analysis_level=level,
+            inout_selection=inout_selection,
         )
 
     failures: List[Tuple[str, str]] = []
@@ -1589,6 +1591,7 @@ def main():
                     trial_type=args.trial_type,
                     zoning=args.zoning,
                     n_events_window=args.n_events_window,
+                    inout_selection=inout_selection,
                 )
             )
             for level in levels:
@@ -1646,6 +1649,7 @@ def main():
                             trial_type=args.trial_type,
                             zoning=args.zoning,
                             n_events_window=args.n_events_window,
+                            inout_selection=inout_selection,
                         )
                         X, y, groups, metadata = ss[feat]
                     else:
@@ -1658,6 +1662,7 @@ def main():
                             trial_type=args.trial_type,
                             zoning=args.zoning,
                             n_events_window=args.n_events_window,
+                            inout_selection=inout_selection,
                         )
                     _run_one(feat, [feat], X, y, groups, metadata, level, loader)
                 except Exception as exc:

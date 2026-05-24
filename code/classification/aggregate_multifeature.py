@@ -155,10 +155,12 @@ def _load_axis(
     importance: str,
     trial_type: str,
     analysis_level: Optional[str],
+    inout_selection: str = "strict",
 ) -> Optional[Tuple[Dict[str, np.ndarray], Dict]]:
     base = build_mf_base_name(
         label, space, inout_bounds, clf_name, cv_name, axis,
         importance, trial_type, analysis_level=analysis_level,
+        inout_selection=inout_selection,
     )
     score_path = output_dir / f"{base}_scores.npz"
     meta_path = output_dir / f"{base}_metadata.json"
@@ -188,6 +190,7 @@ def aggregate(
     trial_type: str,
     analysis_level: Optional[str] = None,
     axes: Optional[List[str]] = None,
+    inout_selection: str = "strict",
 ) -> Path:
     if axes is None:
         axes = list(AXES)
@@ -202,6 +205,7 @@ def aggregate(
         loaded = _load_axis(
             output_dir, label, space, inout_bounds, clf_name, cv_name,
             axis, importance, trial_type, analysis_level,
+            inout_selection=inout_selection,
         )
         if loaded is None:
             missing.append(axis)
@@ -245,7 +249,7 @@ def aggregate(
     bundle_base = build_mf_base_name(
         label, space, inout_bounds, clf_name, cv_name,
         axis="bundle", importance=importance, trial_type=trial_type,
-        analysis_level=analysis_level,
+        analysis_level=analysis_level, inout_selection=inout_selection,
     )
     out_npz = output_dir / f"{bundle_base}_scores.npz"
     np.savez_compressed(out_npz, **bundle_payload)
@@ -292,12 +296,19 @@ def main():
     parser.add_argument("--axes", nargs="+", default=None,
                         help=f"Subset of axes to include. Default: all of {list(AXES)}.")
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--inout-selection", default=None,
+                        choices=["strict", "lenient", "vtcfilt", "vtcraw"],
+                        help="IN/OUT selection strategy whose outputs to aggregate. "
+                             "Defaults to config.analysis.inout_selection (or 'strict').")
     parser.add_argument("--output-dir", default=None,
                         help="Override input/output directory.")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
+    inout_selection = args.inout_selection or str(
+        config.get("analysis", {}).get("inout_selection", "strict")
+    )
     data_root = Path(config["paths"]["data_root"])
     if args.output_dir:
         output_dir = Path(args.output_dir)
@@ -318,6 +329,7 @@ def main():
         trial_type=args.trial_type,
         analysis_level=args.analysis_level,
         axes=args.axes,
+        inout_selection=inout_selection,
     )
 
 

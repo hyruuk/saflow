@@ -45,6 +45,14 @@ from code.statistics.effect_sizes import (
     compute_paired_cohens_d,
     compute_paired_hedges_g,
 )
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    RunMeta,
+    build_run_meta_from_welch,
+    compute_inout_zones,
+    concat_zones,
+    inout_selection_token,
+)
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
 from code.utils.data_loading import load_features, balance_dataset
@@ -200,6 +208,7 @@ def load_all_features_batched(
     trial_type: str = "alltrials",
     zoning: str = "per-subject",
     n_events_window: int = 1,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
     """Load several features sharing the same source files in one pass.
 
@@ -290,11 +299,11 @@ def load_all_features_batched(
 
         # Per-feature list of per-run arrays for this subject
         subj_data: Dict[str, List[np.ndarray]] = {ft: [] for ft in feature_types}
-        subj_vtc: List[np.ndarray] = []
         subj_task: List[np.ndarray] = []
         subj_inc_task: List[List[np.ndarray]] = []
         subj_bad: List[np.ndarray] = []
         subj_run_idx: List[np.ndarray] = []
+        run_metas: List[RunMeta] = []
 
         for run_pos, run in enumerate(runs):
             files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_pattern}"))
@@ -353,12 +362,8 @@ def load_all_features_batched(
 
                 for ft in feature_types:
                     subj_data[ft].append(feat_blocks[ft])
-                # In window mode, anchor VTC = mean of constituent trials
-                if "window_vtc_mean" in meta:
-                    run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
-                else:
-                    run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
-                subj_vtc.append(run_vtc)
+                rm = build_run_meta_from_welch(meta)
+                run_metas.append(rm)
                 subj_task.append(np.array(meta["task"]))
                 if "included_task" in meta:
                     subj_inc_task.append([np.asarray(t) for t in meta["included_task"]])
@@ -367,7 +372,7 @@ def load_all_features_batched(
 
                 # Per-run bad-trial mask follows the configured rule
                 # (ar2 / ar1 / union, plus optional interpolation threshold).
-                run_n = len(run_vtc)
+                run_n = rm.n_windows
                 subj_bad.append(
                     compute_run_bad_mask(
                         meta, run_n, bad_trial_rule, interp_reject_threshold
@@ -378,43 +383,33 @@ def load_all_features_batched(
             finally:
                 npz_data.close()
 
-        if not subj_vtc:
+        if not run_metas:
             continue
 
         # Trial-level concat per feature (same trial order across features).
         for ft in feature_types:
             subj_data[ft] = np.concatenate(subj_data[ft], axis=0)
-        subj_vtc_arr = np.concatenate(subj_vtc)
         subj_task_arr = np.concatenate(subj_task)
         subj_inc_task_flat = [arr for run_list in subj_inc_task for arr in run_list]
-        subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.zeros_like(subj_vtc_arr, dtype=bool)
+        subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.array([], dtype=bool)
         subj_run_idx_arr = (
-            np.concatenate(subj_run_idx) if subj_run_idx else np.zeros_like(subj_vtc_arr, dtype=int)
+            np.concatenate(subj_run_idx) if subj_run_idx else np.array([], dtype=int)
         )
         if subj_bad_arr.any():
             bad_metadata_present = True
 
-        # IN/OUT bounds — ``per-run`` matches cc_saflow (bounds within each
-        # run); ``per-subject`` pools across runs (saflow's prior behaviour).
-        # Bounds are computed on ALL trials (including bads) so the percentile
-        # cut stays anchored even though noisy trials never enter the t-test.
-        if zoning == "per-run":
-            in_zone = np.zeros_like(subj_vtc_arr, dtype=bool)
-            out_zone = np.zeros_like(subj_vtc_arr, dtype=bool)
-            for rp in np.unique(subj_run_idx_arr):
-                run_sel = subj_run_idx_arr == rp
-                run_v = subj_vtc_arr[run_sel]
-                if np.all(np.isnan(run_v)):
-                    continue
-                rin = np.nanpercentile(run_v, inout_bounds[0])
-                rout = np.nanpercentile(run_v, inout_bounds[1])
-                in_zone[run_sel] = subj_vtc_arr[run_sel] <= rin
-                out_zone[run_sel] = subj_vtc_arr[run_sel] >= rout
-        else:
-            inbound = np.nanpercentile(subj_vtc_arr, inout_bounds[0])
-            outbound = np.nanpercentile(subj_vtc_arr, inout_bounds[1])
-            in_zone = subj_vtc_arr <= inbound
-            out_zone = subj_vtc_arr >= outbound
+        # Window-level IN/OUT zones from the configured selection strategy.
+        # ``per-run`` matches cc_saflow (bounds within each run); ``per-subject``
+        # pools across runs (saflow's prior behaviour). Bounds are computed on
+        # ALL trials (including bads) so the percentile cut stays anchored even
+        # though noisy trials never enter the t-test.
+        per_run_zones = compute_inout_zones(
+            run_metas,
+            strategy=inout_selection,
+            inout_bounds=inout_bounds,
+            zoning=zoning,
+        )
+        in_zone, out_zone = concat_zones(per_run_zones)
 
         task_mask = select_window_mask(
             included_task_per_epoch=subj_inc_task_flat,
@@ -442,7 +437,7 @@ def load_all_features_batched(
         n_in = int(in_mask.sum())
         n_out = int(out_mask.sum())
         per_subject[subject] = {
-            "n_total": int(len(subj_vtc_arr)),
+            "n_total": int(in_zone.size),
             "n_in": n_in,
             "n_out": n_out,
             "n_mid": n_mid,
@@ -546,6 +541,7 @@ def load_all_features(
     drop_bad_trials: bool = True,
     trial_type: str = "alltrials",
     zoning: str = "per-subject",
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Single-feature wrapper around :func:`load_all_features_batched`.
 
@@ -561,6 +557,7 @@ def load_all_features(
         drop_bad_trials=drop_bad_trials,
         trial_type=trial_type,
         zoning=zoning,
+        inout_selection=inout_selection,
     )
     return blocks[feature_type]
 
@@ -1092,6 +1089,7 @@ def save_statistical_results(
     config: Dict,
     analysis_level: str = "average",
     trial_type: str = "alltrials",
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> None:
     """Save statistical results with provenance metadata.
 
@@ -1115,11 +1113,14 @@ def save_statistical_results(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     inout_str = inout_bounds_to_string(inout_bounds)
+    sel_tok = inout_selection_token(inout_selection)
     # Bake the analysis level and the trial-type filter into the filename so
     # epoch / average runs and alltrials / correct / lapse variants never
-    # overwrite each other for the same feature_type.
+    # overwrite each other for the same feature_type. The selection token
+    # (empty for the default 'strict' strategy) keeps results from different
+    # IN/OUT selection schemes from colliding on disk.
     base_name = (
-        f"feature-{feature_type}_inout-{inout_str}_test-{test_type}"
+        f"feature-{feature_type}_inout-{inout_str}{sel_tok}_test-{test_type}"
         f"_level-{analysis_level}_type-{trial_type}"
     )
 
@@ -1343,8 +1344,11 @@ def main():
     # Load configuration
     config = load_config(Path(args.config))
 
-    # Get INOUT bounds from config
+    # Get INOUT bounds + selection strategy from config
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
+    inout_selection = str(
+        config.get("analysis", {}).get("inout_selection", DEFAULT_INOUT_STRATEGY)
+    )
     fdr_method = args.fdr_method or config.get("statistics", {}).get("fdr_method", "bh")
 
     # Set up output directory
@@ -1360,6 +1364,7 @@ def main():
     logger.info(f"Space: {args.space}")
     logger.info(f"Analysis level: {args.analysis_level} ({'+'.join(levels)})")
     logger.info(f"IN/OUT bounds: {inout_bounds}")
+    logger.info(f"IN/OUT selection strategy: {inout_selection}")
     logger.info(f"Trial-type filter: {args.trial_type}")
     logger.info(f"Drop bad_ar2 trials: {not args.keep_bad_trials}")
     logger.info(f"Corrections: {args.correction} (fdr_method={fdr_method})")
@@ -1406,6 +1411,7 @@ def main():
                 trial_type=args.trial_type,
                 zoning=args.zoning,
                 n_events_window=args.n_events_window,
+                inout_selection=inout_selection,
             )
         else:
             logger.info(f"Loading features (trial, batched): {ft_subset}...")
@@ -1418,6 +1424,7 @@ def main():
                 trial_type=args.trial_type,
                 zoning=args.zoning,
                 n_events_window=args.n_events_window,
+                inout_selection=inout_selection,
             )
         block_cache[key] = blocks
         return blocks
@@ -1520,6 +1527,7 @@ def main():
                     config=config,
                     analysis_level=level,
                     trial_type=args.trial_type,
+                    inout_selection=inout_selection,
                 )
 
     # Visualization

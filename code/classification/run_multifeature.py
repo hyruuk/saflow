@@ -67,6 +67,10 @@ from code.classification.run_classification import (
     load_config,
     standardize_within_subject,
 )
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    inout_selection_token,
+)
 from code.statistics.corrections import (
     apply_bonferroni_correction,
     apply_fdr_correction,
@@ -580,10 +584,11 @@ def build_mf_base_name(
     importance: str,
     trial_type: str,
     analysis_level: Optional[str] = None,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> str:
     base = (
         f"feature-{feature_label}_space-{space}"
-        f"_inout-{inout_bounds_to_string(inout_bounds)}"
+        f"_inout-{inout_bounds_to_string(inout_bounds)}{inout_selection_token(inout_selection)}"
         f"_clf-{clf_name}_cv-{cv_name}"
         f"_axis-{axis}_imp-{importance}"
     )
@@ -609,11 +614,13 @@ def save_mf_results(
     trial_type: str,
     analysis_level: Optional[str] = None,
     chunk_info: Optional[Dict] = None,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     base = build_mf_base_name(
         feature_label, space, inout_bounds, clf_name, cv_name, axis,
         importance, trial_type, analysis_level=analysis_level,
+        inout_selection=inout_selection,
     )
     if chunk_info is not None:
         base += f"_chunk-{chunk_info['chunk_idx']}of{chunk_info['n_chunks']}"
@@ -829,6 +836,9 @@ def main():
 
     config = load_config(Path(args.config))
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
+    inout_selection = str(
+        config.get("analysis", {}).get("inout_selection", DEFAULT_INOUT_STRATEGY)
+    )
     scoring = args.scoring or config.get("classification", {}).get(
         "scoring", "roc_auc"
     )
@@ -865,7 +875,8 @@ def main():
     logger.info(f"clf={args.clf}  cv={args.cv}  importance={args.importance}")
     logger.info(f"per_feature_scale={not args.no_per_feature_scale}  "
                 f"standardize={args.standardize}")
-    logger.info(f"inout={inout_bounds}  n_permutations={args.n_permutations}")
+    logger.info(f"inout={inout_bounds}  selection={inout_selection}  "
+                f"n_permutations={args.n_permutations}")
     logger.info("=" * 78)
 
     # Load stacked features → (n_trials, n_spatial, n_features)
@@ -880,6 +891,7 @@ def main():
             trial_type=args.trial_type,
             zoning=args.zoning,
             n_events_window=args.n_events_window,
+            inout_selection=inout_selection,
         )
         X = X[:, :, None]
         metadata = dict(metadata)
@@ -896,6 +908,7 @@ def main():
             trial_type=args.trial_type,
             zoning=args.zoning,
             n_events_window=args.n_events_window,
+            inout_selection=inout_selection,
         )
     X = np.asarray(X)
 
@@ -1020,6 +1033,7 @@ def main():
             trial_type=args.trial_type,
             analysis_level=args.analysis_level,
             chunk_info=chunk_info if axis == "per-cell" else None,
+            inout_selection=inout_selection,
         )
 
 

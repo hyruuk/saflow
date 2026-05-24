@@ -207,6 +207,11 @@ def segment_spatial_temporal_data(
                 if "VTC_filtered" in included.columns
                 else np.full(n_events_window, np.nan)
             )
+            inc_vtc_raw = (
+                included["VTC_raw"].to_numpy(dtype=float)
+                if "VTC_raw" in included.columns
+                else np.full(n_events_window, np.nan)
+            )
             inc_task = (
                 included["task"].to_numpy()
                 if "task" in included.columns
@@ -215,11 +220,15 @@ def segment_spatial_temporal_data(
             inc_bad = included["bad_ar2"].to_numpy(dtype=bool)
             inc_bad_ar1 = included["bad_ar1"].to_numpy(dtype=bool)
             row["included_VTC"] = inc_vtc
+            row["included_VTC_raw"] = inc_vtc_raw
             row["included_task"] = inc_task
             row["included_bad_ar2"] = inc_bad
             row["included_bad_ar1"] = inc_bad_ar1
             row["window_vtc_mean"] = (
                 float(np.nanmean(inc_vtc)) if not np.all(np.isnan(inc_vtc)) else np.nan
+            )
+            row["window_vtc_raw_mean"] = (
+                float(np.nanmean(inc_vtc_raw)) if not np.all(np.isnan(inc_vtc_raw)) else np.nan
             )
             row["window_any_bad"] = bool(inc_bad.any())
             row["window_any_bad_ar1"] = bool(inc_bad_ar1.any())

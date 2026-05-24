@@ -33,6 +33,14 @@ import numpy as np
 from scipy import stats
 from scipy.stats import false_discovery_control
 
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    RunMeta,
+    build_run_meta_from_welch,
+    compute_inout_zones,
+    concat_zones,
+    inout_selection_token,
+)
 from code.utils.bad_trials import compute_run_bad_mask
 from code.utils.config import load_config
 
@@ -54,25 +62,27 @@ def load_subject_data(
     metrics: List[str],
     bad_trial_rule: str = "ar2",
     interp_reject_threshold: int = 0,
-) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[Dict[str, np.ndarray], "RunMeta", np.ndarray, np.ndarray]:
     """Load data from a single NPZ file efficiently.
 
     Returns:
-        Tuple of (data_dict, vtc, task, bad). ``bad`` follows the configured
-        bad-trial rule (ar2 / ar1 / union, plus optional interpolation
-        threshold); trials are all-good when the relevant flags are absent.
+        Tuple of (data_dict, run_meta, task, bad). ``run_meta`` carries the
+        per-window VTC fields used by the central IN/OUT selector. ``bad``
+        follows the configured bad-trial rule (ar2 / ar1 / union, plus
+        optional interpolation threshold); trials are all-good when the
+        relevant flags are absent.
     """
     data = np.load(npz_path, allow_pickle=True)
     meta = data["trial_metadata"].item()
 
     data_dict = {m: data[m] for m in metrics}
-    vtc = np.array(meta["VTC_filtered"])
+    rm = build_run_meta_from_welch(meta)
     task = np.array(meta["task"])
     bad = compute_run_bad_mask(
-        meta, len(vtc), bad_trial_rule, interp_reject_threshold
+        meta, rm.n_windows, bad_trial_rule, interp_reject_threshold
     )
 
-    return data_dict, vtc, task, bad
+    return data_dict, rm, task, bad
 
 
 def compute_subject_aggregates(
@@ -86,6 +96,8 @@ def compute_subject_aggregates(
     aggregate: str = "median",
     bad_trial_rule: str = "ar2",
     interp_reject_threshold: int = 0,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
+    zoning: str = "per-subject",
 ) -> Tuple[
     Optional[Dict[str, np.ndarray]],
     Optional[Dict[str, np.ndarray]],
@@ -116,42 +128,49 @@ def compute_subject_aggregates(
     if not subj_dir.exists():
         return None, None, empty_counts
 
-    all_vtc = []
+    run_metas: List[RunMeta] = []
     all_task = []
     all_bad = []
     all_data = {m: [] for m in metrics}
 
+    # Complexity outputs may use either the unsuffixed (single-trial) or
+    # the windowed (`complexityw{N}`) descriptor, so accept both.
     for run in runs:
-        pattern = f"sub-{subject}_*_run-{run}_*_desc-complexity.npz"
-        files = list(subj_dir.glob(pattern))
+        files = sorted(subj_dir.glob(
+            f"sub-{subject}_*_run-{run}_*_desc-complexity*.npz"
+        ))
         if not files:
             continue
 
-        data_dict, vtc, task, bad = load_subject_data(
+        data_dict, rm, task, bad = load_subject_data(
             files[0], metrics, bad_trial_rule, interp_reject_threshold
         )
 
-        all_vtc.append(vtc)
+        run_metas.append(rm)
         all_task.append(task)
         all_bad.append(bad)
         for m in metrics:
             all_data[m].append(data_dict[m])
 
-    if not all_vtc:
+    if not run_metas:
         return None, None, empty_counts
 
-    all_vtc = np.concatenate(all_vtc)
     all_task = np.concatenate(all_task)
     all_bad_arr = np.concatenate(all_bad)
     for m in metrics:
         all_data[m] = np.concatenate(all_data[m], axis=0)
 
-    inbound = np.nanpercentile(all_vtc, inout_bounds[0])
-    outbound = np.nanpercentile(all_vtc, inout_bounds[1])
+    per_run_zones = compute_inout_zones(
+        run_metas,
+        strategy=inout_selection,
+        inout_bounds=inout_bounds,
+        zoning=zoning,
+    )
+    in_zone, out_zone = concat_zones(per_run_zones)
 
     task_mask = all_task == "correct_commission"
-    in_mask_full = task_mask & (all_vtc <= inbound)
-    out_mask_full = task_mask & (all_vtc >= outbound)
+    in_mask_full = task_mask & in_zone
+    out_mask_full = task_mask & out_zone
     mid_mask_full = task_mask & ~in_mask_full & ~out_mask_full
 
     n_bad_in = int((in_mask_full & all_bad_arr).sum()) if drop_bad_trials else 0
@@ -165,7 +184,7 @@ def compute_subject_aggregates(
         out_mask = out_mask_full
 
     counts = {
-        "n_total": int(len(all_vtc)),
+        "n_total": int(in_zone.size),
         "n_in": int(in_mask.sum()),
         "n_out": int(out_mask.sum()),
         "n_mid": int(mid_mask_full.sum()),
@@ -405,12 +424,16 @@ def main():
     analysis_cfg = config.get("analysis", {})
     bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
     interp_reject_threshold = int(analysis_cfg.get("interp_reject_threshold", 0) or 0)
+    inout_selection = str(
+        analysis_cfg.get("inout_selection", DEFAULT_INOUT_STRATEGY)
+    )
 
     logger.info(f"Space: {args.space}")
     logger.info(f"Correction: {args.correction}")
     logger.info(f"Alpha: {args.alpha}")
     logger.info(f"Aggregate: {args.aggregate}")
     logger.info(f"Drop bad trials: {not args.keep_bad_trials} (rule={bad_trial_rule})")
+    logger.info(f"IN/OUT selection strategy: {inout_selection}")
     logger.info(f"Subjects: {len(subjects)}")
 
     # Process subjects
@@ -427,6 +450,7 @@ def main():
             aggregate=args.aggregate,
             bad_trial_rule=bad_trial_rule,
             interp_reject_threshold=interp_reject_threshold,
+            inout_selection=inout_selection,
         )
         per_subject[subject] = counts
         if agg_in is not None:
@@ -471,7 +495,11 @@ def main():
     plot_complexity_stats(results, info, output_path, args.correction, args.alpha)
 
     # Save results
-    results_path = data_root / config["paths"]["results"] / f"statistics_{args.space}" / "complexity_ttest_results.npz"
+    sel_tok = inout_selection_token(inout_selection)
+    results_path = (
+        data_root / config["paths"]["results"] / f"statistics_{args.space}"
+        / f"complexity_ttest_results{sel_tok}.npz"
+    )
     results_path.parent.mkdir(parents=True, exist_ok=True)
 
     save_dict = {

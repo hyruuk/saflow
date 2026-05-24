@@ -101,42 +101,47 @@ _STATS_LEGACY_TOKEN = {"average": "path-subj-spectrum", "epoch": "path-subj-tria
 
 
 def _stats_file(stats_dir: Path, feature: str, inout: str, trial_type: str,
-                level: str = "average") -> Path:
+                level: str = "average", inout_selection: str = "strict") -> Path:
+    sel_tok = "" if inout_selection == "strict" else f"_sel-{inout_selection}"
     cands = sorted(stats_dir.glob(
-        f"feature-{feature}_inout-{inout}_test-paired_ttest"
+        f"feature-{feature}_inout-{inout}{sel_tok}_test-paired_ttest"
         f"_level-{level}_type-{trial_type}_results.npz"
     ))
     if not cands:
         cands = sorted(stats_dir.glob(
-            f"feature-{feature}_inout-{inout}_test-paired_ttest"
+            f"feature-{feature}_inout-{inout}{sel_tok}_test-paired_ttest"
             f"_{_STATS_LEGACY_TOKEN.get(level, 'path-subj-spectrum')}"
             f"_type-{trial_type}_results.npz"
         ))
     if not cands:
         raise FileNotFoundError(
             f"No level-{level} stats result for feature={feature} "
-            f"(inout={inout}, type={trial_type}) in {stats_dir}."
+            f"(inout={inout}, sel={inout_selection}, type={trial_type}) "
+            f"in {stats_dir}."
         )
     return cands[0]
 
 
 def _classif_file(clf_dir: Path, feature: str, inout: str, trial_type: str,
-                  clf: str, cv: str, space: str, level: str = "average") -> Path:
+                  clf: str, cv: str, space: str, level: str = "average",
+                  inout_selection: str = "strict") -> Path:
+    sel_tok = "" if inout_selection == "strict" else f"_sel-{inout_selection}"
     cands = sorted(clf_dir.glob(
-        f"feature-{feature}_space-{space}_inout-{inout}"
+        f"feature-{feature}_space-{space}_inout-{inout}{sel_tok}"
         f"_clf-{clf}_cv-{cv}_mode-univariate_level-{level}"
         f"_type-{trial_type}_scores.npz"
     ))
     if not cands:
         # legacy pre-`level` token
         cands = sorted(clf_dir.glob(
-            f"feature-{feature}_space-{space}_inout-{inout}"
+            f"feature-{feature}_space-{space}_inout-{inout}{sel_tok}"
             f"_clf-{clf}_cv-{cv}_mode-univariate_type-{trial_type}_scores.npz"
         ))
     if not cands:
         raise FileNotFoundError(
             f"No classification scores for feature={feature} (clf={clf}, "
-            f"cv={cv}, level={level}, type={trial_type}) in {clf_dir}."
+            f"cv={cv}, level={level}, sel={inout_selection}, type={trial_type}) "
+            f"in {clf_dir}."
         )
     return cands[0]
 
@@ -375,6 +380,11 @@ def main() -> int:
                         help="(Deprecated) alias for --classif-cv.")
 
     parser.add_argument("--n-events-window", type=int, default=8)
+    parser.add_argument("--inout-selection", default=None,
+                        choices=["strict", "lenient", "vtcfilt", "vtcraw"],
+                        help="IN/OUT selection strategy whose outputs to read. "
+                             "Defaults to config.analysis.inout_selection "
+                             "(or 'strict' if absent).")
     parser.add_argument("--output", default=None,
                         help="Output path. Default: "
                              "reports/figures/stats_classif_panel_space-<space>"
@@ -402,6 +412,9 @@ def main() -> int:
     data_root = Path(config["paths"]["data_root"])
     inout_bounds = config["analysis"]["inout_bounds"]
     inout_str = f"{inout_bounds[0]}{inout_bounds[1]}"
+    inout_selection = args.inout_selection or str(
+        config.get("analysis", {}).get("inout_selection", "strict")
+    )
 
     stats_dir = data_root / config["paths"]["results"] / f"statistics_{args.space}"
     clf_dir = (data_root / config["paths"]["results"]
@@ -428,10 +441,12 @@ def main() -> int:
         aurows[tag] = []
         for feat in features:
             sfile = _stats_file(stats_dir, feat, inout_str, args.trial_type,
-                                level=args.stats_level)
+                                level=args.stats_level,
+                                inout_selection=inout_selection)
             cfile = _classif_file(clf_dir, feat, inout_str, args.trial_type,
                                   args.clf, args.classif_cv, args.space,
-                                  level=args.classif_level)
+                                  level=args.classif_level,
+                                  inout_selection=inout_selection)
             _check_scoring_metadata(cfile)
             t, pt = _load_stats(sfile, args.stats_correction)
             auc, pa = _load_classif(cfile, args.classif_correction)
@@ -458,7 +473,8 @@ def main() -> int:
 
         meta_any = _stats_file(stats_dir, "fooof_exponent",
                                inout_str, args.trial_type,
-                               level=args.stats_level)
+                               level=args.stats_level,
+                               inout_selection=inout_selection)
         meta_any = meta_any.with_name(
             meta_any.stem.replace("_results", "_metadata") + ".json"
         )
@@ -491,7 +507,8 @@ def main() -> int:
                 sel_name, sel_idx, float(np.abs(exp_t[sel_idx])))
 
     sfile_exp = _stats_file(stats_dir, "fooof_exponent", inout_str,
-                            args.trial_type, level=args.stats_level)
+                            args.trial_type, level=args.stats_level,
+                            inout_selection=inout_selection)
     meta_path = sfile_exp.with_name(
         sfile_exp.stem.replace("_results", "_metadata") + ".json"
     )

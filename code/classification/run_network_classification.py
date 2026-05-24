@@ -45,6 +45,10 @@ from code.classification.run_classification import (
     load_combined_features,
     standardize_within_subject,
 )
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    inout_selection_token,
+)
 from code.classification.run_multifeature import (
     make_pipeline_factory,
     run_joint,
@@ -340,6 +344,9 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     inout_bounds = tuple(config.get("analysis", {}).get("inout_bounds", [25, 75]))
+    inout_selection = str(
+        config.get("analysis", {}).get("inout_selection", DEFAULT_INOUT_STRATEGY)
+    )
     subjects = args.subjects.split() if args.subjects else None
 
     results_root = (Path(args.results_root) if args.results_root
@@ -388,6 +395,7 @@ def main() -> None:
         "families": families,
         "per_feature_features": per_feature_subset,
         "inout_bounds": list(inout_bounds),
+        "inout_selection": inout_selection,
     }
 
     for trial in trial_types:
@@ -403,6 +411,7 @@ def main() -> None:
                 trial_type=trial,
                 zoning=args.zoning,
                 n_events_window=args.n_events_window,
+                inout_selection=inout_selection,
             )
         except FileNotFoundError as exc:
             logger.warning(f"  trial={trial}: feature load failed: {exc}")
@@ -486,8 +495,9 @@ def main() -> None:
             else:
                 raise ValueError(f"Unknown scope {scope!r}")
 
+            sel_tok = inout_selection_token(inout_selection)
             out_base = (f"classif-networks_yeo{args.yeo}_scope-{scope}_"
-                        f"type-{trial}_clf-{args.clf}_cv-{args.cv}")
+                        f"type-{trial}_clf-{args.clf}_cv-{args.cv}{sel_tok}")
             if args.network is not None:
                 out_name = f"{out_base}_net-{args.network}.npz"
             else:

@@ -45,6 +45,12 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    RunMeta,
+    build_run_meta_from_welch,
+    compute_inout_zones,
+)
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
 from code.utils.data_loading import safe_npz_load
@@ -151,6 +157,7 @@ def load_subject_spectrum_features(
     trial_type: str = "alltrials",
     zoning: str = "per-subject",
     n_events_window: int = 8,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
     """Load PSD-derived features through Path 1 (subject-spectrum FOOOF).
 
@@ -214,14 +221,13 @@ def load_subject_spectrum_features(
         if not subj_dir.exists():
             continue
 
-        # First pass: collect VTC + tasks + included_task + bads from every run
-        # so per-subject (or per-run) IN/OUT thresholds can be computed on ALL
-        # epochs (matches Path-2 default).
-        all_vtc: List[np.ndarray] = []
+        # First pass: collect per-run metadata so IN/OUT selection can be
+        # computed once across all of the subject's runs (matches Path-2 default).
         all_task: List[np.ndarray] = []
         all_inc_task: List[List[np.ndarray]] = []
         all_bad: List[np.ndarray] = []
         run_psd_files: List[Path] = []
+        run_metas: List[RunMeta] = []
 
         for run in runs:
             files = list(
@@ -242,13 +248,8 @@ def load_subject_spectrum_features(
                     pass
 
             meta = safe_npz_load(file_path, ["trial_metadata"])["trial_metadata"].item()
-            # Use window_vtc_mean as the anchor in window mode, else
-            # per-trial VTC_filtered.
-            if "window_vtc_mean" in meta:
-                run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
-            else:
-                run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
-            all_vtc.append(run_vtc)
+            rm = build_run_meta_from_welch(meta)
+            run_metas.append(rm)
             all_task.append(np.asarray(meta["task"]))
             if "included_task" in meta:
                 all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
@@ -256,62 +257,54 @@ def load_subject_spectrum_features(
                 all_inc_task.append([np.array([t]) for t in meta["task"]])
             all_bad.append(
                 compute_run_bad_mask(
-                    meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
+                    meta, rm.n_windows, bad_trial_rule, interp_reject_threshold
                 )
             )
 
         if not run_psd_files:
             continue
 
-        subj_vtc = np.concatenate(all_vtc)
-        subj_task = np.concatenate(all_task)
-        subj_inc_flat = [arr for run_list in all_inc_task for arr in run_list]
-        subj_bad = np.concatenate(all_bad) if all_bad else np.zeros_like(subj_vtc, dtype=bool)
+        subj_bad = np.concatenate(all_bad) if all_bad else np.array([], dtype=bool)
         if subj_bad.any():
             bad_metadata_present = True
 
-        # Pooled (subject-level) thresholds; per-run bounds applied below.
-        pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
-        pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
+        # Window-level IN/OUT zones from the configured strategy.
+        per_run_zones = compute_inout_zones(
+            run_metas,
+            strategy=inout_selection,
+            inout_bounds=inout_bounds,
+            zoning=zoning,
+        )
 
-        # Walk runs again: average every good IN / OUT epoch PSD *within
-        # each run*, then average those per-run means across the subject's
-        # runs (mean-of-run-means — runs weighted equally, matching
-        # cc_saflow's compute_subjfooof.py). One FOOOF fit per condition.
+        # Walk runs: average every good IN / OUT epoch PSD *within each run*,
+        # then average those per-run means across the subject's runs
+        # (mean-of-run-means — runs weighted equally, matching cc_saflow's
+        # compute_subjfooof.py). One FOOOF fit per condition.
         in_run_means: List[np.ndarray] = []
         out_run_means: List[np.ndarray] = []
         n_in_total, n_out_total, n_bad_in, n_bad_out = 0, 0, 0, 0
         freqs: Optional[np.ndarray] = None
 
-        for file_path, vtc, task, inc_task_run, bad in zip(
-            run_psd_files, all_vtc, all_task, all_inc_task, all_bad
+        for file_path, (in_zone, out_zone), task, inc_task_run, bad in zip(
+            run_psd_files, per_run_zones, all_task, all_inc_task, all_bad
         ):
             loaded = safe_npz_load(file_path, ["psds", "freqs"])
             psd_block = np.asarray(loaded["psds"])  # (n_epochs, n_chans, n_freqs)
             freqs = np.asarray(loaded["freqs"])
-
-            if zoning == "per-run":
-                if np.all(np.isnan(vtc)):
-                    continue
-                inbound = np.nanpercentile(vtc, inout_bounds[0])
-                outbound = np.nanpercentile(vtc, inout_bounds[1])
-            else:
-                inbound = pooled_inbound
-                outbound = pooled_outbound
 
             task_mask = select_window_mask(
                 included_task_per_epoch=inc_task_run,
                 task_per_epoch=task,
                 type_how=trial_type,
             )
-            in_zone = task_mask & (vtc <= inbound)
-            out_zone = task_mask & (vtc >= outbound)
-            n_bad_in += int((in_zone & bad).sum()) if drop_bad_trials else 0
-            n_bad_out += int((out_zone & bad).sum()) if drop_bad_trials else 0
+            in_zone_t = in_zone & task_mask
+            out_zone_t = out_zone & task_mask
+            n_bad_in += int((in_zone_t & bad).sum()) if drop_bad_trials else 0
+            n_bad_out += int((out_zone_t & bad).sum()) if drop_bad_trials else 0
 
             good_mask = ~bad if drop_bad_trials else np.ones_like(bad, dtype=bool)
-            in_mask = in_zone & good_mask
-            out_mask = out_zone & good_mask
+            in_mask = in_zone_t & good_mask
+            out_mask = out_zone_t & good_mask
             if in_mask.any():
                 in_run_means.append(np.nanmean(psd_block[in_mask], axis=0))
                 n_in_total += int(in_mask.sum())
@@ -520,6 +513,7 @@ def load_channel_spectra(
     trial_type: str = "alltrials",
     zoning: str = "per-subject",
     n_events_window: int = 8,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, Any]:
     """Per-subject IN/OUT spectra + FOOOF decomposition for one spatial unit.
 
@@ -577,13 +571,13 @@ def load_channel_spectra(
         if not subj_dir.exists():
             continue
 
-        # First pass: collect VTC + task metadata so IN/OUT thresholds can be
-        # computed on every epoch (matches load_subject_spectrum_features).
-        all_vtc: List[np.ndarray] = []
+        # First pass: collect per-run metadata so the central IN/OUT selector
+        # can compute zones once across the subject (matches Path-2 default).
         all_task: List[np.ndarray] = []
         all_inc_task: List[List[np.ndarray]] = []
         all_bad: List[np.ndarray] = []
         run_psd_files: List[Path] = []
+        run_metas: List[RunMeta] = []
 
         for run in runs:
             files = list(
@@ -594,11 +588,8 @@ def load_channel_spectra(
             file_path = files[0]
             run_psd_files.append(file_path)
             meta = safe_npz_load(file_path, ["trial_metadata"])["trial_metadata"].item()
-            if "window_vtc_mean" in meta:
-                run_vtc = np.asarray(meta["window_vtc_mean"], dtype=float)
-            else:
-                run_vtc = np.asarray(meta["VTC_filtered"], dtype=float)
-            all_vtc.append(run_vtc)
+            rm = build_run_meta_from_welch(meta)
+            run_metas.append(rm)
             all_task.append(np.asarray(meta["task"]))
             if "included_task" in meta:
                 all_inc_task.append([np.asarray(t) for t in meta["included_task"]])
@@ -606,16 +597,19 @@ def load_channel_spectra(
                 all_inc_task.append([np.array([t]) for t in meta["task"]])
             all_bad.append(
                 compute_run_bad_mask(
-                    meta, len(run_vtc), bad_trial_rule, interp_reject_threshold
+                    meta, rm.n_windows, bad_trial_rule, interp_reject_threshold
                 )
             )
 
         if not run_psd_files:
             continue
 
-        subj_vtc = np.concatenate(all_vtc)
-        pooled_inbound = np.nanpercentile(subj_vtc, inout_bounds[0])
-        pooled_outbound = np.nanpercentile(subj_vtc, inout_bounds[1])
+        per_run_zones = compute_inout_zones(
+            run_metas,
+            strategy=inout_selection,
+            inout_bounds=inout_bounds,
+            zoning=zoning,
+        )
 
         # Second pass: average every good IN / OUT epoch at the selected
         # channel within each run, then average those per-run means across
@@ -623,8 +617,8 @@ def load_channel_spectra(
         in_chan_psds: List[np.ndarray] = []
         out_chan_psds: List[np.ndarray] = []
 
-        for file_path, vtc, task, inc_task_run, bad in zip(
-            run_psd_files, all_vtc, all_task, all_inc_task, all_bad
+        for file_path, (in_zone, out_zone), task, inc_task_run, bad in zip(
+            run_psd_files, per_run_zones, all_task, all_inc_task, all_bad
         ):
             loaded = safe_npz_load(file_path, ["psds", "freqs"])
             psd_block = np.asarray(loaded["psds"])  # (n_epochs, n_chans, n_freqs)
@@ -637,22 +631,14 @@ def load_channel_spectra(
                     f"(welch PSD has {psd_block.shape[1]} channels)"
                 )
 
-            if zoning == "per-run":
-                if np.all(np.isnan(vtc)):
-                    continue
-                inbound = np.nanpercentile(vtc, inout_bounds[0])
-                outbound = np.nanpercentile(vtc, inout_bounds[1])
-            else:
-                inbound, outbound = pooled_inbound, pooled_outbound
-
             task_mask = select_window_mask(
                 included_task_per_epoch=inc_task_run,
                 task_per_epoch=task,
                 type_how=trial_type,
             )
             good_mask = ~bad if drop_bad_trials else np.ones_like(bad, dtype=bool)
-            in_mask = task_mask & (vtc <= inbound) & good_mask
-            out_mask = task_mask & (vtc >= outbound) & good_mask
+            in_mask = in_zone & task_mask & good_mask
+            out_mask = out_zone & task_mask & good_mask
             if in_mask.any():
                 in_chan_psds.append(
                     np.nanmean(psd_block[in_mask, channel_index, :], axis=0)

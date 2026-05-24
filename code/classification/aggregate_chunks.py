@@ -72,10 +72,12 @@ def aggregate(
     combined: bool,
     delete_chunks: bool = False,
     trial_type: str = "alltrials",
+    inout_selection: str = "strict",
 ) -> Path:
     base = build_base_name(
         feature_label, space, inout_bounds, clf_name, cv_name, mode, combined,
         trial_type=trial_type,
+        inout_selection=inout_selection,
     )
     chunks = find_chunks(output_dir, base)
     if not chunks:
@@ -270,12 +272,19 @@ def main():
                         help="Trial-type filter the original run used "
                              "(must match the chunk filenames).")
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--inout-selection", default=None,
+                        choices=["strict", "lenient", "vtcfilt", "vtcraw"],
+                        help="IN/OUT selection strategy whose chunks to aggregate. "
+                             "Defaults to config.analysis.inout_selection (or 'strict').")
     parser.add_argument("--delete-chunks", action="store_true",
                         help="Remove per-chunk score/metadata files after merging.")
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
     inout_bounds = tuple(config["analysis"]["inout_bounds"])
+    inout_selection = args.inout_selection or str(
+        config.get("analysis", {}).get("inout_selection", "strict")
+    )
     data_root = Path(config["paths"]["data_root"])
     output_dir = (
         data_root / config["paths"]["results"] / f"classification_{args.space}" / "group"
@@ -292,6 +301,7 @@ def main():
         combined=args.combined,
         delete_chunks=args.delete_chunks,
         trial_type=args.trial_type,
+        inout_selection=inout_selection,
     )
 
 

@@ -60,10 +60,12 @@ def _build_input_path(
     importance: str,
     trial_type: str,
     analysis_level: Optional[str],
+    inout_selection: str = "strict",
 ) -> Path:
     base = build_mf_base_name(
         label, space, inout_bounds, clf_name, cv_name, "joint",
         importance, trial_type, analysis_level=analysis_level,
+        inout_selection=inout_selection,
     )
     return output_dir / f"{base}_scores.npz"
 
@@ -145,6 +147,10 @@ def parse_args() -> argparse.Namespace:
                    help="alltrials | correct | lapse | all")
     p.add_argument("--yeo", type=int, default=7, choices=[7, 17])
     p.add_argument("--results-root", default=None)
+    p.add_argument("--inout-selection", default=None,
+                   choices=["strict", "lenient", "vtcfilt", "vtcraw"],
+                   help="IN/OUT selection strategy whose scores to aggregate. "
+                        "Defaults to config.analysis.inout_selection (or 'strict').")
     return p.parse_args()
 
 
@@ -152,6 +158,10 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     inout_bounds = tuple(config.get("analysis", {}).get("inout_bounds", [25, 75]))
+    inout_selection = args.inout_selection or str(
+        config.get("analysis", {}).get("inout_selection", "strict")
+    )
+    sel_tok = "" if inout_selection == "strict" else f"_sel-{inout_selection}"
 
     results_root = (Path(args.results_root) if args.results_root
                     else get_results_root(config))
@@ -171,6 +181,7 @@ def main() -> None:
             in_path = _build_input_path(
                 mf_dir, args.label, args.space, inout_bounds, args.clf, args.cv,
                 args.importance, trial, args.analysis_level,
+                inout_selection=inout_selection,
             )
             inputs.append((in_path, trial))
 
@@ -187,6 +198,7 @@ def main() -> None:
         "label": args.label,
         "clf": args.clf,
         "cv": args.cv,
+        "inout_selection": inout_selection,
     }
 
     for in_path, trial in inputs:
@@ -204,7 +216,7 @@ def main() -> None:
         else:
             out_path = out_dir / (
                 f"importance-networks_yeo{args.yeo}_label-{args.label}_"
-                f"clf-{args.clf}_cv-{args.cv}_type-{trial}.npz"
+                f"clf-{args.clf}_cv-{args.cv}_type-{trial}{sel_tok}.npz"
             )
         np.savez(out_path, **payload,
                  meta=np.asarray(json.dumps(provenance | {

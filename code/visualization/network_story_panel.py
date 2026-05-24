@@ -104,29 +104,31 @@ def _pick(npz: np.lib.npyio.NpzFile, candidates: Sequence[str]) -> Optional[np.n
 
 _STATS_LEVEL_PATTERNS: Dict[str, Tuple[str, ...]] = {
     "average": (
-        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "feature-{feature}_inout-{inout}{sel}_test-paired_ttest"
         "_level-average_type-{trial}_results.npz",
         # legacy pre-`level` token
-        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "feature-{feature}_inout-{inout}{sel}_test-paired_ttest"
         "_path-subj-spectrum_type-{trial}_results.npz",
     ),
     "epoch": (
-        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "feature-{feature}_inout-{inout}{sel}_test-paired_ttest"
         "_level-epoch_type-{trial}_results.npz",
         # legacy pre-`level` token
-        "feature-{feature}_inout-{inout}_test-paired_ttest"
+        "feature-{feature}_inout-{inout}{sel}_test-paired_ttest"
         "_path-subj-trial-*_type-{trial}_results.npz",
     ),
 }
 
 
 def _find_stats_file(stats_dir: Path, feature: str, trial: str,
-                     inout: str, level: str = "average") -> Optional[Path]:
+                     inout: str, level: str = "average",
+                     inout_selection: str = "strict") -> Optional[Path]:
     """Locate one per-parcel stats results.npz for (feature, trial, level)."""
+    sel_tok = "" if inout_selection == "strict" else f"_sel-{inout_selection}"
     pats = _STATS_LEVEL_PATTERNS.get(level, _STATS_LEVEL_PATTERNS["average"])
     for pat in pats:
         hits = sorted(stats_dir.glob(
-            pat.format(feature=feature, inout=inout, trial=trial)))
+            pat.format(feature=feature, inout=inout, sel=sel_tok, trial=trial)))
         if hits:
             return hits[0]
     return None
@@ -134,18 +136,20 @@ def _find_stats_file(stats_dir: Path, feature: str, trial: str,
 
 def _find_classif_file(clf_group_dir: Path, feature: str, trial: str,
                        inout: str, clf: str, cv: str, space: str,
-                       level: str = "epoch") -> Optional[Path]:
+                       level: str = "epoch",
+                       inout_selection: str = "strict") -> Optional[Path]:
     """Locate one per-spatial univariate classification scores npz.
 
     ``clf_group_dir`` must already be ``classification_<space>/group/`` —
     per-spatial univariate scores live there, not in the parent dir.
     """
+    sel_tok = "" if inout_selection == "strict" else f"_sel-{inout_selection}"
     pats = [
-        f"feature-{feature}_space-{space}_inout-{inout}"
+        f"feature-{feature}_space-{space}_inout-{inout}{sel_tok}"
         f"_clf-{clf}_cv-{cv}_mode-univariate_level-{level}"
         f"_type-{trial}_scores.npz",
         # legacy pre-`level` token
-        f"feature-{feature}_space-{space}_inout-{inout}"
+        f"feature-{feature}_space-{space}_inout-{inout}{sel_tok}"
         f"_clf-{clf}_cv-{cv}_mode-univariate_type-{trial}_scores.npz",
     ]
     for pat in pats:
@@ -407,7 +411,8 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
                   classif_cv: str, features: Sequence[str], alpha: float,
                   stats_level: str, stats_correction: str,
                   classif_level: str, classif_correction: str,
-                  yeo_overlay: Optional[int]) -> None:
+                  yeo_overlay: Optional[int],
+                  inout_selection: str = "strict") -> None:
     """Tier 1 — two rows of 2x2 brain composites + colorbars.
 
     Row A (stats) and Row B (classif) use independent (level, correction)
@@ -435,7 +440,9 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
     t_collect: List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]] = []
     auc_collect: List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]] = []
     for feat in features:
-        sp = _find_stats_file(stats_dir, feat, trial, inout, level=stats_level)
+        sp = _find_stats_file(stats_dir, feat, trial, inout,
+                              level=stats_level,
+                              inout_selection=inout_selection)
         if sp is None:
             logger.info(f"  tier1 stats not found for {feat} "
                         f"(level={stats_level})")
@@ -448,7 +455,8 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
                 t_collect.append((None, None))
 
         cp = _find_classif_file(clf_group_dir, feat, trial, inout, clf,
-                                classif_cv, space, level=classif_level)
+                                classif_cv, space, level=classif_level,
+                                inout_selection=inout_selection)
         if cp is None:
             logger.info(f"  tier1 classif not found for {feat} "
                         f"(level={classif_level}, cv={classif_cv})")
@@ -776,6 +784,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--per-feature-features", default=" ".join(FEATURE_COLUMNS),
                    help="Feature subset for Tier-3 row-1 heatmap "
                         "(must be a subset of --features for column alignment).")
+    p.add_argument("--inout-selection", default=None,
+                   choices=["strict", "lenient", "vtcfilt", "vtcraw"],
+                   help="IN/OUT selection strategy whose outputs to read. "
+                        "Defaults to config.analysis.inout_selection (or 'strict').")
     p.add_argument("--no-yeo-overlay", action="store_true",
                    help="Skip the Yeo network boundary overlay on Tier 1 "
                         "(faster, useful while iterating).")
@@ -798,6 +810,9 @@ def main() -> int:
     data_root = Path(config["paths"]["data_root"])
     inout_bounds = config["analysis"]["inout_bounds"]
     inout_str = f"{inout_bounds[0]}{inout_bounds[1]}"
+    inout_selection = args.inout_selection or str(
+        config.get("analysis", {}).get("inout_selection", "strict")
+    )
 
     results_root = data_root / config["paths"]["results"]
     stats_dir = results_root / f"statistics_{args.space}"
@@ -860,6 +875,7 @@ def main() -> int:
             classif_level=args.classif_level,
             classif_correction=args.classif_correction,
             yeo_overlay=yeo_overlay,
+            inout_selection=inout_selection,
         )
     except Exception as exc:
         logger.exception(f"Tier 1 failed: {exc}")

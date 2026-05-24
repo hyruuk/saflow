@@ -41,6 +41,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from code.features.inout_selection import (
+    DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
+    inout_selection_token,
+)
 from code.statistics.run_group_statistics import load_all_features_batched
 from code.utils.config import load_config
 from code.utils.paths import get_features_root, get_results_root
@@ -180,6 +184,7 @@ def run_one_feature(
     config: Dict,
     inout_bounds: Tuple[int, int],
     aggregate: str = "median",
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, np.ndarray]:
     """Full pipeline for one (feature, trial_type)."""
     logger.info(f"Loading feature '{feature}' [space={space}, trial={trial_type}]")
@@ -190,6 +195,7 @@ def run_one_feature(
         config=config,
         trial_type=trial_type,
         drop_bad_trials=True,
+        inout_selection=inout_selection,
     )
     X, y, groups, meta = bundle[feature]
     logger.info(f"  loaded {X.shape[1]} trials over {len(np.unique(groups))} subjects, "
@@ -276,6 +282,9 @@ def main() -> None:
     logger.info(f"Output dir: {out_dir}")
 
     inout_bounds = tuple(config.get("analysis", {}).get("inout_bounds", [25, 75]))
+    inout_selection = str(
+        config.get("analysis", {}).get("inout_selection", DEFAULT_INOUT_STRATEGY)
+    )
 
     features = [args.feature] if args.feature else list(DEFAULT_FEATURES)
     trial_types = (
@@ -290,7 +299,9 @@ def main() -> None:
         "yeo": args.yeo,
         "aggregate": args.aggregate,
         "inout_bounds": list(inout_bounds),
+        "inout_selection": inout_selection,
     }
+    sel_tok = inout_selection_token(inout_selection)
 
     for feature in features:
         for trial in trial_types:
@@ -304,12 +315,13 @@ def main() -> None:
                     config=config,
                     inout_bounds=inout_bounds,
                     aggregate=args.aggregate,
+                    inout_selection=inout_selection,
                 )
             except FileNotFoundError as exc:
                 logger.warning(f"  skipping: {exc}")
                 continue
             out_name = (f"coherence_feature-{feature}_"
-                        f"yeo{args.yeo}_type-{trial}.npz")
+                        f"yeo{args.yeo}_type-{trial}{sel_tok}.npz")
             out_path = out_dir / out_name
             np.savez(out_path, **payload,
                      meta=np.asarray(json.dumps(provenance | {

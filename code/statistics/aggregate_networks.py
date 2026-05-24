@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 STATS_FNAME_RE = re.compile(
     r"^feature-(?P<feature>.+?)"
     r"_inout-(?P<inout>[^_]+)"
+    r"(?:_sel-(?P<sel>[^_]+))?"
     r"_test-(?P<test>[^_]+(?:_[^_]+)?)"
     r"_path-(?P<path>[^_]+(?:-[^_]+)*)"
     r"_type-(?P<trial>[^_]+)"
@@ -149,9 +150,16 @@ def _scan_stats_files(
     stats_dir: Path,
     trial_type: str,
     inout_token: str = "2575",
+    inout_selection: str = "strict",
 ) -> List[Tuple[Path, str]]:
-    """Return ``[(path, feature_name), ...]`` for matching per-parcel stats files."""
+    """Return ``[(path, feature_name), ...]`` for matching per-parcel stats files.
+
+    ``inout_selection`` filters by the new ``_sel-<X>`` filename token (default
+    ``strict`` matches files that don't carry the token at all, since that's
+    how the default strategy writes them).
+    """
     out: List[Tuple[Path, str]] = []
+    expected_sel = None if inout_selection == "strict" else inout_selection
     for p in sorted(stats_dir.glob("*_results.npz")):
         m = STATS_FNAME_RE.match(p.name)
         if not m:
@@ -159,6 +167,8 @@ def _scan_stats_files(
         if m.group("trial") != trial_type:
             continue
         if m.group("inout") != inout_token:
+            continue
+        if m.group("sel") != expected_sel:
             continue
         out.append((p, m.group("feature")))
     return out
@@ -172,9 +182,15 @@ def aggregate_one_combo(
     n_networks: int,
     alpha: float,
     inout_token: str = "2575",
+    inout_selection: str = "strict",
 ) -> Dict[str, np.ndarray]:
     """Aggregate every feature in ``stats_dir`` for one (trial × correction)."""
-    files = _scan_stats_files(stats_dir, trial_type=trial_type, inout_token=inout_token)
+    files = _scan_stats_files(
+        stats_dir,
+        trial_type=trial_type,
+        inout_token=inout_token,
+        inout_selection=inout_selection,
+    )
     if not files:
         raise FileNotFoundError(
             f"No per-parcel stats for trial-type={trial_type} in {stats_dir}. "
@@ -275,6 +291,11 @@ def parse_args() -> argparse.Namespace:
                    help="Yeo network granularity.")
     p.add_argument("--inout-token", default="2575",
                    help="inout bound token in the stats filename.")
+    p.add_argument("--inout-selection", default=None,
+                   choices=["strict", "lenient", "vtcfilt", "vtcraw"],
+                   help="IN/OUT selection strategy whose stats to aggregate. "
+                        "Defaults to the value in config.analysis.inout_selection "
+                        "(or 'strict' if absent).")
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--results-root", default=None,
                    help="Override results root (defaults to config).")
@@ -306,6 +327,11 @@ def main() -> None:
         if args.trial_type == "all" else [args.trial_type]
     )
 
+    inout_selection = args.inout_selection or str(
+        config.get("analysis", {}).get("inout_selection", "strict")
+    )
+    sel_tok = "" if inout_selection == "strict" else f"_sel-{inout_selection}"
+
     provenance = {
         "script": "code.statistics.aggregate_networks",
         "timestamp": datetime.utcnow().isoformat(),
@@ -314,6 +340,7 @@ def main() -> None:
         "correction": args.correction,
         "alpha": args.alpha,
         "inout_token": args.inout_token,
+        "inout_selection": inout_selection,
     }
 
     for trial in trial_types:
@@ -327,13 +354,14 @@ def main() -> None:
                 n_networks=args.yeo,
                 alpha=args.alpha,
                 inout_token=args.inout_token,
+                inout_selection=inout_selection,
             )
         except FileNotFoundError as exc:
             logger.warning(f"  skipping {trial}: {exc}")
             continue
 
         out_name = (f"stats-networks_yeo{args.yeo}_"
-                    f"type-{trial}_correction-{args.correction}.npz")
+                    f"type-{trial}_correction-{args.correction}{sel_tok}.npz")
         out_path = out_dir / out_name
         np.savez(out_path, **bundle, meta=np.asarray(json.dumps(provenance | {
             "trial_type": trial,
