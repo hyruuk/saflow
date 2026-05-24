@@ -303,19 +303,36 @@ def run_per_axis(
     n_jobs: int = -1,
     seed: int = 42,
     importance_n_repeats: int = 5,
+    iter_range: Optional[Tuple[int, int]] = None,
 ) -> Dict:
     """Loop over one axis of X with shared-permutation t-max correction.
 
+    ``iter_range`` (start, stop) restricts iteration to a contiguous slice of
+    the axis-being-looped (use for chunked execution on per-spatial; the
+    aggregator concatenates chunks and recomputes correction p-values across
+    the full set). All chunks must share ``seed`` so the permutation label
+    shuffles are identical.
+
     Returns dict with: observed, perm_scores, pvals_uncorrected, pvals_tmax,
     pvals_fdr_bh, pvals_bonferroni, (optionally) importances of shape
-    ``(n_iters, n_features_in_slice)``.
+    ``(n_chunk_iters, n_features_in_slice)``. p-values at chunk time are valid
+    only within the chunk; the aggregator overwrites them across chunks.
     """
     if X.ndim != 3:
         raise ValueError(f"Expected X of shape (n_trials, n_spatial, n_features); got {X.shape}")
 
-    slicer, n_iters, n_inner = _slicer_for_axis(X, axis)
+    slicer, n_iters_total, n_inner = _slicer_for_axis(X, axis)
+    if iter_range is None:
+        iter_start, iter_stop = 0, n_iters_total
+    else:
+        iter_start, iter_stop = iter_range
+    iter_indices = list(range(iter_start, iter_stop))
+    n_iters = len(iter_indices)
+    if n_iters == 0:
+        raise ValueError(f"Empty iter_range {iter_range} for axis={axis}")
     logger.info(
-        f"{axis}: looping {n_iters} units, each classifier sees {n_inner} features "
+        f"{axis}: looping {n_iters} units (indices [{iter_start}:{iter_stop}] "
+        f"of {n_iters_total}), each classifier sees {n_inner} features "
         f"({n_permutations} permutations, importance={importance_method})"
     )
 
@@ -325,7 +342,7 @@ def run_per_axis(
             delayed(_score_slice)(
                 clf_factory, slicer(i), y, groups, cv, scoring
             )
-            for i in range(n_iters)
+            for i in iter_indices
         )
     )
 
@@ -338,7 +355,7 @@ def run_per_axis(
             delayed(_score_slice)(
                 clf_factory, slicer(i), y_perm, groups, cv, scoring
             )
-            for i in range(n_iters)
+            for i in iter_indices
         )
         perm_scores[p, :] = scores_p
 
@@ -380,10 +397,10 @@ def run_per_axis(
                 scoring, importance_method,
                 importance_n_repeats, seed,
             )
-            for i in range(n_iters)
+            for i in iter_indices
         )
         if all(imp is not None for imp in imps):
-            importances = np.stack(imps, axis=0)  # (n_iters, n_inner)
+            importances = np.stack(imps, axis=0)  # (n_chunk_iters, n_inner)
             out["importances"] = importances
             out["importance_method"] = importance_method
         else:
@@ -824,9 +841,9 @@ def main():
         ),
     )
     parser.add_argument("--n-chunks", type=int, default=1,
-                        help="Split spatial dim into N chunks (per-cell only).")
+                        help="Split spatial dim into N chunks (per-cell, per-spatial).")
     parser.add_argument("--chunk-idx", type=int, default=0,
-                        help="Zero-based chunk index (per-cell only).")
+                        help="Zero-based chunk index (per-cell, per-spatial).")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument(
         "--output-dir", default=None,
@@ -857,14 +874,16 @@ def main():
     axes = _resolve_axes(args.axis)
     label = args.label or f"combined-{len(features)}"
 
-    if args.n_chunks > 1 and "per-cell" not in axes:
+    chunkable = {"per-cell", "per-spatial"}
+    if args.n_chunks > 1 and not (set(axes) & chunkable):
         logger.warning(
-            "--n-chunks > 1 only takes effect for axis=per-cell; ignored."
+            "--n-chunks > 1 only takes effect for axis in {per-cell, per-spatial}; "
+            "ignored."
         )
     if args.n_chunks > 1 and len(axes) > 1:
         raise SystemExit(
-            "--n-chunks > 1 requires a single axis (per-cell). "
-            "Re-run with --axis per-cell."
+            "--n-chunks > 1 requires a single axis (per-cell or per-spatial). "
+            "Re-run with --axis per-cell or --axis per-spatial."
         )
 
     logger.info("=" * 78)
@@ -959,22 +978,35 @@ def main():
 
     args_dict = {k: v for k, v in vars(args).items()}
 
-    chunk_info = None
-    if args.n_chunks > 1 and "per-cell" in axes:
-        n_spatial_total = X.shape[1]
-        start, stop = chunk_range(n_spatial_total, args.n_chunks, args.chunk_idx)
-        chunk_info = {
-            "chunk_idx": args.chunk_idx,
-            "n_chunks": args.n_chunks,
-            "start": int(start),
-            "stop": int(stop),
-            "n_spatial_total": int(n_spatial_total),
-            "seed": int(args.seed),
-        }
-        logger.info(
-            f"per-cell chunk {args.chunk_idx}/{args.n_chunks}: "
-            f"spatial[{start}:{stop}] of {n_spatial_total}"
-        )
+    # Chunkable axes split their unit-loop into n_chunks slices. All chunks
+    # share --seed so the y-permutation sequence is identical, letting the
+    # aggregator recompute t-max / FDR / Bonferroni across the full unit set.
+    chunkable_axes = {"per-cell", "per-spatial"}
+    chunk_info_by_axis: Dict[str, Optional[Dict]] = {}
+    for axis in axes:
+        if args.n_chunks > 1 and axis in chunkable_axes:
+            if axis == "per-cell":
+                n_units_total = X.shape[1]
+                unit_label = "spatial"
+            else:  # per-spatial
+                n_units_total = X.shape[1]
+                unit_label = "spatial"
+            start, stop = chunk_range(n_units_total, args.n_chunks, args.chunk_idx)
+            chunk_info_by_axis[axis] = {
+                "chunk_idx": args.chunk_idx,
+                "n_chunks": args.n_chunks,
+                "start": int(start),
+                "stop": int(stop),
+                "n_units_total": int(n_units_total),
+                "unit_axis": unit_label,
+                "seed": int(args.seed),
+            }
+            logger.info(
+                f"{axis} chunk {args.chunk_idx}/{args.n_chunks}: "
+                f"{unit_label}[{start}:{stop}] of {n_units_total}"
+            )
+        else:
+            chunk_info_by_axis[axis] = None
 
     for axis in axes:
         logger.info("")
@@ -982,7 +1014,12 @@ def main():
         logger.info(f"AXIS: {axis}")
         logger.info("=" * 78)
 
+        axis_chunk_info = chunk_info_by_axis.get(axis)
+
         if axis in ("per-spatial", "per-feature"):
+            iter_range = None
+            if axis_chunk_info is not None:
+                iter_range = (axis_chunk_info["start"], axis_chunk_info["stop"])
             results = run_per_axis(
                 X=X, y=y, groups=groups, axis=axis,
                 clf_factory=clf_factory, cv=cv,
@@ -991,11 +1028,12 @@ def main():
                 importance_method=args.importance,
                 n_jobs=args.n_jobs, seed=args.seed,
                 importance_n_repeats=args.importance_n_repeats,
+                iter_range=iter_range,
             )
         elif axis == "per-cell":
             spatial_range = None
-            if chunk_info is not None:
-                spatial_range = (chunk_info["start"], chunk_info["stop"])
+            if axis_chunk_info is not None:
+                spatial_range = (axis_chunk_info["start"], axis_chunk_info["stop"])
             results = run_per_cell(
                 X=X, y=y, groups=groups,
                 clf_factory=clf_factory, cv=cv,
@@ -1032,7 +1070,7 @@ def main():
             args_dict=args_dict,
             trial_type=args.trial_type,
             analysis_level=args.analysis_level,
-            chunk_info=chunk_info if axis == "per-cell" else None,
+            chunk_info=axis_chunk_info,
             inout_selection=inout_selection,
         )
 

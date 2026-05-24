@@ -937,30 +937,29 @@ def stats(c, features="all", space="both", test="paired_ttest",
     print("=" * 80)
 
     if slurm:
-        for sp in space_list:
-            for tt in trial_types:
-                print(f"\n{'#' * 80}\n# SLURM submit | space: {sp} | "
-                      f"trial-type: {tt}\n{'#' * 80}")
-                _stats_slurm(
-                    c,
-                    feature_list=feature_list,
-                    space=sp,
-                    test=test,
-                    correction=correction,
-                    alpha=alpha,
-                    n_permutations=n_permutations,
-                    n_jobs=n_jobs,
-                    analysis_level=analysis_level,
-                    aggregate=aggregate,
-                    visualize=visualize,
-                    trial_type=tt,
-                    zoning=zoning,
-                    n_events_window=n_events_window,
-                    slurm_time=slurm_time,
-                    slurm_mem=slurm_mem,
-                    slurm_cpus=slurm_cpus,
-                    dry_run=dry_run,
-                )
+        print(f"\n{'#' * 80}\n# SLURM submit (one array for "
+              f"{len(space_list)} space × {len(trial_types)} trial-type)\n"
+              f"{'#' * 80}")
+        _stats_slurm(
+            c,
+            feature_list=feature_list,
+            spaces=space_list,
+            trial_types=trial_types,
+            test=test,
+            correction=correction,
+            alpha=alpha,
+            n_permutations=n_permutations,
+            n_jobs=n_jobs,
+            analysis_level=analysis_level,
+            aggregate=aggregate,
+            visualize=visualize,
+            zoning=zoning,
+            n_events_window=n_events_window,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
+            dry_run=dry_run,
+        )
         return
 
     python_exe = get_python_executable()
@@ -1086,38 +1085,37 @@ def classify(c, features="all", clf="logistic", cv="auto",
     print(f"Spaces ({len(space_list)}): {' '.join(space_list)}")
 
     if slurm:
-        for sp in space_list:
-            for tt in trial_types:
-                print(f"\n{'#' * 80}\n# SLURM submit | space: {sp} | "
-                      f"trial-type: {tt}\n{'#' * 80}")
-                _classify_slurm(
-                    c,
-                    feature_list=feature_list,
-                    clf=clf,
-                    cv=cv,
-                    space=sp,
-                    mode=mode,
-                    n_permutations=n_permutations,
-                    no_balance=no_balance,
-                    n_jobs=n_jobs,
-                    continue_on_error=continue_on_error,
-                    combine_features=combine_features,
-                    importances=importances,
-                    label=label,
-                    n_chunks=n_chunks,
-                    seed=seed,
-                    aggregate=aggregate,
-                    delete_chunks=delete_chunks,
-                    trial_type=tt,
-                    zoning=zoning,
-                    n_events_window=n_events_window,
-                    analysis_level=analysis_level,
-                    standardize=standardize,
-                    slurm_time=slurm_time,
-                    slurm_mem=slurm_mem,
-                    slurm_cpus=slurm_cpus,
-                    dry_run=dry_run,
-                )
+        print(f"\n{'#' * 80}\n# SLURM submit (one array for "
+              f"{len(space_list)} space × {len(trial_types)} trial-type)\n"
+              f"{'#' * 80}")
+        _classify_slurm(
+            c,
+            feature_list=feature_list,
+            spaces=space_list,
+            trial_types=trial_types,
+            clf=clf,
+            cv=cv,
+            mode=mode,
+            n_permutations=n_permutations,
+            no_balance=no_balance,
+            n_jobs=n_jobs,
+            continue_on_error=continue_on_error,
+            combine_features=combine_features,
+            importances=importances,
+            label=label,
+            n_chunks=n_chunks,
+            seed=seed,
+            aggregate=aggregate,
+            delete_chunks=delete_chunks,
+            zoning=zoning,
+            n_events_window=n_events_window,
+            analysis_level=analysis_level,
+            standardize=standardize,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
+            dry_run=dry_run,
+        )
         return
 
     if n_chunks > 1:
@@ -2046,23 +2044,26 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
 
-def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
-                 correction="fdr", alpha=0.05, n_permutations=10000,
-                 n_jobs=1, analysis_level="both", aggregate="median",
-                 visualize=False,
-                 trial_type="alltrials", zoning="per-run",
+def _stats_slurm(c, feature_list, spaces, trial_types,
+                 test="paired_ttest", correction="fdr", alpha=0.05,
+                 n_permutations=10000, n_jobs=1, analysis_level="both",
+                 aggregate="median", visualize=False, zoning="per-run",
                  n_events_window=8,
                  slurm_time=None, slurm_mem=None, slurm_cpus=None,
                  dry_run=False):
-    """Submit one statistics job per feature to SLURM (each runs all
-    requested levels in-process)."""
+    """Submit all statistics work as ONE SLURM array.
+
+    Renders one task script per (feature × space × trial-type × level) cell
+    and submits a single array. Produces one manifest summarizing the full
+    grid.
+    """
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+        render_slurm_script, save_job_manifest, submit_job_array,
     )
 
-    print(f"\n[SLURM Mode] Submitting statistics jobs to cluster\n")
+    print(f"\n[SLURM Mode] Submitting statistics array to cluster\n")
 
     config = load_config()
     slurm_config = config["computing"]["slurm"]
@@ -2076,8 +2077,10 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
         return
 
     features = list(feature_list)
-    if not features:
-        print("ERROR: no features to submit")
+    spaces = list(spaces)
+    trial_types = list(trial_types)
+    if not features or not spaces or not trial_types:
+        print("ERROR: empty features/spaces/trial_types")
         return
 
     venv_path = Path(config["paths"]["venv"])
@@ -2092,16 +2095,15 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
 
     levels = ["epoch", "average"] if analysis_level == "both" else [analysis_level]
 
-    print(f"Space: {space}  Test: {test}  Correction: {correction}")
-    print(f"n_permutations: {n_permutations}  alpha: {alpha}  "
-          f"analysis_level: {analysis_level} ({'+'.join(levels)})")
-    print(f"Jobs: {len(features)} feature(s) × {len(levels)} level(s) "
-          f"= {len(features) * len(levels)} (one job array per level)")
-
     cpus_resolved = slurm_cpus if slurm_cpus is not None else stats_resources["cpus"]
     mem_resolved = slurm_mem if slurm_mem is not None else stats_resources["mem"]
     time_resolved = slurm_time if slurm_time is not None else stats_resources["time"]
     print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
+    print(f"Grid: {len(features)} feature(s) × {len(spaces)} space(s) × "
+          f"{len(trial_types)} trial-type(s) × {len(levels)} level(s) "
+          f"= {len(features) * len(spaces) * len(trial_types) * len(levels)} task(s)")
+    print(f"Test: {test}  Correction: {correction}  alpha: {alpha}  "
+          f"n_perm: {n_permutations}")
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -2115,86 +2117,88 @@ def _stats_slurm(c, feature_list, space="sensor", test="paired_ttest",
     )
 
     max_concurrent = slurm_config.get("array_throttle", 0)
-    all_ids: List[str] = []
-    all_scripts: List[Path] = []
-    for level in levels:
-        level_scripts = []
-        for feat in features:
-            job_name = f"stats_{feat}_{space}_{test}_{trial_type}_level-{level}"
-            context = {
-                **base_resources,
-                "job_name": job_name,
-                "feature_label": feat,
-                "space": space,
-                "test": test,
-                "correction": correction,
-                "alpha": alpha,
-                "n_permutations": n_permutations,
-                "n_jobs": n_jobs,
-                "analysis_level": level,
-                "aggregate": aggregate,
-                "visualize": visualize,
-                "trial_type": trial_type,
-                "zoning": zoning,
-                "n_events_window": n_events_window,
-                "timestamp": timestamp,
-            }
-            script_path = script_dir / f"{job_name}_{timestamp}.sh"
-            render_slurm_script("statistics.sh.j2", context, output_path=script_path)
-            level_scripts.append(script_path)
+    task_scripts: List[Path] = []
+    for sp in spaces:
+        for tt in trial_types:
+            for level in levels:
+                for feat in features:
+                    job_name = f"stats_{feat}_{sp}_{test}_{tt}_level-{level}"
+                    context = {
+                        **base_resources,
+                        "job_name": job_name,
+                        "feature_label": feat,
+                        "space": sp,
+                        "test": test,
+                        "correction": correction,
+                        "alpha": alpha,
+                        "n_permutations": n_permutations,
+                        "n_jobs": n_jobs,
+                        "analysis_level": level,
+                        "aggregate": aggregate,
+                        "visualize": visualize,
+                        "trial_type": tt,
+                        "zoning": zoning,
+                        "n_events_window": n_events_window,
+                        "timestamp": timestamp,
+                    }
+                    script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                    render_slurm_script("statistics.sh.j2", context, output_path=script_path)
+                    task_scripts.append(script_path)
 
-        array_job_id = submit_job_array(
-            level_scripts,
-            f"stats_array_{space}_{trial_type}_level-{level}", base_resources,
-            script_dir, timestamp, max_concurrent=max_concurrent,
-            dry_run=dry_run,
-        )
-        if array_job_id:
-            all_ids.append(array_job_id)
-        all_scripts.extend(level_scripts)
+    array_name = "stats_array"
+    array_job_id = submit_job_array(
+        task_scripts, array_name, base_resources,
+        script_dir, timestamp, max_concurrent=max_concurrent,
+        dry_run=dry_run,
+    )
 
-    if all_ids:
-        manifest_path = log_dir / f"statistics_manifest_{trial_type}_{timestamp}.json"
-        save_job_manifest(all_ids, manifest_path, metadata={
+    manifest_path = log_dir / f"statistics_manifest_{timestamp}.json"
+    save_job_manifest(
+        [array_job_id] if array_job_id else [], manifest_path,
+        metadata={
             "stage": "statistics",
-            "space": space,
             "test": test,
             "correction": correction,
             "alpha": alpha,
             "n_permutations": n_permutations,
-            "analysis_levels": levels,
-            "features": features,
-            "trial_type": trial_type,
             "timestamp": timestamp,
-        })
-        print(f"\n✓ Submitted {len(all_ids)} statistics array(s) "
-              f"({len(all_scripts)} tasks total); manifest: {manifest_path}")
+            "grid": {
+                "spaces": spaces,
+                "trial_types": trial_types,
+                "analysis_levels": levels,
+                "features": features,
+            },
+            "n_classify_tasks": len(task_scripts),
+            "n_aggregate_tasks": 0,
+            "classify_array_id": array_job_id,
+            "aggregate_array_id": None,
+        },
+    )
+    if array_job_id:
+        print(f"\n✓ Submitted statistics array ({len(task_scripts)} tasks); "
+              f"manifest: {manifest_path}")
     elif dry_run:
-        print(
-            f"\n[DRY RUN] Would submit {len(levels)} statistics array(s) "
-            f"({len(all_scripts)} task(s))"
-        )
+        print(f"\n[DRY RUN] Would submit 1 statistics array ({len(task_scripts)} tasks); "
+              f"manifest: {manifest_path}")
 
 
-def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
-                    space="sensor", mode="univariate", n_permutations=1000,
-                    no_balance=False, n_jobs=-1, continue_on_error=False,
-                    combine_features=False, importances=False, label=None,
-                    n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
-                    trial_type="alltrials", zoning="per-run",
+def _classify_slurm(c, feature_list, spaces, trial_types,
+                    clf="logistic", cv="auto", mode="univariate",
+                    n_permutations=1000, no_balance=False, n_jobs=-1,
+                    continue_on_error=False, combine_features=False,
+                    importances=False, label=None, n_chunks=1, seed=42,
+                    aggregate=True, delete_chunks=False, zoning="per-run",
                     n_events_window=8, analysis_level="both",
                     standardize="auto",
                     slurm_time=None, slurm_mem=None, slurm_cpus=None,
                     dry_run=False):
-    """Submit classification jobs to SLURM.
+    """Submit all classification work as ONE SLURM array (+ one aggregate
+    array when chunked).
 
-    Job fan-out:
-      - One job per (feature, level). When --analysis-level=both, each
-        feature yields two jobs (one per level).
-      - When n_chunks > 1 (univariate only), each classification is split into
-        n_chunks parallel jobs over the spatial dimension. All chunks share the
-        same seed so the permutation y-shuffle sequence is identical, and an
-        aggregation job (afterok dependency) merges them into the final output.
+    Renders one task script per (feature × space × trial-type × level × chunk)
+    cell. When n_chunks > 1, also renders one aggregate script per
+    (feature × space × trial-type × level) that depends afterok on the
+    classify array.
     """
     from datetime import datetime
     from code.utils.config import load_config
@@ -2226,8 +2230,10 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
         return
 
     features = list(feature_list)
-    if not features:
-        print("ERROR: no features to submit")
+    spaces = list(spaces)
+    trial_types = list(trial_types)
+    if not features or not spaces or not trial_types:
+        print("ERROR: empty features/spaces/trial_types")
         return
 
     venv_path = Path(config["paths"]["venv"])
@@ -2251,17 +2257,25 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
     else:
         classifications = [(feat, f"--feature {feat}", [feat]) for feat in features]
 
-    print(f"Space: {space}  Mode: {mode}  Classifier: {clf}  CV: {cv}")
-    print(f"n_permutations: {n_permutations}  combine_features: {combine_features}  "
-          f"analysis_level: {analysis_level} ({'+'.join(levels)})")
-    print(f"Classifications: {len(classifications)} × {len(levels)} level(s)  "
-          f"chunks per classification: {n_chunks}")
-
     # Resolve resources: per-invocation overrides win over config defaults
     cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources["cpus"]
     mem_resolved = slurm_mem if slurm_mem is not None else classification_resources["mem"]
     time_resolved = slurm_time if slurm_time is not None else classification_resources["time"]
     print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
+    n_classify_tasks = (
+        len(classifications) * len(spaces) * len(trial_types)
+        * len(levels) * n_chunks
+    )
+    n_agg_tasks = (
+        len(classifications) * len(spaces) * len(trial_types) * len(levels)
+        if (n_chunks > 1 and aggregate) else 0
+    )
+    print(f"Grid: {len(classifications)} classifications × {len(spaces)} space(s) "
+          f"× {len(trial_types)} trial-type(s) × {len(levels)} level(s) × "
+          f"{n_chunks} chunk(s) = {n_classify_tasks} classify task(s)" +
+          (f" + {n_agg_tasks} aggregate task(s)" if n_agg_tasks else ""))
+    print(f"Mode: {mode}  Classifier: {clf}  CV: {cv}  "
+          f"n_perm: {n_permutations}  combine: {combine_features}")
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -2276,162 +2290,149 @@ def _classify_slurm(c, feature_list, clf="logistic", cv="auto",
 
     max_concurrent = slurm_config.get("array_throttle", 0)
 
-    # One job array per analysis level (so the user can monitor / re-submit
-    # epoch and average independently). Each array contains (feature × chunk)
-    # tasks for that level, plus an optional aggregation array when chunked.
-    all_classify_ids: List[str] = []
-    all_agg_ids: List[str] = []
-    all_classify_scripts: List[Path] = []
-    all_agg_jobs: List[Tuple[str, str]] = []
+    # One array sized to the full (classification × space × trial × level ×
+    # chunk) grid; aggregator collected separately and submitted as a second
+    # array with an afterok dependency.
+    task_scripts: List[Path] = []
+    agg_scripts: List[Path] = []
+    agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
 
-    for level in levels:
-        level_scripts = []
-        level_agg_jobs: List[Tuple[str, str]] = []
-        for feat_label, feature_args, feat_list in classifications:
-            for chunk_idx in range(n_chunks):
-                chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
-                job_name = (
-                    f"classify_{feat_label}_{space}_{mode}_{clf}_"
-                    f"{trial_type}_level-{level}{chunk_suffix}"
-                )
-                context = {
-                    **base_resources,
-                    "job_name": job_name,
-                    "feature_label": feat_label,
-                    "feature_args": feature_args,
-                    "space": space,
-                    "mode": mode,
-                    "clf": clf,
-                    "cv": cv,
-                    "analysis_level": level,
-                    "n_permutations": n_permutations,
-                    "n_jobs": n_jobs,
-                    "no_balance": no_balance,
-                    "combine_features": combine_features,
-                    "importances": importances,
-                    "continue_on_error": continue_on_error,
-                    "label": label,
-                    "n_chunks": n_chunks,
-                    "chunk_idx": chunk_idx,
-                    "seed": seed,
-                    "trial_type": trial_type,
-                    "zoning": zoning,
-                    "n_events_window": n_events_window,
-                    "standardize": standardize,
-                    "timestamp": timestamp,
-                }
-                script_path = script_dir / f"{job_name}_{timestamp}.sh"
-                render_slurm_script("classification.sh.j2", context, output_path=script_path)
-                level_scripts.append(script_path)
-            if n_chunks > 1 and aggregate:
-                level_agg_jobs.append((feat_label, level))
+    for sp in spaces:
+        for tt in trial_types:
+            for level in levels:
+                cv_resolved = _cv_for_lvl(level)
+                for feat_label, feature_args, feat_list in classifications:
+                    for chunk_idx in range(n_chunks):
+                        chunk_suffix = (
+                            f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
+                        )
+                        job_name = (
+                            f"classify_{feat_label}_{sp}_{mode}_{clf}_"
+                            f"{tt}_level-{level}{chunk_suffix}"
+                        )
+                        context = {
+                            **base_resources,
+                            "job_name": job_name,
+                            "feature_label": feat_label,
+                            "feature_args": feature_args,
+                            "space": sp,
+                            "mode": mode,
+                            "clf": clf,
+                            "cv": cv,
+                            "analysis_level": level,
+                            "n_permutations": n_permutations,
+                            "n_jobs": n_jobs,
+                            "no_balance": no_balance,
+                            "combine_features": combine_features,
+                            "importances": importances,
+                            "continue_on_error": continue_on_error,
+                            "label": label,
+                            "n_chunks": n_chunks,
+                            "chunk_idx": chunk_idx,
+                            "seed": seed,
+                            "trial_type": tt,
+                            "zoning": zoning,
+                            "n_events_window": n_events_window,
+                            "standardize": standardize,
+                            "timestamp": timestamp,
+                        }
+                        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                        render_slurm_script(
+                            "classification.sh.j2", context, output_path=script_path,
+                        )
+                        task_scripts.append(script_path)
+                    if n_chunks > 1 and aggregate:
+                        agg_job_name = (
+                            f"aggregate_{feat_label}_{sp}_{mode}_{clf}_"
+                            f"{tt}_level-{level}"
+                        )
+                        agg_context = {
+                            **agg_resources,
+                            "job_name": agg_job_name,
+                            "timestamp": timestamp,
+                            "feature_label": feat_label,
+                            "space": sp,
+                            "mode": mode,
+                            "clf": clf,
+                            "cv": cv_resolved,
+                            "analysis_level": level,
+                            "combined": combine_features,
+                            "delete_chunks": delete_chunks,
+                            "trial_type": tt,
+                        }
+                        agg_script_path = script_dir / f"{agg_job_name}_{timestamp}.sh"
+                        render_slurm_script(
+                            "classification_aggregate.sh.j2", agg_context,
+                            output_path=agg_script_path,
+                        )
+                        agg_scripts.append(agg_script_path)
 
-        classify_array_id = submit_job_array(
-            level_scripts,
-            f"classify_array_{space}_{trial_type}_level-{level}", base_resources,
+    classify_array_id = submit_job_array(
+        task_scripts, "classify_array", base_resources,
+        script_dir, timestamp, max_concurrent=max_concurrent, dry_run=dry_run,
+    )
+
+    agg_array_id = None
+    if agg_scripts:
+        agg_array_id = submit_job_array(
+            agg_scripts, "classify_aggregate_array", agg_resources,
             script_dir, timestamp, max_concurrent=max_concurrent,
-            dry_run=dry_run,
+            dependencies=[classify_array_id] if classify_array_id else None,
+            dep_type="afterok", dry_run=dry_run,
         )
 
-        # Chunk aggregation (only when n_chunks > 1): one task per
-        # (feature, level), in a second array depending on this level's
-        # classification array.
-        agg_array_id = None
-        if level_agg_jobs:
-            agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
-            agg_scripts = []
-            for feat_label, _lvl in level_agg_jobs:
-                cv_resolved = _cv_for_lvl(level)
-                agg_job_name = (
-                    f"aggregate_{feat_label}_{space}_{mode}_{clf}_"
-                    f"{trial_type}_level-{level}"
-                )
-                agg_context = {
-                    **agg_resources,
-                    "job_name": agg_job_name,
-                    "timestamp": timestamp,
-                    "feature_label": feat_label,
-                    "space": space,
-                    "mode": mode,
-                    "clf": clf,
-                    "cv": cv_resolved,
-                    "analysis_level": level,
-                    "combined": combine_features,
-                    "delete_chunks": delete_chunks,
-                    "trial_type": trial_type,
-                }
-                agg_script = script_dir / f"{agg_job_name}_{timestamp}.sh"
-                render_slurm_script(
-                    "classification_aggregate.sh.j2", agg_context,
-                    output_path=agg_script,
-                )
-                agg_scripts.append(agg_script)
-            agg_array_id = submit_job_array(
-                agg_scripts,
-                f"aggregate_array_{space}_{trial_type}_level-{level}", agg_resources,
-                script_dir, timestamp, max_concurrent=max_concurrent,
-                dependencies=[classify_array_id] if classify_array_id else None,
-                dep_type="afterok", dry_run=dry_run,
-            )
-
-        if classify_array_id:
-            all_classify_ids.append(classify_array_id)
-        if agg_array_id:
-            all_agg_ids.append(agg_array_id)
-        all_classify_scripts.extend(level_scripts)
-        all_agg_jobs.extend(level_agg_jobs)
-
-    all_job_ids = all_classify_ids + all_agg_ids
-    if all_job_ids:
-        manifest_path = log_dir / f"classification_manifest_{trial_type}_{timestamp}.json"
-        save_job_manifest(all_job_ids, manifest_path, metadata={
+    manifest_path = log_dir / f"classification_manifest_{timestamp}.json"
+    save_job_manifest(
+        [j for j in (classify_array_id, agg_array_id) if j], manifest_path,
+        metadata={
             "stage": "classification",
-            "space": space,
             "mode": mode,
             "clf": clf,
             "cv": cv,
             "n_permutations": n_permutations,
             "combine_features": combine_features,
             "n_chunks": n_chunks,
-            "analysis_levels": levels,
-            "classify_array_job_ids": all_classify_ids,
-            "aggregate_array_job_ids": all_agg_ids,
-            "features": features,
-            "trial_type": trial_type,
             "timestamp": timestamp,
-        })
-        msg = (
-            f"\n✓ Submitted {len(all_classify_ids)} classification array(s) "
-            f"({len(all_classify_scripts)} tasks total)"
-        )
-        if all_agg_jobs:
-            msg += (
-                f" + {len(all_agg_ids)} aggregation array(s) "
-                f"({len(all_agg_jobs)} tasks total)"
-            )
+            "grid": {
+                "spaces": spaces,
+                "trial_types": trial_types,
+                "analysis_levels": levels,
+                "features": features,
+                "n_chunks": n_chunks,
+            },
+            "n_classify_tasks": len(task_scripts),
+            "n_aggregate_tasks": len(agg_scripts),
+            "classify_array_id": classify_array_id,
+            "aggregate_array_id": agg_array_id,
+        },
+    )
+    if classify_array_id:
+        msg = (f"\n✓ Submitted classify array ({len(task_scripts)} tasks)")
+        if agg_array_id:
+            msg += f" + aggregate array ({len(agg_scripts)} tasks, afterok)"
         print(msg + f"; manifest: {manifest_path}")
     elif dry_run:
-        n_total = len(classifications) * len(levels) * n_chunks
-        print(
-            f"\n[DRY RUN] Would submit {len(levels)} classification array(s) "
-            f"({n_total} task(s)) + optional per-level aggregation arrays"
-        )
+        msg = (f"\n[DRY RUN] Would submit 1 classify array "
+               f"({len(task_scripts)} tasks)")
+        if agg_scripts:
+            msg += f" + 1 aggregate array ({len(agg_scripts)} tasks, afterok)"
+        print(msg + f"; manifest: {manifest_path}")
 
 
-def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
+def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
                                  importance, n_permutations, n_jobs,
                                  per_feature_scale, no_balance, seed,
-                                 trial_type, zoning, n_events_window,
+                                 trial_types, zoning, n_events_window,
                                  standardize, analysis_level, n_chunks,
                                  importance_n_repeats, keep_bad_trials,
                                  aggregate, slurm_time, slurm_mem, slurm_cpus,
                                  dry_run):
-    """Submit multifeature classification as a SLURM array job.
+    """Submit all multifeature work as ONE SLURM array (+ one aggregate array
+    when chunked).
 
-    One array task per (axis × trial-type [× chunk for per-cell]). When
-    --axis=all, all four axes are submitted. When trial_type='all', all three
-    trial-type variants are submitted. per-cell axis additionally shards over
-    --n-chunks spatial chunks, with an afterok aggregation array merging them.
+    Renders one task script per (axis × space × trial-type × chunk) cell.
+    When n_chunks > 1, also renders one aggregate script per chunked
+    (axis × space × trial-type) that depends afterok on the classify array.
     """
     from datetime import datetime
     from code.utils.config import load_config
@@ -2440,7 +2441,7 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
     )
     from code.classification.run_multifeature import AXES
 
-    print(f"\n[SLURM Mode] Submitting multifeature classification array(s)\n")
+    print(f"\n[SLURM Mode] Submitting multifeature classification array\n")
 
     config = load_config()
     slurm_config = config["computing"]["slurm"]
@@ -2454,10 +2455,13 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
               "(computing.slurm.classification)")
         return
 
-    # Resolve axis × trial-type lists.
+    # Resolve axis × space × trial-type lists.
     axes = list(AXES) if axis == "all" else [axis]
-    trial_types = (resolve_trial_types("all")
-                   if trial_type == "all" else [trial_type])
+    spaces = list(spaces)
+    trial_types = list(trial_types)
+    if not spaces or not trial_types:
+        print("ERROR: empty spaces/trial_types")
+        return
 
     actual_label = label or f"combined-{len(feature_list)}"
     feature_args = "--feature " + " ".join(feature_list)
@@ -2495,75 +2499,82 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
     )
     max_concurrent = slurm_config.get("array_throttle", 0)
 
-    # Build per-task scripts. per-cell axis shards over n_chunks; other axes
-    # ignore chunking (n_chunks effectively = 1).
-    task_scripts = []
-    agg_targets: List[Tuple[str, str]] = []  # (axis, trial_type) needing chunk agg
+    # Build per-task scripts. per-cell and per-spatial axes shard over
+    # n_chunks; other axes ignore chunking (n_chunks effectively = 1).
+    task_scripts: List[Path] = []
+    agg_targets: List[Tuple[str, str, str]] = []  # (axis, space, trial) needing chunk agg
+    chunkable_axes = {"per-cell", "per-spatial"}
     for ax in axes:
-        ax_chunks = n_chunks if ax == "per-cell" and n_chunks > 1 else 1
-        for tr in trial_types:
-            for ck in range(ax_chunks):
-                chunk_suffix = (f"_chunk-{ck}of{ax_chunks}"
-                                if ax_chunks > 1 else "")
-                job_name = (f"mfclassify_{actual_label}_{space}_{ax}_"
-                            f"{tr}{chunk_suffix}")
-                context = {
-                    **base_resources,
-                    "job_name": job_name,
-                    "timestamp": timestamp,
-                    "label": actual_label,
-                    "feature_args": feature_args,
-                    "space": space,
-                    "axis": ax,
-                    "clf": clf,
-                    "cv": cv,
-                    "importance": importance,
-                    "importance_n_repeats": importance_n_repeats,
-                    "n_permutations": n_permutations,
-                    "n_jobs": n_jobs,
-                    "seed": seed,
-                    "trial_type": tr,
-                    "zoning": zoning,
-                    "n_events_window": n_events_window,
-                    "standardize": standardize,
-                    "analysis_level": analysis_level,
-                    "no_per_feature_scale": not per_feature_scale,
-                    "no_balance": no_balance,
-                    "keep_bad_trials": keep_bad_trials,
-                    "n_chunks": ax_chunks,
-                    "chunk_idx": ck,
-                }
-                script_path = script_dir / f"{job_name}_{timestamp}.sh"
-                render_slurm_script("classify_multifeature.sh.j2", context,
-                                    output_path=script_path)
-                task_scripts.append(script_path)
-            if ax_chunks > 1 and aggregate:
-                agg_targets.append((ax, tr))
+        ax_chunks = n_chunks if ax in chunkable_axes and n_chunks > 1 else 1
+        for sp in spaces:
+            for tr in trial_types:
+                for ck in range(ax_chunks):
+                    chunk_suffix = (f"_chunk-{ck}of{ax_chunks}"
+                                    if ax_chunks > 1 else "")
+                    job_name = (f"mfclassify_{actual_label}_{sp}_{ax}_"
+                                f"{tr}{chunk_suffix}")
+                    context = {
+                        **base_resources,
+                        "job_name": job_name,
+                        "timestamp": timestamp,
+                        "label": actual_label,
+                        "feature_args": feature_args,
+                        "space": sp,
+                        "axis": ax,
+                        "clf": clf,
+                        "cv": cv,
+                        "importance": importance,
+                        "importance_n_repeats": importance_n_repeats,
+                        "n_permutations": n_permutations,
+                        "n_jobs": n_jobs,
+                        "seed": seed,
+                        "trial_type": tr,
+                        "zoning": zoning,
+                        "n_events_window": n_events_window,
+                        "standardize": standardize,
+                        "analysis_level": analysis_level,
+                        "no_per_feature_scale": not per_feature_scale,
+                        "no_balance": no_balance,
+                        "keep_bad_trials": keep_bad_trials,
+                        "n_chunks": ax_chunks,
+                        "chunk_idx": ck,
+                    }
+                    script_path = script_dir / f"{job_name}_{timestamp}.sh"
+                    render_slurm_script("classify_multifeature.sh.j2", context,
+                                        output_path=script_path)
+                    task_scripts.append(script_path)
+                if ax_chunks > 1 and aggregate:
+                    agg_targets.append((ax, sp, tr))
 
-    print(f"Submitting {len(task_scripts)} array task(s) "
-          f"({len(axes)} axis × {len(trial_types)} trial-type" +
-          (f" × {n_chunks} chunk(s) for per-cell" if n_chunks > 1 else "") + ")")
+    chunked_axes_in_run = [ax for ax in axes if ax in chunkable_axes]
+    chunk_note = (
+        f" × {n_chunks} chunk(s) for {'+'.join(chunked_axes_in_run)}"
+        if n_chunks > 1 and chunked_axes_in_run else ""
+    )
+    print(f"Grid: {len(axes)} axis × {len(spaces)} space × "
+          f"{len(trial_types)} trial-type{chunk_note} = "
+          f"{len(task_scripts)} classify task(s)"
+          + (f" + {len(agg_targets)} aggregate task(s)" if agg_targets else ""))
 
     classify_array_id = submit_job_array(
-        task_scripts,
-        f"mfclassify_array_{actual_label}", base_resources,
-        script_dir, timestamp, max_concurrent=max_concurrent,
-        dry_run=dry_run,
+        task_scripts, f"mfclassify_array_{actual_label}",
+        base_resources, script_dir, timestamp,
+        max_concurrent=max_concurrent, dry_run=dry_run,
     )
 
-    # Aggregation array (only when per-cell was chunked).
+    # Aggregation array (only when chunkable axes were chunked).
     agg_array_id = None
+    agg_scripts: List[Path] = []
     if agg_targets:
         agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
-        agg_scripts = []
-        for ax, tr in agg_targets:
-            job_name = (f"mfclassify_agg_{actual_label}_{space}_{ax}_{tr}")
+        for ax, sp, tr in agg_targets:
+            job_name = (f"mfclassify_agg_{actual_label}_{sp}_{ax}_{tr}")
             context = {
                 **agg_resources,
                 "job_name": job_name,
                 "timestamp": timestamp,
                 "label": actual_label,
-                "space": space,
+                "space": sp,
                 "clf": clf,
                 "cv": cv,
                 "importance": importance,
@@ -2583,27 +2594,34 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
             dep_type="afterok", dry_run=dry_run,
         )
 
-    all_ids = [j for j in (classify_array_id, agg_array_id) if j]
-    if all_ids:
-        manifest_path = log_dir / f"mfclassify_manifest_{timestamp}.json"
-        save_job_manifest(all_ids, manifest_path, metadata={
+    manifest_path = log_dir / f"mfclassify_manifest_{timestamp}.json"
+    save_job_manifest(
+        [j for j in (classify_array_id, agg_array_id) if j], manifest_path,
+        metadata={
             "stage": "classify_multifeature",
-            "space": space,
-            "axes": axes,
-            "trial_types": trial_types,
             "clf": clf,
             "cv": cv,
             "label": actual_label,
             "n_permutations": n_permutations,
             "importance": importance,
             "n_chunks": n_chunks,
-            "classify_array_job_id": classify_array_id,
-            "aggregate_array_job_id": agg_array_id,
-            "features": feature_list,
             "timestamp": timestamp,
-        })
+            "grid": {
+                "spaces": spaces,
+                "trial_types": trial_types,
+                "axes": axes,
+                "features": feature_list,
+                "n_chunks": n_chunks,
+            },
+            "n_classify_tasks": len(task_scripts),
+            "n_aggregate_tasks": len(agg_scripts),
+            "classify_array_id": classify_array_id,
+            "aggregate_array_id": agg_array_id,
+        },
+    )
+    if classify_array_id:
         print(f"\n✓ Submitted mf classify array ({len(task_scripts)} tasks)" +
-              (f" + aggregator array" if agg_array_id else "") +
+              (f" + aggregator array ({len(agg_scripts)} tasks)" if agg_array_id else "") +
               f"; manifest: {manifest_path}")
     elif dry_run:
         n_total = len(task_scripts)
@@ -2617,10 +2635,10 @@ def classify_multifeature(c, features="all", label=None,
                           axis="all", importance="permutation",
                           n_permutations=1000, n_jobs=-1,
                           per_feature_scale=True, no_balance=False,
-                          seed=42, trial_type="alltrials",
+                          seed=42, trial_type="all",
                           zoning="per-run", n_events_window=8,
                           standardize="per-subject", analysis_level="epoch",
-                          n_chunks=1, chunk_idx=0,
+                          n_chunks=10, chunk_idx=0,
                           importance_n_repeats=5,
                           keep_bad_trials=False, output_dir=None,
                           aggregate=True, config="config.yaml",
@@ -2672,82 +2690,98 @@ def classify_multifeature(c, features="all", label=None,
     print(f"Spaces ({len(space_list)}): {' '.join(space_list)}")
     print(f"Axis: {axis}  clf: {clf}  importance: {importance}")
 
-    if n_chunks > 1 and axis not in ("per-cell",):
+    if n_chunks > 1 and axis not in ("per-cell", "per-spatial", "all"):
         print(
-            f"NOTE: --n-chunks={n_chunks} only takes effect for --axis=per-cell."
+            f"NOTE: --n-chunks={n_chunks} only takes effect for "
+            f"--axis in {{per-cell, per-spatial, all}}."
         )
 
+    trial_type_list = resolve_trial_types(trial_type)
+
     if slurm:
-        for sp in space_list:
-            print(f"\n{'#' * 80}\n# SLURM submit | space: {sp}\n{'#' * 80}")
-            _classify_multifeature_slurm(
-                c, feature_list=feature_list, label=label, clf=clf, cv=cv,
-                space=sp, axis=axis, importance=importance,
-                n_permutations=n_permutations, n_jobs=n_jobs,
-                per_feature_scale=per_feature_scale, no_balance=no_balance,
-                seed=seed, trial_type=trial_type, zoning=zoning,
-                n_events_window=n_events_window, standardize=standardize,
-                analysis_level=analysis_level, n_chunks=n_chunks,
-                importance_n_repeats=importance_n_repeats,
-                keep_bad_trials=keep_bad_trials, aggregate=aggregate,
-                slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
-                dry_run=dry_run,
-            )
+        print(f"\n{'#' * 80}\n# SLURM submit (one array for "
+              f"{len(space_list)} space × {len(trial_type_list)} trial-type)\n"
+              f"{'#' * 80}")
+        _classify_multifeature_slurm(
+            c, feature_list=feature_list, label=label, clf=clf, cv=cv,
+            spaces=space_list, axis=axis, importance=importance,
+            n_permutations=n_permutations, n_jobs=n_jobs,
+            per_feature_scale=per_feature_scale, no_balance=no_balance,
+            seed=seed, trial_types=trial_type_list, zoning=zoning,
+            n_events_window=n_events_window, standardize=standardize,
+            analysis_level=analysis_level, n_chunks=n_chunks,
+            importance_n_repeats=importance_n_repeats,
+            keep_bad_trials=keep_bad_trials, aggregate=aggregate,
+            slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
+            dry_run=dry_run,
+        )
         return
+
+    # Local mode: chunking can't be parallelized within one process, and
+    # n_chunks > 1 + axis=all is rejected by run_multifeature. Collapse to a
+    # single chunk in that case (SLURM mode keeps the chunked fan-out).
+    local_n_chunks = n_chunks
+    if axis == "all" and n_chunks > 1:
+        print(
+            f"NOTE: --n-chunks={n_chunks} ignored in local mode "
+            f"(axis=all runs all axes in one process; use --slurm to fan out)."
+        )
+        local_n_chunks = 1
 
     python_exe = get_python_executable()
     for sp in space_list:
-        print(f"\n{'#' * 80}\n# space: {sp}\n{'#' * 80}")
-        cmd = [python_exe, "-m", "code.classification.run_multifeature",
-               "--feature", *feature_list]
-        cmd.extend(["--clf", clf])
-        cmd.extend(["--cv", cv])
-        cmd.extend(["--space", sp])
-        cmd.extend(["--axis", axis])
-        cmd.extend(["--importance", importance])
-        cmd.extend(["--importance-n-repeats", str(importance_n_repeats)])
-        cmd.extend(["--n-permutations", str(n_permutations)])
-        cmd.extend(["--n-jobs", str(n_jobs)])
-        cmd.extend(["--trial-type", trial_type])
-        cmd.extend(["--zoning", zoning])
-        cmd.extend(["--n-events-window", str(n_events_window)])
-        cmd.extend(["--standardize", standardize])
-        cmd.extend(["--analysis-level", analysis_level])
-        cmd.extend(["--seed", str(seed)])
-        cmd.extend(["--n-chunks", str(n_chunks)])
-        cmd.extend(["--chunk-idx", str(chunk_idx)])
-        cmd.extend(["--config", config])
-        if not per_feature_scale:
-            cmd.append("--no-per-feature-scale")
-        if no_balance:
-            cmd.append("--no-balance")
-        if keep_bad_trials:
-            cmd.append("--keep-bad-trials")
-        if label:
-            cmd.extend(["--label", label])
-        if output_dir:
-            cmd.extend(["--output-dir", output_dir])
-
-        print(f"\nRunning: {' '.join(cmd)}\n")
-        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
-
-        if aggregate and axis == "all":
-            actual_label = label or f"combined-{len(feature_list)}"
-            agg_cmd = [
-                python_exe, "-m", "code.classification.aggregate_multifeature",
-                "--label", actual_label,
-                "--space", sp,
-                "--clf", clf,
-                "--cv", cv,
-                "--importance", importance,
-                "--trial-type", trial_type,
-                "--analysis-level", analysis_level,
-                "--config", config,
-            ]
+        for tt in trial_type_list:
+            print(f"\n{'#' * 80}\n# space: {sp} | trial-type: {tt}\n{'#' * 80}")
+            cmd = [python_exe, "-m", "code.classification.run_multifeature",
+                   "--feature", *feature_list]
+            cmd.extend(["--clf", clf])
+            cmd.extend(["--cv", cv])
+            cmd.extend(["--space", sp])
+            cmd.extend(["--axis", axis])
+            cmd.extend(["--importance", importance])
+            cmd.extend(["--importance-n-repeats", str(importance_n_repeats)])
+            cmd.extend(["--n-permutations", str(n_permutations)])
+            cmd.extend(["--n-jobs", str(n_jobs)])
+            cmd.extend(["--trial-type", tt])
+            cmd.extend(["--zoning", zoning])
+            cmd.extend(["--n-events-window", str(n_events_window)])
+            cmd.extend(["--standardize", standardize])
+            cmd.extend(["--analysis-level", analysis_level])
+            cmd.extend(["--seed", str(seed)])
+            cmd.extend(["--n-chunks", str(local_n_chunks)])
+            cmd.extend(["--chunk-idx", str(chunk_idx)])
+            cmd.extend(["--config", config])
+            if not per_feature_scale:
+                cmd.append("--no-per-feature-scale")
+            if no_balance:
+                cmd.append("--no-balance")
+            if keep_bad_trials:
+                cmd.append("--keep-bad-trials")
+            if label:
+                cmd.extend(["--label", label])
             if output_dir:
-                agg_cmd.extend(["--output-dir", output_dir])
-            print(f"\nAggregating bundle: {' '.join(agg_cmd)}\n")
-            c.run(" ".join(agg_cmd), pty=True, env=get_env_with_pythonpath())
+                cmd.extend(["--output-dir", output_dir])
+
+            print(f"\nRunning: {' '.join(cmd)}\n")
+            c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+            if aggregate and axis == "all":
+                actual_label = label or f"combined-{len(feature_list)}"
+                agg_cmd = [
+                    python_exe, "-m", "code.classification.aggregate_multifeature",
+                    "--label", actual_label,
+                    "--space", sp,
+                    "--clf", clf,
+                    "--cv", cv,
+                    "--importance", importance,
+                    "--trial-type", tt,
+                    "--analysis-level", analysis_level,
+                    "--config", config,
+                ]
+                if output_dir:
+                    agg_cmd.extend(["--output-dir", output_dir])
+                print(f"\nAggregating bundle: {' '.join(agg_cmd)}\n")
+                c.run(" ".join(agg_cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task

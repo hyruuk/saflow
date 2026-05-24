@@ -12,10 +12,10 @@ The npz contains arrays keyed by ``<axis>/<key>`` (e.g.
 ``per-spatial/observed``, ``per-feature/importances``, ``joint/observed``)
 plus shared ``spatial_names`` and ``feature_names``.
 
-Per-cell with chunked runs is merged on the fly (same shared-seed assumption
-as ``aggregate_chunks.py``: concatenate ``observed`` along the spatial axis
-and ``perm_scores`` along the spatial axis, then recompute p-values across
-the full cell grid).
+Chunked runs (per-cell or per-spatial) are merged on the fly (same
+shared-seed assumption as ``aggregate_chunks.py``: concatenate ``observed``
+and ``perm_scores`` along the spatial axis, concatenate ``importances`` along
+axis 0 when present, then recompute p-values across the full unit set).
 
 Usage:
     python -m code.classification.aggregate_multifeature \
@@ -54,7 +54,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _find_per_cell_chunks(output_dir: Path, base: str) -> List[Tuple[int, int, Path]]:
+def _find_axis_chunks(output_dir: Path, base: str) -> List[Tuple[int, int, Path]]:
     pattern = re.compile(rf"^{re.escape(base)}_chunk-(\d+)of(\d+)_scores\.npz$")
     found: List[Tuple[int, int, Path]] = []
     for p in output_dir.iterdir():
@@ -64,11 +64,22 @@ def _find_per_cell_chunks(output_dir: Path, base: str) -> List[Tuple[int, int, P
     return sorted(found)
 
 
-def _merge_per_cell_chunks(
+def _merge_axis_chunks(
     output_dir: Path, base: str, axis: str
 ) -> Optional[Tuple[Dict[str, np.ndarray], Dict]]:
-    """Concatenate per-cell chunks (spatial axis 0 of observed; axis 1 of perm)."""
-    chunks = _find_per_cell_chunks(output_dir, base)
+    """Concatenate chunked outputs for a chunkable axis.
+
+    per-cell: observed (n_spatial, n_features), perm (n_perms, n_spatial, n_features)
+              importances absent (one-feature classifiers).
+              → concat observed axis-0, perm axis-1, importances n/a.
+    per-spatial: observed (n_spatial,), perm (n_perms, n_spatial),
+                 importances (n_spatial, n_features).
+                 → concat observed axis-0, perm axis-1, importances axis-0.
+
+    p-values are recomputed across the full unit set (chunk-time p-values are
+    only valid within the chunk and get overwritten here).
+    """
+    chunks = _find_axis_chunks(output_dir, base)
     if not chunks:
         return None
     n_chunks_expected = chunks[0][1]
@@ -78,10 +89,12 @@ def _merge_per_cell_chunks(
         )
     if {c[0] for c in chunks} != set(range(n_chunks_expected)):
         missing = set(range(n_chunks_expected)) - {c[0] for c in chunks}
-        raise ValueError(f"Missing per-cell chunks: {sorted(missing)}")
+        raise ValueError(f"Missing {axis} chunks: {sorted(missing)}")
 
     obs_parts: List[np.ndarray] = []
     perm_parts: List[np.ndarray] = []
+    imp_parts: List[np.ndarray] = []
+    has_importances = False
     spatial_names = None
     feature_names = None
     last_meta: Optional[Dict] = None
@@ -90,6 +103,9 @@ def _merge_per_cell_chunks(
         with np.load(score_path, allow_pickle=True) as npz:
             obs_parts.append(npz["observed"])
             perm_parts.append(npz["perm_scores"])
+            if "importances" in npz.files:
+                imp_parts.append(npz["importances"])
+                has_importances = True
             if "spatial_names" in npz.files:
                 spatial_names = list(npz["spatial_names"])
             if "feature_names" in npz.files:
@@ -105,14 +121,15 @@ def _merge_per_cell_chunks(
 
     if len(seeds) > 1:
         raise ValueError(
-            f"per-cell chunks have inconsistent seeds {sorted(seeds)} — "
+            f"{axis} chunks have inconsistent seeds {sorted(seeds)} — "
             f"cannot aggregate; re-run with shared --seed."
         )
 
-    observed = np.concatenate(obs_parts, axis=0)  # (n_spatial, n_features)
-    perm_scores = np.concatenate(
-        perm_parts, axis=1
-    )  # (n_perms, n_spatial, n_features)
+    # Both axes concatenate observed on axis 0 and perm_scores on axis 1
+    # (the unit axis lives at the trailing position in observed and the
+    # second position in perm_scores in both shapes).
+    observed = np.concatenate(obs_parts, axis=0)
+    perm_scores = np.concatenate(perm_parts, axis=1)
 
     n_perms = perm_scores.shape[0]
     obs_flat = observed.ravel()
@@ -137,6 +154,8 @@ def _merge_per_cell_chunks(
         "pvals_fdr_bh": pvals_fdr.reshape(observed.shape),
         "pvals_bonferroni": pvals_bonf.reshape(observed.shape),
     }
+    if has_importances:
+        payload["importances"] = np.concatenate(imp_parts, axis=0)
     if spatial_names is not None:
         payload["spatial_names"] = np.asarray(spatial_names)
     if feature_names is not None:
@@ -171,9 +190,9 @@ def _load_axis(
         meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
         return payload, meta
 
-    # Maybe per-cell chunked
-    if axis == "per-cell":
-        merged = _merge_per_cell_chunks(output_dir, base, axis)
+    # Maybe chunked (per-cell or per-spatial)
+    if axis in ("per-cell", "per-spatial"):
+        merged = _merge_axis_chunks(output_dir, base, axis)
         if merged is not None:
             return merged
     return None
