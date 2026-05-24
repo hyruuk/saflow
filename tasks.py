@@ -122,6 +122,35 @@ def resolve_trial_types(trial_type):
     return [trial_type]
 
 
+# Space shortcut shared by analysis.stats and analysis.classify. "both" is the
+# default and expands to the two analysis spaces the project reports on: raw
+# sensor topographies and the Schaefer-400 parcellation.
+_SPACE_SETS = {"both": ["sensor", "schaefer_400"]}
+
+
+def resolve_spaces(space):
+    """Resolve a `--space` value into a concrete list.
+
+    Accepts:
+      - A single space name: 'sensor', 'schaefer_400', 'aparc.a2009s', ...
+      - A space-separated list: 'sensor schaefer_400'
+      - The shortcut 'both' → sensor + schaefer_400 (default fan-out).
+    """
+    if not space:
+        return list(_SPACE_SETS["both"])
+    if space in _SPACE_SETS:
+        return list(_SPACE_SETS[space])
+    tokens = space.split() if isinstance(space, str) else list(space)
+    resolved = []
+    for tok in tokens:
+        if tok in _SPACE_SETS:
+            resolved.extend(_SPACE_SETS[tok])
+        else:
+            resolved.append(tok)
+    seen = set()
+    return [s for s in resolved if not (s in seen or seen.add(s))]
+
+
 # ==============================================================================
 # dev.check.* Tasks - Validation & Quality Checks
 # ==============================================================================
@@ -849,7 +878,7 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 # ==============================================================================
 
 @task
-def stats(c, features="all", space="sensor", test="paired_ttest",
+def stats(c, features="all", space="both", test="paired_ttest",
           correction="fdr", alpha=0.05, n_permutations=10000,
           n_jobs=1, analysis_level="both", aggregate="median", visualize=False,
           continue_on_error=True,
@@ -859,8 +888,8 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
     """Run group-level statistical analysis (IN vs OUT) on one or more features.
 
     With no arguments, runs every feature through every trial-type variant at
-    every analysis level (`--features=all --trial-type=all
-    --analysis-level=both`).
+    every analysis level, across both sensor and schaefer_400 spaces
+    (`--features=all --trial-type=all --analysis-level=both --space=both`).
 
     `--features` accepts (default: 'all'):
       - A single feature name: --features=fooof_exponent
@@ -871,6 +900,11 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
       - A single type: alltrials | correct | rare | lapse | correct_commission
       - The shortcut 'all' → alltrials + correct (baseline) + lapse, each run
         separately into its own `_type-<...>` result files.
+
+    `--space` accepts (default: 'both'):
+      - A single space name: sensor | schaefer_400 | aparc.a2009s | ...
+      - A space-separated list: "sensor schaefer_400"
+      - The shortcut 'both' → sensor + schaefer_400 (default fan-out).
 
     `--analysis-level` accepts (default: 'both'):
       - epoch:   per-epoch independent t-test (level-epoch file).
@@ -893,62 +927,68 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
     """
     feature_list = resolve_features(features)
     trial_types = resolve_trial_types(trial_type)
+    space_list = resolve_spaces(space)
     print("=" * 80)
-    print(f"analysis.stats | space={space}  correction={correction}  α={alpha}")
+    print(f"analysis.stats | spaces ({len(space_list)}): {' '.join(space_list)}")
+    print(f"               | correction={correction}  α={alpha}")
     print(f"               | n_perm={n_permutations}  analysis-level={analysis_level}")
     print(f"               | features ({len(feature_list)}): {' '.join(feature_list)}")
     print(f"               | trial-types ({len(trial_types)}): {' '.join(trial_types)}")
     print("=" * 80)
 
     if slurm:
-        for tt in trial_types:
-            print(f"\n{'#' * 80}\n# SLURM submit | trial-type: {tt}\n{'#' * 80}")
-            _stats_slurm(
-                c,
-                feature_list=feature_list,
-                space=space,
-                test=test,
-                correction=correction,
-                alpha=alpha,
-                n_permutations=n_permutations,
-                n_jobs=n_jobs,
-                analysis_level=analysis_level,
-                aggregate=aggregate,
-                visualize=visualize,
-                trial_type=tt,
-                zoning=zoning,
-                n_events_window=n_events_window,
-                slurm_time=slurm_time,
-                slurm_mem=slurm_mem,
-                slurm_cpus=slurm_cpus,
-                dry_run=dry_run,
-            )
+        for sp in space_list:
+            for tt in trial_types:
+                print(f"\n{'#' * 80}\n# SLURM submit | space: {sp} | "
+                      f"trial-type: {tt}\n{'#' * 80}")
+                _stats_slurm(
+                    c,
+                    feature_list=feature_list,
+                    space=sp,
+                    test=test,
+                    correction=correction,
+                    alpha=alpha,
+                    n_permutations=n_permutations,
+                    n_jobs=n_jobs,
+                    analysis_level=analysis_level,
+                    aggregate=aggregate,
+                    visualize=visualize,
+                    trial_type=tt,
+                    zoning=zoning,
+                    n_events_window=n_events_window,
+                    slurm_time=slurm_time,
+                    slurm_mem=slurm_mem,
+                    slurm_cpus=slurm_cpus,
+                    dry_run=dry_run,
+                )
         return
 
     python_exe = get_python_executable()
     failures = []
 
-    for tt in trial_types:
-        print(f"\n{'#' * 80}\n# trial-type: {tt}\n{'#' * 80}")
-        cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-               "--feature-type", *feature_list,
-               "--space", space, "--test", test,
-               "--correction", correction, "--alpha", str(alpha),
-               "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-               "--analysis-level", analysis_level,
-               "--aggregate", aggregate,
-               "--trial-type", tt,
-               "--zoning", zoning,
-               "--n-events-window", str(n_events_window)]
-        if visualize:
-            cmd.append("--visualize")
-        print(f"\n>>> run_group_statistics on {len(feature_list)} feature(s) "
-              f"(level={analysis_level})")
-        print(f"Running: {' '.join(cmd)}\n")
-        result = c.run(" ".join(cmd), pty=True,
-                       env=get_env_with_pythonpath(), warn=continue_on_error)
-        if result is not None and getattr(result, "exited", 0) != 0:
-            failures.append((f"run_group_statistics[{tt}]", f"exit {result.exited}"))
+    for sp in space_list:
+        for tt in trial_types:
+            print(f"\n{'#' * 80}\n# space: {sp} | trial-type: {tt}\n{'#' * 80}")
+            cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
+                   "--feature-type", *feature_list,
+                   "--space", sp, "--test", test,
+                   "--correction", correction, "--alpha", str(alpha),
+                   "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
+                   "--analysis-level", analysis_level,
+                   "--aggregate", aggregate,
+                   "--trial-type", tt,
+                   "--zoning", zoning,
+                   "--n-events-window", str(n_events_window)]
+            if visualize:
+                cmd.append("--visualize")
+            print(f"\n>>> run_group_statistics on {len(feature_list)} feature(s) "
+                  f"(level={analysis_level}, space={sp})")
+            print(f"Running: {' '.join(cmd)}\n")
+            result = c.run(" ".join(cmd), pty=True,
+                           env=get_env_with_pythonpath(), warn=continue_on_error)
+            if result is not None and getattr(result, "exited", 0) != 0:
+                failures.append(
+                    (f"run_group_statistics[{sp}/{tt}]", f"exit {result.exited}"))
 
     print("\n" + "=" * 80)
     if failures:
@@ -962,7 +1002,7 @@ def stats(c, features="all", space="sensor", test="paired_ttest",
 
 @task
 def classify(c, features="all", clf="logistic", cv="auto",
-             space="sensor", mode="univariate", n_permutations=1000,
+             space="both", mode="univariate", n_permutations=1000,
              no_balance=False, n_jobs=-1, continue_on_error=False,
              combine_features=False, importances=False, label=None,
              n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
@@ -972,8 +1012,9 @@ def classify(c, features="all", clf="logistic", cv="auto",
              slurm=False, dry_run=False):
     """Run classification analysis (IN vs OUT) on one or more features.
 
-    With no arguments, runs every feature through every trial-type variant
-    (`--features=all --trial-type=all`).
+    With no arguments, runs every feature through every trial-type variant,
+    at both analysis levels, across both sensor and schaefer_400 spaces
+    (`--features=all --trial-type=all --space=both --analysis-level=both`).
 
     `--features` accepts (default: 'all'):
       - A single feature name: --features=fooof_exponent
@@ -984,6 +1025,11 @@ def classify(c, features="all", clf="logistic", cv="auto",
       - A single type: alltrials | correct | rare | lapse | correct_commission
       - The shortcut 'all' → alltrials + correct (baseline) + lapse, each run
         separately into its own `_type-<...>` score files.
+
+    `--space` accepts (default: 'both'):
+      - A single space name: sensor | schaefer_400 | aparc.a2009s | ...
+      - A space-separated list: "sensor schaefer_400"
+      - The shortcut 'both' → sensor + schaefer_400 (default fan-out).
 
     Spatial mode:
       - univariate (default): per-channel/ROI classifier + shared-permutation t-max
@@ -1034,40 +1080,44 @@ def classify(c, features="all", clf="logistic", cv="auto",
 
     feature_list = resolve_features(features)
     trial_types = resolve_trial_types(trial_type)
+    space_list = resolve_spaces(space)
     print(f"Features ({len(feature_list)}): {' '.join(feature_list)}")
     print(f"Trial-types ({len(trial_types)}): {' '.join(trial_types)}")
+    print(f"Spaces ({len(space_list)}): {' '.join(space_list)}")
 
     if slurm:
-        for tt in trial_types:
-            print(f"\n{'#' * 80}\n# SLURM submit | trial-type: {tt}\n{'#' * 80}")
-            _classify_slurm(
-                c,
-                feature_list=feature_list,
-                clf=clf,
-                cv=cv,
-                space=space,
-                mode=mode,
-                n_permutations=n_permutations,
-                no_balance=no_balance,
-                n_jobs=n_jobs,
-                continue_on_error=continue_on_error,
-                combine_features=combine_features,
-                importances=importances,
-                label=label,
-                n_chunks=n_chunks,
-                seed=seed,
-                aggregate=aggregate,
-                delete_chunks=delete_chunks,
-                trial_type=tt,
-                zoning=zoning,
-                n_events_window=n_events_window,
-                analysis_level=analysis_level,
-                standardize=standardize,
-                slurm_time=slurm_time,
-                slurm_mem=slurm_mem,
-                slurm_cpus=slurm_cpus,
-                dry_run=dry_run,
-            )
+        for sp in space_list:
+            for tt in trial_types:
+                print(f"\n{'#' * 80}\n# SLURM submit | space: {sp} | "
+                      f"trial-type: {tt}\n{'#' * 80}")
+                _classify_slurm(
+                    c,
+                    feature_list=feature_list,
+                    clf=clf,
+                    cv=cv,
+                    space=sp,
+                    mode=mode,
+                    n_permutations=n_permutations,
+                    no_balance=no_balance,
+                    n_jobs=n_jobs,
+                    continue_on_error=continue_on_error,
+                    combine_features=combine_features,
+                    importances=importances,
+                    label=label,
+                    n_chunks=n_chunks,
+                    seed=seed,
+                    aggregate=aggregate,
+                    delete_chunks=delete_chunks,
+                    trial_type=tt,
+                    zoning=zoning,
+                    n_events_window=n_events_window,
+                    analysis_level=analysis_level,
+                    standardize=standardize,
+                    slurm_time=slurm_time,
+                    slurm_mem=slurm_mem,
+                    slurm_cpus=slurm_cpus,
+                    dry_run=dry_run,
+                )
         return
 
     if n_chunks > 1:
@@ -1079,35 +1129,36 @@ def classify(c, features="all", clf="logistic", cv="auto",
         return
 
     python_exe = get_python_executable()
-    for tt in trial_types:
-        print(f"\n{'#' * 80}\n# trial-type: {tt}\n{'#' * 80}")
-        cmd = [python_exe, "-m", "code.classification.run_classification",
-               "--feature", *feature_list]
-        cmd.extend(["--clf", clf])
-        cmd.extend(["--cv", cv])
-        cmd.extend(["--space", space])
-        cmd.extend(["--mode", mode])
-        cmd.extend(["--n-permutations", str(n_permutations)])
-        cmd.extend(["--n-jobs", str(n_jobs)])
-        cmd.extend(["--trial-type", tt])
-        cmd.extend(["--zoning", zoning])
-        cmd.extend(["--n-events-window", str(n_events_window)])
-        cmd.extend(["--analysis-level", analysis_level])
-        cmd.extend(["--standardize", standardize])
-        cmd.extend(["--seed", str(seed)])
-        if no_balance:
-            cmd.append("--no-balance")
-        if continue_on_error:
-            cmd.append("--continue-on-error")
-        if combine_features:
-            cmd.append("--combine-features")
-        if importances:
-            cmd.append("--importances")
-        if label:
-            cmd.extend(["--label", label])
+    for sp in space_list:
+        for tt in trial_types:
+            print(f"\n{'#' * 80}\n# space: {sp} | trial-type: {tt}\n{'#' * 80}")
+            cmd = [python_exe, "-m", "code.classification.run_classification",
+                   "--feature", *feature_list]
+            cmd.extend(["--clf", clf])
+            cmd.extend(["--cv", cv])
+            cmd.extend(["--space", sp])
+            cmd.extend(["--mode", mode])
+            cmd.extend(["--n-permutations", str(n_permutations)])
+            cmd.extend(["--n-jobs", str(n_jobs)])
+            cmd.extend(["--trial-type", tt])
+            cmd.extend(["--zoning", zoning])
+            cmd.extend(["--n-events-window", str(n_events_window)])
+            cmd.extend(["--analysis-level", analysis_level])
+            cmd.extend(["--standardize", standardize])
+            cmd.extend(["--seed", str(seed)])
+            if no_balance:
+                cmd.append("--no-balance")
+            if continue_on_error:
+                cmd.append("--continue-on-error")
+            if combine_features:
+                cmd.append("--combine-features")
+            if importances:
+                cmd.append("--importances")
+            if label:
+                cmd.extend(["--label", label])
 
-        print(f"\nRunning: {' '.join(cmd)}\n")
-        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+            print(f"\nRunning: {' '.join(cmd)}\n")
+            c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 # ==============================================================================
@@ -2562,7 +2613,7 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, space, axis,
 
 @task
 def classify_multifeature(c, features="all", label=None,
-                          clf="logistic", cv="logo", space="sensor",
+                          clf="logistic", cv="logo", space="both",
                           axis="all", importance="permutation",
                           n_permutations=1000, n_jobs=-1,
                           per_feature_scale=True, no_balance=False,
@@ -2616,8 +2667,10 @@ def classify_multifeature(c, features="all", label=None,
     print("=" * 80)
 
     feature_list = resolve_features(features)
+    space_list = resolve_spaces(space)
     print(f"Features ({len(feature_list)}): {' '.join(feature_list)}")
-    print(f"Axis: {axis}  clf: {clf}  importance: {importance}  space: {space}")
+    print(f"Spaces ({len(space_list)}): {' '.join(space_list)}")
+    print(f"Axis: {axis}  clf: {clf}  importance: {importance}")
 
     if n_chunks > 1 and axis not in ("per-cell",):
         print(
@@ -2625,72 +2678,76 @@ def classify_multifeature(c, features="all", label=None,
         )
 
     if slurm:
-        _classify_multifeature_slurm(
-            c, feature_list=feature_list, label=label, clf=clf, cv=cv,
-            space=space, axis=axis, importance=importance,
-            n_permutations=n_permutations, n_jobs=n_jobs,
-            per_feature_scale=per_feature_scale, no_balance=no_balance,
-            seed=seed, trial_type=trial_type, zoning=zoning,
-            n_events_window=n_events_window, standardize=standardize,
-            analysis_level=analysis_level, n_chunks=n_chunks,
-            importance_n_repeats=importance_n_repeats,
-            keep_bad_trials=keep_bad_trials, aggregate=aggregate,
-            slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
-            dry_run=dry_run,
-        )
+        for sp in space_list:
+            print(f"\n{'#' * 80}\n# SLURM submit | space: {sp}\n{'#' * 80}")
+            _classify_multifeature_slurm(
+                c, feature_list=feature_list, label=label, clf=clf, cv=cv,
+                space=sp, axis=axis, importance=importance,
+                n_permutations=n_permutations, n_jobs=n_jobs,
+                per_feature_scale=per_feature_scale, no_balance=no_balance,
+                seed=seed, trial_type=trial_type, zoning=zoning,
+                n_events_window=n_events_window, standardize=standardize,
+                analysis_level=analysis_level, n_chunks=n_chunks,
+                importance_n_repeats=importance_n_repeats,
+                keep_bad_trials=keep_bad_trials, aggregate=aggregate,
+                slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
+                dry_run=dry_run,
+            )
         return
 
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.classification.run_multifeature",
-           "--feature", *feature_list]
-    cmd.extend(["--clf", clf])
-    cmd.extend(["--cv", cv])
-    cmd.extend(["--space", space])
-    cmd.extend(["--axis", axis])
-    cmd.extend(["--importance", importance])
-    cmd.extend(["--importance-n-repeats", str(importance_n_repeats)])
-    cmd.extend(["--n-permutations", str(n_permutations)])
-    cmd.extend(["--n-jobs", str(n_jobs)])
-    cmd.extend(["--trial-type", trial_type])
-    cmd.extend(["--zoning", zoning])
-    cmd.extend(["--n-events-window", str(n_events_window)])
-    cmd.extend(["--standardize", standardize])
-    cmd.extend(["--analysis-level", analysis_level])
-    cmd.extend(["--seed", str(seed)])
-    cmd.extend(["--n-chunks", str(n_chunks)])
-    cmd.extend(["--chunk-idx", str(chunk_idx)])
-    cmd.extend(["--config", config])
-    if not per_feature_scale:
-        cmd.append("--no-per-feature-scale")
-    if no_balance:
-        cmd.append("--no-balance")
-    if keep_bad_trials:
-        cmd.append("--keep-bad-trials")
-    if label:
-        cmd.extend(["--label", label])
-    if output_dir:
-        cmd.extend(["--output-dir", output_dir])
-
-    print(f"\nRunning: {' '.join(cmd)}\n")
-    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
-
-    if aggregate and axis == "all":
-        actual_label = label or f"combined-{len(feature_list)}"
-        agg_cmd = [
-            python_exe, "-m", "code.classification.aggregate_multifeature",
-            "--label", actual_label,
-            "--space", space,
-            "--clf", clf,
-            "--cv", cv,
-            "--importance", importance,
-            "--trial-type", trial_type,
-            "--analysis-level", analysis_level,
-            "--config", config,
-        ]
+    for sp in space_list:
+        print(f"\n{'#' * 80}\n# space: {sp}\n{'#' * 80}")
+        cmd = [python_exe, "-m", "code.classification.run_multifeature",
+               "--feature", *feature_list]
+        cmd.extend(["--clf", clf])
+        cmd.extend(["--cv", cv])
+        cmd.extend(["--space", sp])
+        cmd.extend(["--axis", axis])
+        cmd.extend(["--importance", importance])
+        cmd.extend(["--importance-n-repeats", str(importance_n_repeats)])
+        cmd.extend(["--n-permutations", str(n_permutations)])
+        cmd.extend(["--n-jobs", str(n_jobs)])
+        cmd.extend(["--trial-type", trial_type])
+        cmd.extend(["--zoning", zoning])
+        cmd.extend(["--n-events-window", str(n_events_window)])
+        cmd.extend(["--standardize", standardize])
+        cmd.extend(["--analysis-level", analysis_level])
+        cmd.extend(["--seed", str(seed)])
+        cmd.extend(["--n-chunks", str(n_chunks)])
+        cmd.extend(["--chunk-idx", str(chunk_idx)])
+        cmd.extend(["--config", config])
+        if not per_feature_scale:
+            cmd.append("--no-per-feature-scale")
+        if no_balance:
+            cmd.append("--no-balance")
+        if keep_bad_trials:
+            cmd.append("--keep-bad-trials")
+        if label:
+            cmd.extend(["--label", label])
         if output_dir:
-            agg_cmd.extend(["--output-dir", output_dir])
-        print(f"\nAggregating bundle: {' '.join(agg_cmd)}\n")
-        c.run(" ".join(agg_cmd), pty=True, env=get_env_with_pythonpath())
+            cmd.extend(["--output-dir", output_dir])
+
+        print(f"\nRunning: {' '.join(cmd)}\n")
+        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+        if aggregate and axis == "all":
+            actual_label = label or f"combined-{len(feature_list)}"
+            agg_cmd = [
+                python_exe, "-m", "code.classification.aggregate_multifeature",
+                "--label", actual_label,
+                "--space", sp,
+                "--clf", clf,
+                "--cv", cv,
+                "--importance", importance,
+                "--trial-type", trial_type,
+                "--analysis-level", analysis_level,
+                "--config", config,
+            ]
+            if output_dir:
+                agg_cmd.extend(["--output-dir", output_dir])
+            print(f"\nAggregating bundle: {' '.join(agg_cmd)}\n")
+            c.run(" ".join(agg_cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
