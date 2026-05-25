@@ -1526,17 +1526,30 @@ def main():
                 inout_selection=inout_selection,
             )
         else:
-            logger.info(f"Loading features (trial, batched): {ft_subset}...")
-            blocks = load_all_features_batched(
-                feature_types=ft_subset,
-                space=args.space,
-                inout_bounds=inout_bounds,
-                config=config,
-                drop_bad_trials=not args.keep_bad_trials,
-                trial_type=args.trial_type,
-                n_events_window=args.n_events_window,
-                inout_selection=inout_selection,
-            )
+            # The batched trial loader requires features from a single
+            # folder + file pattern (PSD / FOOOF / complexity each live in
+            # their own folder). Group by (folder, pattern) and merge.
+            groups_by_source: Dict[Tuple[Path, str], List[str]] = {}
+            for ft in ft_subset:
+                folder = get_feature_folder(config, ft, args.space)
+                pattern = get_file_pattern(ft, n_events_window=args.n_events_window)[0]
+                groups_by_source.setdefault((folder, pattern), []).append(ft)
+            blocks = {}
+            for (folder, pattern), fts_group in groups_by_source.items():
+                logger.info(
+                    f"Loading features (trial, batched) from {folder.name} "
+                    f"[{pattern}]: {fts_group}..."
+                )
+                blocks.update(load_all_features_batched(
+                    feature_types=fts_group,
+                    space=args.space,
+                    inout_bounds=inout_bounds,
+                    config=config,
+                    drop_bad_trials=not args.keep_bad_trials,
+                    trial_type=args.trial_type,
+                    n_events_window=args.n_events_window,
+                    inout_selection=inout_selection,
+                ))
         block_cache[key] = blocks
         return blocks
 

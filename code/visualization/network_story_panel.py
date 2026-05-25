@@ -550,11 +550,103 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
     cax_a.tick_params(labelsize=7)
 
 
-def _tier2_network_bars(gs, fig, net_dir: Path, trial: str,
+# Per-trial-type visual encoding used by the Tier-2 Esterman-style overlay.
+# Each trial-type gets a hatch + edge-color while the *fill* color stays the
+# Yeo-network palette — so the network identity (visible everywhere else in
+# the panel) is preserved while Correct / Lapse remain distinguishable.
+TRIAL_HATCH: Dict[str, str] = {
+    "correct":   "",       # solid — the baseline condition
+    "lapse":     "////",   # heavily hatched — the "interesting" condition
+    "alltrials": "....",   # dots
+    "rare":      "xxx",
+    "correct_commission": "\\\\",
+}
+TRIAL_LABEL: Dict[str, str] = {
+    "correct":   "Correct",
+    "lapse":     "Lapse",
+    "alltrials": "All trials",
+    "rare":      "Rare",
+    "correct_commission": "Correct commission",
+}
+
+
+def _draw_grouped_network_bars(
+    ax,
+    per_trial_values: Dict[str, np.ndarray],
+    per_trial_sig: Dict[str, Optional[np.ndarray]],
+    networks: Sequence[str],
+    palette: Dict[str, str],
+    title: str = "",
+    ylabel: str = "",
+    axhline: Optional[float] = 0.0,
+) -> None:
+    """Grouped bar plot: per (network, trial-type) — Esterman Fig 5 style.
+
+    Bar fill stays the Yeo-network color (visual consistency with the rest of
+    the panel); ``trial_type`` is encoded via hatch + a darker edge color.
+    """
+    trials = list(per_trial_values.keys())
+    n_trials = len(trials)
+    if n_trials == 0:
+        _placeholder(ax)
+        return
+    if not any(np.isfinite(v).any() for v in per_trial_values.values()):
+        _placeholder(ax, "no data")
+        return
+
+    xs = np.arange(len(networks))
+    total_w = 0.78
+    bar_w = total_w / n_trials
+    offsets = (np.arange(n_trials) - (n_trials - 1) / 2.0) * bar_w
+
+    for k, trial in enumerate(trials):
+        vals = per_trial_values[trial]
+        sig = per_trial_sig.get(trial)
+        colors = [palette.get(n, "#888888") for n in networks]
+        hatch = TRIAL_HATCH.get(trial, "")
+        ax.bar(
+            xs + offsets[k], vals, width=bar_w * 0.94, color=colors,
+            edgecolor="black", linewidth=0.7, hatch=hatch,
+            label=TRIAL_LABEL.get(trial, trial),
+        )
+        if sig is not None:
+            ymin, ymax = ax.get_ylim() if k == n_trials - 1 else (
+                float(np.nanmin([v.min() for v in per_trial_values.values()])),
+                float(np.nanmax([v.max() for v in per_trial_values.values()])),
+            )
+            offset_pad = 0.06 * (ymax - ymin) if ymax > ymin else 0.02
+            for x, v, s in zip(xs + offsets[k], vals, sig):
+                if s and np.isfinite(v):
+                    y = v + (offset_pad if v >= 0 else -offset_pad)
+                    ax.text(x, y, "*", ha="center",
+                            va="bottom" if v >= 0 else "top",
+                            fontsize=9, fontweight="bold")
+
+    if axhline is not None:
+        ax.axhline(axhline, color="black", linewidth=0.6, alpha=0.6)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(networks, rotation=35, ha="right", fontsize=7)
+    ax.tick_params(axis="y", labelsize=7)
+    if title:
+        ax.set_title(title, fontsize=9)
+    if ylabel:
+        ax.set_ylabel(ylabel, fontsize=8)
+
+
+def _tier2_network_bars(gs, fig, net_dir: Path, trial_types: Sequence[str],
                         correction: str, features: Sequence[str],
                         n_networks: int, alpha: float) -> None:
-    """Tier 2 — mean-t bars (top row) + signed_count_sig bars (bottom row)."""
-    bundle = _load_network_stats(net_dir, trial, correction, n_networks)
+    """Tier 2 — Esterman-style grouped bars: trial-types overlaid per network.
+
+    Row 0: mean per-parcel t per (network, trial-type).
+    Row 1: signed-count of FDR-significant parcels per (network, trial-type).
+    Bars within a network group keep the network palette color; trial-type is
+    encoded via hatch (see ``TRIAL_HATCH``).
+    """
+    bundles: Dict[str, Optional[Dict[str, np.ndarray]]] = {
+        tt: _load_network_stats(net_dir, tt, correction, n_networks)
+        for tt in trial_types
+    }
     n_feat = len(features)
     inner = GridSpecFromSubplotSpec(
         2, n_feat, subplot_spec=gs, hspace=0.65, wspace=0.30,
@@ -563,41 +655,70 @@ def _tier2_network_bars(gs, fig, net_dir: Path, trial: str,
     palette = network_palette(n_networks)
     nets = network_order(n_networks)
 
-    if bundle is None:
-        # Render n_feat × 2 placeholders so the slot keeps its space
+    if all(b is None for b in bundles.values()):
         for i in range(2):
             for j in range(n_feat):
                 ax = fig.add_subplot(inner[i, j])
                 _placeholder(ax, "no network stats")
         return
 
-    feat_idx = {f: i for i, f in enumerate(bundle["features"].tolist())}
+    # Pre-resolve feature column per bundle
+    feat_idx_per_trial: Dict[str, Dict[str, int]] = {
+        tt: ({f: i for i, f in enumerate(b["features"].tolist())} if b else {})
+        for tt, b in bundles.items()
+    }
 
+    legend_handles_done = False
     for j, feat in enumerate(features):
-        col = feat_idx.get(feat)
-        # Row 0 — mean t per network
+        # ---- Row 0: mean-t per network, grouped by trial-type ----
         ax = fig.add_subplot(inner[0, j])
-        if col is None:
+        t_vals: Dict[str, np.ndarray] = {}
+        t_sig: Dict[str, Optional[np.ndarray]] = {}
+        for tt in trial_types:
+            b = bundles[tt]
+            if b is None:
+                continue
+            col = feat_idx_per_trial[tt].get(feat)
+            if col is None:
+                continue
+            t_vals[tt] = b["tvals_mean"][col]
+            p = b["pooled_p_stouffer"][col]
+            t_sig[tt] = np.where(np.isfinite(p), p < alpha, False)
+        if not t_vals:
             _placeholder(ax, "feature absent")
         else:
-            t_per_net = bundle["tvals_mean"][col]
-            p_per_net = bundle["pooled_p_stouffer"][col]
-            sig = np.where(np.isfinite(p_per_net), p_per_net < alpha, False)
-            title = FEATURE_DISPLAY.get(feat, feat)
-            _draw_network_bar(ax, t_per_net, nets, palette,
-                              title=title if j == 0 else FEATURE_DISPLAY.get(feat, feat),
-                              ylabel="mean t" if j == 0 else "",
-                              sig_mask=sig, axhline=0.0)
-        # Row 1 — signed_count_sig (counts; can be negative)
+            _draw_grouped_network_bars(
+                ax, t_vals, t_sig, nets, palette,
+                title=FEATURE_DISPLAY.get(feat, feat),
+                ylabel="mean t (IN−OUT)" if j == 0 else "",
+                axhline=0.0,
+            )
+            if j == 0 and not legend_handles_done:
+                ax.legend(fontsize=7, frameon=False, loc="best", ncol=1)
+                legend_handles_done = True
+
+        # ---- Row 1: signed-count-sig per network, grouped by trial-type ----
         ax = fig.add_subplot(inner[1, j])
-        if col is None:
+        sc_vals: Dict[str, np.ndarray] = {}
+        sc_sig: Dict[str, Optional[np.ndarray]] = {}
+        for tt in trial_types:
+            b = bundles[tt]
+            if b is None:
+                continue
+            col = feat_idx_per_trial[tt].get(feat)
+            if col is None:
+                continue
+            sc_vals[tt] = b["signed_count_sig"][col]
+            sc_sig[tt] = None  # no per-cell sig for the count itself
+        if not sc_vals:
             _placeholder(ax, "feature absent")
         else:
-            sc = bundle["signed_count_sig"][col]
-            _draw_network_bar(ax, sc, nets, palette,
-                              title="",
-                              ylabel="signed Σ sig parcels" if j == 0 else "",
-                              axhline=0.0)
+            _draw_grouped_network_bars(
+                ax, sc_vals, sc_sig, nets, palette,
+                title="",
+                ylabel="signed Σ sig parcels" if j == 0 else "",
+                axhline=0.0,
+            )
 
 
 def _tier3_classif(gs, fig, net_dir: Path, trial: str, clf: str, cv: str,
@@ -791,6 +912,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-yeo-overlay", action="store_true",
                    help="Skip the Yeo network boundary overlay on Tier 1 "
                         "(faster, useful while iterating).")
+    p.add_argument("--overlay-trial-types", nargs="+",
+                   default=["correct", "lapse"],
+                   help="Trial-types overlaid in Tier 2 (Esterman-style "
+                        "grouped bars). Default: correct lapse. Pass a single "
+                        "trial-type to disable the overlay.")
     p.add_argument("--data-root", default=None,
                    help="Override config.paths.data_root (e.g. point at a "
                         "synthetic sandbox built by synthetic_network_bundle.py).")
@@ -809,6 +935,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.space == "sensor":
+        raise SystemExit(
+            "network_story_panel is source-only: Yeo network aggregation "
+            "requires Schaefer parcel labels (e.g. 7Networks_LH_Default_*). "
+            "Re-run with --space schaefer_400 (or another atlas with Yeo-"
+            "compatible labels)."
+        )
     config = yaml.safe_load(Path(args.config).read_text())
     data_root = Path(args.data_root) if args.data_root \
         else Path(config["paths"]["data_root"])
@@ -885,12 +1018,15 @@ def main() -> int:
         logger.exception(f"Tier 1 failed: {exc}")
         _placeholder(fig.add_subplot(gs[2]), f"Tier 1 failed: {exc}")
 
-    # ---- Tier 2
-    logger.info("Tier 2 — network-aggregated effects")
+    # ---- Tier 2 (Esterman-style overlay: trial-types grouped per network)
+    logger.info(
+        f"Tier 2 — Esterman overlay: {' vs '.join(args.overlay_trial_types)}"
+    )
     try:
         _tier2_network_bars(
             gs[3], fig, net_dir=stats_net_dir,
-            trial=args.trial_type, correction=args.stats_correction,
+            trial_types=args.overlay_trial_types,
+            correction=args.stats_correction,
             features=features, n_networks=args.yeo, alpha=args.alpha,
         )
     except Exception as exc:
