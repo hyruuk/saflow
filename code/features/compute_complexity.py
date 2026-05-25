@@ -36,7 +36,8 @@ Output format (.npz):
     - lzc_median: shape (n_epochs, n_channels)
     - entropy_permutation: shape (n_epochs, n_channels)
     - entropy_spectral: shape (n_epochs, n_channels)
-    - fractal_higuchi: shape (n_epochs, n_channels)
+    - entropy_svd: shape (n_epochs, n_channels)
+    - fractal_petrosian: shape (n_epochs, n_channels)
     - ... (all configured metrics)
     - trial_metadata: dict with trial info
     - ch_names: list of channel names

@@ -43,11 +43,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Complexity metrics excluded from the viz: entropy_sample and
-# entropy_approximate come out all-NaN on this dataset, so their topomaps stay
-# empty. Drop them from the rendered family (they remain in COMPLEXITY_ORDER
-# for sorting / other consumers).
-COMPLEXITY_VIZ_SKIP = {"entropy_sample", "entropy_approximate"}
+# Broken complexity metrics already pruned from COMPLEXITY_ORDER (see
+# loaders.py); kept as a guard in case feature names re-appear elsewhere.
+COMPLEXITY_VIZ_SKIP: set = set()
 
 FEATURE_SETS = {
     "psds": [f"psd_{b}" for b in BAND_ORDER],

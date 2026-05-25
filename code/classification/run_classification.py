@@ -46,8 +46,10 @@ from sklearn.model_selection import (
 from tqdm import tqdm
 
 # LOGO CV + label permutation routinely produces single-class test folds where
-# ROC AUC is undefined; the NaN return is handled downstream. Silence the warning
-# globally so it doesn't balloon slurm logs into hundreds of MB.
+# ROC AUC is undefined; the NaN return is handled downstream. The actual
+# suppression happens inside _score_one_spatial / _compute_metrics_one_spatial /
+# run_multivariate via warnings.catch_warnings — joblib worker processes don't
+# reliably inherit this module-level filter. Kept here only for the main process.
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 from code.classification.classifiers import get_classifier
@@ -103,36 +105,17 @@ def inout_bounds_to_string(bounds: Tuple[int, int]) -> str:
 # ---------------------------------------------------------------------------
 
 FOOOF_FEATURES = ["fooof_exponent", "fooof_offset", "fooof_r_squared"]
+# entropy_sample, entropy_approximate, fractal_higuchi, fractal_katz, fractal_dfa
+# are excluded — they come out ~98.6% NaN at the source on this dataset (antropy
+# raises inside compute_complexity_for_channel). Removed from config.yaml so
+# future runs won't compute them; old npz files still carry the keys but nothing
+# in the pipeline asks for them.
 COMPLEXITY_METRICS = [
     "lzc_median",
     "entropy_permutation",
     "entropy_spectral",
-    "entropy_sample",
-    "entropy_approximate",
     "entropy_svd",
-    "fractal_higuchi",
     "fractal_petrosian",
-    "fractal_katz",
-    "fractal_dfa",
-]
-
-# These metrics come out 97-99.8% NaN at the source on this dataset (every
-# subject), because their antropy implementations raise inside
-# compute_complexity_for_channel and the caught exception writes NaN. They are
-# kept in COMPLEXITY_METRICS so the feature loader still recognises the npz
-# keys, but excluded from shortcut expansion so 'all'/'complexity' produce
-# usable feature sets. Fix the extraction first (see compute_complexity.py)
-# before re-adding them here.
-BROKEN_COMPLEXITY_METRICS = {
-    "entropy_sample",
-    "entropy_approximate",
-    "fractal_higuchi",
-    "fractal_katz",
-    "fractal_dfa",
-}
-
-USABLE_COMPLEXITY_METRICS = [
-    m for m in COMPLEXITY_METRICS if m not in BROKEN_COMPLEXITY_METRICS
 ]
 
 
@@ -143,8 +126,7 @@ def expand_feature_set(name: str, config: Dict) -> List[str]:
         psds            -> psd_<band> for each band in config.features.frequency_bands
         psds_corrected  -> psd_corrected_<band> for each band
         fooof           -> fooof_exponent, fooof_offset, fooof_r_squared
-        complexity      -> complexity_<metric> for usable complexity metrics
-                           (BROKEN_COMPLEXITY_METRICS are excluded — see above)
+        complexity      -> complexity_<metric> for each entry in COMPLEXITY_METRICS
         all             -> union of fooof + psds + psds_corrected + complexity
     """
     bands = list(config.get("features", {}).get("frequency_bands", {}).keys())
@@ -155,13 +137,13 @@ def expand_feature_set(name: str, config: Dict) -> List[str]:
     if name == "fooof":
         return list(FOOOF_FEATURES)
     if name == "complexity":
-        return [f"complexity_{m}" for m in USABLE_COMPLEXITY_METRICS]
+        return [f"complexity_{m}" for m in COMPLEXITY_METRICS]
     if name == "all":
         return (
             list(FOOOF_FEATURES)
             + [f"psd_{b}" for b in bands]
             + [f"psd_corrected_{b}" for b in bands]
-            + [f"complexity_{m}" for m in USABLE_COMPLEXITY_METRICS]
+            + [f"complexity_{m}" for m in COMPLEXITY_METRICS]
         )
     raise ValueError(
         f"Unknown feature-set '{name}'. Choose: psds, psds_corrected, fooof, "
@@ -220,7 +202,6 @@ def load_classification_data(
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
     trial_type: str = "alltrials",
-    zoning: str = "per-subject",
     n_events_window: int = 1,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
@@ -241,9 +222,6 @@ def load_classification_data(
             ``select_epoch``). One of ``alltrials`` (default, matches
             cc_saflow's main analysis), ``correct``, ``rare``, ``lapse``,
             or ``correct_commission`` (saflow's previous single-trial default).
-        zoning: how IN/OUT VTC percentiles are computed. ``per-subject``
-            pools all of a subject's epochs (saflow's previous behaviour),
-            ``per-run`` computes bounds within each run (matches cc_saflow).
 
     Returns:
         X        : (n_trials, n_spatial)
@@ -288,7 +266,7 @@ def load_classification_data(
     per_subject: Dict[str, Dict[str, int]] = {}
     bad_metadata_present = False
 
-    for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading", unit="subj")):
+    for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading", unit="subj", disable=None)):
         subj_dir = feature_root / f"sub-{subject}"
         if not subj_dir.exists():
             continue
@@ -297,7 +275,7 @@ def load_classification_data(
         subj_task = []
         subj_inc_task: List[List[np.ndarray]] = []  # length-N per-epoch task arrays
         subj_bad: List[np.ndarray] = []
-        subj_run_idx: List[np.ndarray] = []  # per-epoch run index (for per-run zoning)
+        subj_run_idx: List[np.ndarray] = []  # per-epoch run index
         run_metas: List[RunMeta] = []
 
         for run_pos, run in enumerate(runs):
@@ -374,13 +352,11 @@ def load_classification_data(
             bad_metadata_present = True
 
         # Window-level IN/OUT zones from the configured selection strategy.
-        # ``per-run`` matches cc_saflow (bounds within each run); ``per-subject``
-        # pools all runs for this subject (saflow default).
+        # Bounds are computed per-run (matches cc_saflow).
         per_run_zones = compute_inout_zones(
             run_metas,
             strategy=inout_selection,
             inout_bounds=inout_bounds,
-            zoning=zoning,
         )
         in_zone, out_zone = concat_zones(per_run_zones)
 
@@ -451,7 +427,6 @@ def load_classification_data(
         "space": space,
         "inout_bounds": list(inout_bounds),
         "trial_type": trial_type,
-        "zoning": zoning,
         "n_subjects": int(len(np.unique(groups))),
         "n_trials": int(len(y)),
         "n_spatial": int(X.shape[1]),
@@ -483,7 +458,6 @@ def load_combined_features(
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
     trial_type: str = "alltrials",
-    zoning: str = "per-subject",
     n_events_window: int = 1,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
@@ -512,7 +486,6 @@ def load_combined_features(
             subjects=subjects,
             drop_bad_trials=drop_bad_trials,
             trial_type=trial_type,
-            zoning=zoning,
             n_events_window=n_events_window,
             inout_selection=inout_selection,
         )
@@ -542,7 +515,6 @@ def load_combined_features(
         "space": space,
         "inout_bounds": list(inout_bounds),
         "trial_type": trial_type,
-        "zoning": zoning,
         "n_subjects": int(len(np.unique(groups_ref))),
         "n_trials": int(len(y_ref)),
         "n_spatial": int(X.shape[1]),
@@ -683,9 +655,14 @@ def _score_one_spatial(clf, X_slice, y, cv, groups, scoring="roc_auc"):
     if _is_group_cv(cv) and len(np.unique(groups)) < 2:
         return float("nan")
     kw = {"groups": groups} if _is_group_cv(cv) else {}
-    scores = cross_val_score(
-        clf, X_slice, y, cv=cv, scoring=scoring, n_jobs=1, **kw
-    )
+    # Suppress inside the worker process — the module-level filter at import
+    # time doesn't reach loky workers, so without this the warning fires on
+    # every single-class permuted fold (millions of repeats in slurm logs).
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UndefinedMetricWarning)
+        scores = cross_val_score(
+            clf, X_slice, y, cv=cv, scoring=scoring, n_jobs=1, **kw
+        )
     return float(np.mean(scores))
 
 
@@ -722,18 +699,18 @@ def _compute_metrics_one_spatial(clf_factory, X_slice, y, cv, groups
 
     kw = {"groups": groups} if _is_group_cv(cv) else {}
     try:
-        cv_res = cross_validate(
-            clf_factory(), X_slice, y, cv=cv,
-            scoring=list(_AUX_METRICS), n_jobs=1, **kw,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UndefinedMetricWarning)
+            cv_res = cross_validate(
+                clf_factory(), X_slice, y, cv=cv,
+                scoring=list(_AUX_METRICS), n_jobs=1, **kw,
+            )
+            y_pred = cross_val_predict(
+                clf_factory(), X_slice, y, cv=cv, n_jobs=1, **kw,
+            )
         out: Dict[str, object] = {
             m: float(np.mean(cv_res[f"test_{m}"])) for m in _AUX_METRICS
         }
-        # Pool predictions across folds for a single representative CM.
-        # (Per-fold CMs aren't useful — most folds are <50 trials.)
-        y_pred = cross_val_predict(
-            clf_factory(), X_slice, y, cv=cv, n_jobs=1, **kw,
-        )
         labels = np.unique(y)
         cm = _sk_confusion_matrix(y, y_pred, labels=labels)
         if cm.shape != (2, 2):
@@ -857,7 +834,7 @@ def run_univariate_with_tmax(
     rng = np.random.default_rng(seed)
     perm_scores = np.zeros((n_permutations, n_spatial), dtype=float)
 
-    for p in tqdm(range(n_permutations), desc="permutations", unit="perm"):
+    for p in tqdm(range(n_permutations), desc="permutations", unit="perm", disable=None):
         y_perm = _permute_y_within_groups(y, groups, rng)
         scores_p = Parallel(n_jobs=n_jobs)(
             delayed(_score_one_spatial)(
@@ -949,16 +926,18 @@ def run_multivariate(
 
     clf = clf_factory()
     kw = {"groups": groups} if _is_group_cv(cv) else {}
-    score, perm_scores, pvalue = permutation_test_score(
-        clf,
-        X,
-        y,
-        cv=cv,
-        n_permutations=n_permutations,
-        scoring=scoring,
-        n_jobs=-1,
-        **kw,
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UndefinedMetricWarning)
+        score, perm_scores, pvalue = permutation_test_score(
+            clf,
+            X,
+            y,
+            cv=cv,
+            n_permutations=n_permutations,
+            scoring=scoring,
+            n_jobs=-1,
+            **kw,
+        )
     logger.info(
         f"Multivariate: score={score:.3f}, p-value={pvalue:.4f} "
         f"(perm mean={np.mean(perm_scores):.3f})"
@@ -1361,16 +1340,6 @@ def main():
         ),
     )
     parser.add_argument(
-        "--zoning",
-        default="per-run",
-        choices=["per-run", "per-subject"],
-        help=(
-            "How IN/OUT VTC percentile bounds are computed. 'per-run' "
-            "(default, matches cc_saflow) computes within each run; "
-            "'per-subject' pools all runs (saflow's previous behaviour)."
-        ),
-    )
-    parser.add_argument(
         "--standardize",
         default="auto",
         choices=["auto", "none", "per-subject"],
@@ -1609,7 +1578,6 @@ def main():
                     config=config,
                     drop_bad_trials=not args.keep_bad_trials,
                     trial_type=args.trial_type,
-                    zoning=args.zoning,
                     n_events_window=args.n_events_window,
                     inout_selection=inout_selection,
                 )
@@ -1667,7 +1635,6 @@ def main():
                             drop_bad_trials=not args.keep_bad_trials,
                             n_jobs=args.n_jobs,
                             trial_type=args.trial_type,
-                            zoning=args.zoning,
                             n_events_window=args.n_events_window,
                             inout_selection=inout_selection,
                         )
@@ -1680,7 +1647,6 @@ def main():
                             config=config,
                             drop_bad_trials=not args.keep_bad_trials,
                             trial_type=args.trial_type,
-                            zoning=args.zoning,
                             n_events_window=args.n_events_window,
                             inout_selection=inout_selection,
                         )

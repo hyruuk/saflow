@@ -324,7 +324,6 @@ def parse_args() -> argparse.Namespace:
                    choices=["per-subject", "none"])
     p.add_argument("--no-balance", action="store_true")
     p.add_argument("--no-per-feature-scale", action="store_true")
-    p.add_argument("--zoning", default="per-subject")
     p.add_argument("--n-events-window", type=int, default=1)
     p.add_argument("--n-jobs", type=int, default=-1)
     p.add_argument("--seed", type=int, default=42)
@@ -409,7 +408,6 @@ def main() -> None:
                 subjects=subjects,
                 drop_bad_trials=not args.keep_bad_trials,
                 trial_type=trial,
-                zoning=args.zoning,
                 n_events_window=args.n_events_window,
                 inout_selection=inout_selection,
             )

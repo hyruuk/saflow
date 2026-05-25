@@ -19,7 +19,6 @@ echo "  Importance:      {{ importance }}"
 echo "  Analysis-level:  {{ analysis_level }}"
 echo "  Permutations:    {{ n_permutations }}"
 echo "  Standardize:     {{ standardize }}"
-echo "  Zoning:          {{ zoning }}"
 echo "  n_events_window: {{ n_events_window }}"
 {% if n_chunks and n_chunks > 1 %}echo "  Chunk:           {{ chunk_idx }} / {{ n_chunks }}"
 {% endif %}echo ""
@@ -36,7 +35,6 @@ python -m code.classification.run_multifeature \
     --n-jobs {{ n_jobs }} \
     --seed {{ seed }} \
     --trial-type {{ trial_type }} \
-    --zoning {{ zoning }} \
     --n-events-window {{ n_events_window }} \
     --standardize {{ standardize }} \
     --analysis-level {{ analysis_level }} \

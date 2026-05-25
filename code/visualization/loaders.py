@@ -53,9 +53,8 @@ BAND_ORDER = ["delta", "theta", "alpha", "lobeta", "hibeta",
               "gamma1", "gamma2", "gamma3"]
 COMPLEXITY_ORDER = [
     "lzc_median",
-    "entropy_permutation", "entropy_spectral", "entropy_sample",
-    "entropy_approximate", "entropy_svd",
-    "fractal_higuchi", "fractal_petrosian", "fractal_katz", "fractal_dfa",
+    "entropy_permutation", "entropy_spectral", "entropy_svd",
+    "fractal_petrosian",
 ]
 FOOOF_ORDER = ["exponent", "offset", "r_squared"]
 

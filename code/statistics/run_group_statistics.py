@@ -206,7 +206,6 @@ def load_all_features_batched(
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
     trial_type: str = "alltrials",
-    zoning: str = "per-subject",
     n_events_window: int = 1,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
@@ -291,7 +290,7 @@ def load_all_features_batched(
     bad_metadata_present = False
 
     for subj_idx, subject in enumerate(
-        tqdm(subjects, desc="Loading subjects", unit="subj")
+        tqdm(subjects, desc="Loading subjects", unit="subj", disable=None)
     ):
         subj_dir = feature_folder / f"sub-{subject}"
         if not subj_dir.exists():
@@ -399,15 +398,13 @@ def load_all_features_batched(
             bad_metadata_present = True
 
         # Window-level IN/OUT zones from the configured selection strategy.
-        # ``per-run`` matches cc_saflow (bounds within each run); ``per-subject``
-        # pools across runs (saflow's prior behaviour). Bounds are computed on
-        # ALL trials (including bads) so the percentile cut stays anchored even
-        # though noisy trials never enter the t-test.
+        # Bounds are computed per-run (matches cc_saflow), on ALL trials
+        # including bads so the percentile cut stays anchored even though
+        # noisy trials never enter the t-test.
         per_run_zones = compute_inout_zones(
             run_metas,
             strategy=inout_selection,
             inout_bounds=inout_bounds,
-            zoning=zoning,
         )
         in_zone, out_zone = concat_zones(per_run_zones)
 
@@ -503,7 +500,6 @@ def load_all_features_batched(
             "space": space,
             "inout_bounds": inout_bounds,
             "trial_type": trial_type,
-            "zoning": zoning,
             "n_subjects": int(len(np.unique(groups))),
             "n_trials": int(len(y)),
             "n_in": total_in,
@@ -540,13 +536,12 @@ def load_all_features(
     subjects: Optional[List[str]] = None,
     drop_bad_trials: bool = True,
     trial_type: str = "alltrials",
-    zoning: str = "per-subject",
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Single-feature wrapper around :func:`load_all_features_batched`.
 
     Behaviour matches the batched loader (drops trials flagged ``bad_ar2``
-    by default, computes per-subject IN/OUT thresholds on all trials).
+    by default, computes per-run IN/OUT thresholds on all trials).
     """
     blocks = load_all_features_batched(
         feature_types=[feature_type],
@@ -556,7 +551,6 @@ def load_all_features(
         subjects=subjects,
         drop_bad_trials=drop_bad_trials,
         trial_type=trial_type,
-        zoning=zoning,
         inout_selection=inout_selection,
     )
     return blocks[feature_type]
@@ -605,7 +599,7 @@ def _load_all_features_legacy_unused(
     total_in, total_out = 0, 0
     input_git_hashes = set()  # Track git hashes of input files for reproducibility
 
-    for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading subjects", unit="subj")):
+    for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading subjects", unit="subj", disable=None)):
         subj_dir = feature_folder / f"sub-{subject}"
         if not subj_dir.exists():
             logger.debug(f"Subject folder not found: {subj_dir}")
@@ -1050,7 +1044,7 @@ def apply_corrections(
 
             max_t_perm = Parallel(n_jobs=n_jobs)(
                 delayed(_single_permutation)(seed)
-                for seed in tqdm(range(n_permutations), desc="Permutations", unit="perm")
+                for seed in tqdm(range(n_permutations), desc="Permutations", unit="perm", disable=None)
             )
             max_t_perm = np.array(max_t_perm)
 
@@ -1314,15 +1308,6 @@ def main():
         ),
     )
     parser.add_argument(
-        "--zoning",
-        default="per-run",
-        choices=["per-run", "per-subject"],
-        help=(
-            "How IN/OUT VTC percentile bounds are computed. 'per-run' "
-            "(default, matches cc_saflow); 'per-subject' pools all runs."
-        ),
-    )
-    parser.add_argument(
         "--n-events-window",
         type=int,
         default=8,
@@ -1409,7 +1394,6 @@ def main():
                 drop_bad_trials=not args.keep_bad_trials,
                 n_jobs=args.n_jobs,
                 trial_type=args.trial_type,
-                zoning=args.zoning,
                 n_events_window=args.n_events_window,
                 inout_selection=inout_selection,
             )
@@ -1422,7 +1406,6 @@ def main():
                 config=config,
                 drop_bad_trials=not args.keep_bad_trials,
                 trial_type=args.trial_type,
-                zoning=args.zoning,
                 n_events_window=args.n_events_window,
                 inout_selection=inout_selection,
             )

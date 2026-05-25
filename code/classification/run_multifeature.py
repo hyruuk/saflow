@@ -349,7 +349,7 @@ def run_per_axis(
     logger.info("Running permutations with shared label shuffles…")
     rng = np.random.default_rng(seed)
     perm_scores = np.zeros((n_permutations, n_iters), dtype=float)
-    for p in tqdm(range(n_permutations), desc="permutations", unit="perm"):
+    for p in tqdm(range(n_permutations), desc="permutations", unit="perm", disable=None):
         y_perm = _permute_y_within_groups(y, groups, rng)
         scores_p = Parallel(n_jobs=n_jobs)(
             delayed(_score_slice)(
@@ -473,7 +473,7 @@ def run_per_cell(
     perm_scores = np.zeros(
         (n_permutations, len(spatial_indices), n_features), dtype=float
     )
-    for p in tqdm(range(n_permutations), desc="permutations", unit="perm"):
+    for p in tqdm(range(n_permutations), desc="permutations", unit="perm", disable=None):
         y_perm = _permute_y_within_groups(y, groups, rng)
         scores_p = Parallel(n_jobs=n_jobs)(
             delayed(_score_slice)(
@@ -815,8 +815,6 @@ def main():
         "--trial-type", default="alltrials",
         choices=["alltrials", "correct", "rare", "lapse", "correct_commission"],
     )
-    parser.add_argument("--zoning", default="per-run",
-                        choices=["per-run", "per-subject"])
     parser.add_argument("--n-events-window", type=int, default=8)
     parser.add_argument(
         "--subjects", nargs="+", default=None,
@@ -908,7 +906,6 @@ def main():
             subjects=args.subjects,
             drop_bad_trials=not args.keep_bad_trials,
             trial_type=args.trial_type,
-            zoning=args.zoning,
             n_events_window=args.n_events_window,
             inout_selection=inout_selection,
         )
@@ -925,7 +922,6 @@ def main():
             subjects=args.subjects,
             drop_bad_trials=not args.keep_bad_trials,
             trial_type=args.trial_type,
-            zoning=args.zoning,
             n_events_window=args.n_events_window,
             inout_selection=inout_selection,
         )

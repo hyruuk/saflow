@@ -50,10 +50,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# entropy_sample/approximate and fractal_higuchi/katz/dfa are ~98.6% NaN at
+# the source on this dataset (antropy implementations raise inside
+# compute_complexity_for_channel) — excluded everywhere downstream.
 METRICS = [
-    "lzc_median", "entropy_permutation", "entropy_spectral",
-    "entropy_sample", "entropy_approximate", "entropy_svd",
-    "fractal_higuchi", "fractal_petrosian", "fractal_katz", "fractal_dfa"
+    "lzc_median", "entropy_permutation", "entropy_spectral", "entropy_svd",
+    "fractal_petrosian",
 ]
 
 
@@ -97,7 +99,6 @@ def compute_subject_aggregates(
     bad_trial_rule: str = "ar2",
     interp_reject_threshold: int = 0,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
-    zoning: str = "per-subject",
 ) -> Tuple[
     Optional[Dict[str, np.ndarray]],
     Optional[Dict[str, np.ndarray]],
@@ -164,7 +165,6 @@ def compute_subject_aggregates(
         run_metas,
         strategy=inout_selection,
         inout_bounds=inout_bounds,
-        zoning=zoning,
     )
     in_zone, out_zone = concat_zones(per_run_zones)
 

@@ -155,7 +155,6 @@ def load_subject_spectrum_features(
     drop_bad_trials: bool = True,
     n_jobs: int = -1,
     trial_type: str = "alltrials",
-    zoning: str = "per-subject",
     n_events_window: int = 8,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]]:
@@ -215,14 +214,14 @@ def load_subject_spectrum_features(
     desc_suffix = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
 
     for subj_idx, subject in enumerate(
-        tqdm(subjects, desc="Loading subjects (subject-spectrum)", unit="subj")
+        tqdm(subjects, desc="Loading subjects (subject-spectrum)", unit="subj", disable=None)
     ):
         subj_dir = welch_root / f"sub-{subject}"
         if not subj_dir.exists():
             continue
 
         # First pass: collect per-run metadata so IN/OUT selection can be
-        # computed once across all of the subject's runs (matches Path-2 default).
+        # computed for each of the subject's runs.
         all_task: List[np.ndarray] = []
         all_inc_task: List[List[np.ndarray]] = []
         all_bad: List[np.ndarray] = []
@@ -273,7 +272,6 @@ def load_subject_spectrum_features(
             run_metas,
             strategy=inout_selection,
             inout_bounds=inout_bounds,
-            zoning=zoning,
         )
 
         # Walk runs: average every good IN / OUT epoch PSD *within each run*,
@@ -511,7 +509,6 @@ def load_channel_spectra(
     bad_trial_rule: str = "ar2",
     interp_reject_threshold: int = 0,
     trial_type: str = "alltrials",
-    zoning: str = "per-subject",
     n_events_window: int = 8,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
 ) -> Dict[str, Any]:
@@ -535,7 +532,6 @@ def load_channel_spectra(
             statistics run used so the spectra line up with the stats map).
         interp_reject_threshold: extra n_interp-based rejection (0 disables).
         trial_type: window/trial selection passed to ``select_window_mask``.
-        zoning: 'per-subject' (pooled VTC thresholds) or 'per-run'.
         n_events_window: trials per welch window (selects the desc suffix).
 
     Returns:
@@ -566,13 +562,13 @@ def load_channel_spectra(
     freqs_full: Optional[np.ndarray] = None
     freqs_fit: Optional[np.ndarray] = None
 
-    for subject in tqdm(subjects, desc="Loading subjects (channel spectra)", unit="subj"):
+    for subject in tqdm(subjects, desc="Loading subjects (channel spectra)", unit="subj", disable=None):
         subj_dir = welch_root / f"sub-{subject}"
         if not subj_dir.exists():
             continue
 
         # First pass: collect per-run metadata so the central IN/OUT selector
-        # can compute zones once across the subject (matches Path-2 default).
+        # can compute zones for each run.
         all_task: List[np.ndarray] = []
         all_inc_task: List[List[np.ndarray]] = []
         all_bad: List[np.ndarray] = []
@@ -608,7 +604,6 @@ def load_channel_spectra(
             run_metas,
             strategy=inout_selection,
             inout_bounds=inout_bounds,
-            zoning=zoning,
         )
 
         # Second pass: average every good IN / OUT epoch at the selected

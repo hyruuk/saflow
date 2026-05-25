@@ -6,10 +6,10 @@ percentiles (default ``[25, 75]``):
 * ``"strict"``  (default) — a window is IN only when **every** constituent trial
   has its per-trial ``VTC_filtered`` below the low percentile threshold; OUT only
   when every trial is at or above the high percentile threshold. Thresholds are
-  pooled across the subject (or per-run, per ``zoning``). MID / mixed windows
-  are excluded from both contrasts. Conceptually clean (every trial in an IN
-  window really is IN) at the cost of ~halving the per-condition window count
-  vs. the boxcar-mean strategies.
+  always computed **per-run** (matches cc_saflow). MID / mixed windows are
+  excluded from both contrasts. Conceptually clean (every trial in an IN window
+  really is IN) at the cost of ~halving the per-condition window count vs. the
+  boxcar-mean strategies.
 
 * ``"lenient"`` — same per-trial classification, but a window passes as IN when
   it contains at least one IN trial and **no OUT trial** (the rest may be MID);
@@ -173,21 +173,14 @@ def _per_trial_class(values: np.ndarray, lo: float, hi: float) -> np.ndarray:
 def _window_mean_zones(
     per_run: Sequence[RunMeta],
     inout_bounds: Tuple[float, float],
-    zoning: str,
     attr: str,
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
     """IN/OUT zones based on a per-window scalar (vtcfilt / vtcraw)."""
     lo_pct, hi_pct = float(inout_bounds[0]), float(inout_bounds[1])
-    if zoning == "per-subject":
-        pooled = np.concatenate(
-            [np.asarray(getattr(rm, attr), dtype=float).ravel() for rm in per_run]
-        )
-        lo, hi = _bounds_from(pooled, lo_pct, hi_pct)
     out: List[Tuple[np.ndarray, np.ndarray]] = []
     for rm in per_run:
         v = np.asarray(getattr(rm, attr), dtype=float)
-        if zoning == "per-run":
-            lo, hi = _bounds_from(v, lo_pct, hi_pct)
+        lo, hi = _bounds_from(v, lo_pct, hi_pct)
         if np.isnan(lo) or np.isnan(hi):
             out.append((np.zeros(rm.n_windows, dtype=bool),
                         np.zeros(rm.n_windows, dtype=bool)))
@@ -201,25 +194,16 @@ def _window_mean_zones(
 def _purity_zones(
     per_run: Sequence[RunMeta],
     inout_bounds: Tuple[float, float],
-    zoning: str,
     strategy: str,
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
     """IN/OUT zones via per-trial VTC_filtered classification + window purity."""
     lo_pct, hi_pct = float(inout_bounds[0]), float(inout_bounds[1])
-    if zoning == "per-subject":
-        pooled = np.concatenate(
-            [np.asarray(np.concatenate([np.asarray(arr, dtype=float)
-                                        for arr in rm.included_VTC]), dtype=float)
-             for rm in per_run]
-        )
-        lo, hi = _bounds_from(pooled, lo_pct, hi_pct)
 
     zones: List[Tuple[np.ndarray, np.ndarray]] = []
     for rm in per_run:
-        if zoning == "per-run":
-            flat = np.concatenate([np.asarray(arr, dtype=float)
-                                   for arr in rm.included_VTC])
-            lo, hi = _bounds_from(flat, lo_pct, hi_pct)
+        flat = np.concatenate([np.asarray(arr, dtype=float)
+                               for arr in rm.included_VTC])
+        lo, hi = _bounds_from(flat, lo_pct, hi_pct)
         if np.isnan(lo) or np.isnan(hi):
             zones.append((np.zeros(rm.n_windows, dtype=bool),
                           np.zeros(rm.n_windows, dtype=bool)))
@@ -251,9 +235,11 @@ def compute_inout_zones(
     *,
     strategy: str = DEFAULT_STRATEGY,
     inout_bounds: Tuple[float, float] = (25.0, 75.0),
-    zoning: str = "per-subject",
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
     """Compute per-run window-level (in_zone, out_zone) bool masks.
+
+    Thresholds are always computed **per-run** (matches cc_saflow): each run's
+    VTC distribution defines its own IN/OUT bounds.
 
     Args:
         per_run: Per-run :class:`RunMeta` records, in the order matching the
@@ -261,25 +247,21 @@ def compute_inout_zones(
         strategy: One of ``"strict"`` / ``"lenient"`` / ``"vtcfilt"`` / ``"vtcraw"``.
         inout_bounds: ``(low_pct, high_pct)`` percentile thresholds (default
             ``(25, 75)``).
-        zoning: ``"per-subject"`` pools thresholds across all runs (default);
-            ``"per-run"`` computes thresholds within each run.
 
     Returns:
         ``[(in_zone, out_zone), ...]``, one tuple per run, each array of length
         ``rm.n_windows``. Combine with task-type and bad-trial masks downstream.
     """
     strategy = validate_strategy(strategy)
-    if zoning not in ("per-subject", "per-run"):
-        raise ValueError(f"zoning must be 'per-subject' or 'per-run', got {zoning!r}")
 
     if strategy in _WINDOW_MEAN_STRATEGIES:
         attr = "window_vtc_mean" if strategy == "vtcfilt" else "window_vtc_raw_mean"
         _check_field(per_run, attr, strategy)
-        return _window_mean_zones(per_run, inout_bounds, zoning, attr)
+        return _window_mean_zones(per_run, inout_bounds, attr)
 
     if strategy in _PURITY_STRATEGIES:
         _check_field(per_run, "included_VTC", strategy)
-        return _purity_zones(per_run, inout_bounds, zoning, strategy)
+        return _purity_zones(per_run, inout_bounds, strategy)
 
     raise AssertionError(f"unreachable: strategy={strategy!r}")  # pragma: no cover
 
