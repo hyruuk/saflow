@@ -814,7 +814,7 @@ def run_statistical_test(
     y: np.ndarray,
     groups: np.ndarray,
     test_type: str = "paired_ttest",
-    n_permutations: int = 10000,
+    n_permutations: int = 1024,
     single_trials: bool = False,
     aggregate: str = "median",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1358,8 +1358,13 @@ def main():
     parser.add_argument(
         "--n-permutations",
         type=int,
-        default=10000,
-        help="Number of permutations for permutation test",
+        default=1024,
+        help=(
+            "Number of permutations for permutation-based corrections. "
+            "Default 1024 matches MNE's cluster-permutation convention and "
+            "is plenty for stable α=0.05 tails. Bump to 5000-10000 only if "
+            "you use --correction tmax and need tighter tails."
+        ),
     )
     parser.add_argument(
         "--alpha",

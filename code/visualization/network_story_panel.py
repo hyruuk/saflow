@@ -791,6 +791,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-yeo-overlay", action="store_true",
                    help="Skip the Yeo network boundary overlay on Tier 1 "
                         "(faster, useful while iterating).")
+    p.add_argument("--data-root", default=None,
+                   help="Override config.paths.data_root (e.g. point at a "
+                        "synthetic sandbox built by synthetic_network_bundle.py).")
     p.add_argument("--output", default=None)
     args = p.parse_args()
 
@@ -807,7 +810,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     config = yaml.safe_load(Path(args.config).read_text())
-    data_root = Path(config["paths"]["data_root"])
+    data_root = Path(args.data_root) if args.data_root \
+        else Path(config["paths"]["data_root"])
     inout_bounds = config["analysis"]["inout_bounds"]
     inout_str = f"{inout_bounds[0]}{inout_bounds[1]}"
     inout_selection = args.inout_selection or str(

@@ -879,7 +879,7 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 
 @task
 def stats(c, features="all", space="both", test="paired_ttest",
-          correction="cluster", alpha=0.05, n_permutations=10000,
+          correction="cluster", alpha=0.05, n_permutations=1024,
           n_jobs=1, analysis_level="both", aggregate="median", visualize=False,
           continue_on_error=True,
           trial_type="all", n_events_window=8,
@@ -2042,7 +2042,7 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
 
 def _stats_slurm(c, feature_list, spaces, trial_types,
                  test="paired_ttest", correction="cluster", alpha=0.05,
-                 n_permutations=10000, n_jobs=1, analysis_level="both",
+                 n_permutations=1024, n_jobs=1, analysis_level="both",
                  aggregate="median", visualize=False,
                  n_events_window=8,
                  slurm_time=None, slurm_mem=None, slurm_cpus=None,
