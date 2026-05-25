@@ -184,6 +184,15 @@ def _load_stats(path: Path, correction: str) -> Tuple[np.ndarray, Optional[np.nd
     with np.load(path, allow_pickle=True) as npz:
         tvals = np.asarray(npz["tvals"]).flatten()
         pvals = _pick_pvals(npz, PVAL_KEYS[correction])
+        if pvals is None:
+            available = [k for k in npz.files if k.startswith("pvals")]
+            logger.warning(
+                "Stats file %s has no pval key for correction=%r "
+                "(tried %s); available pval keys in file: %s. "
+                "No mask will be drawn — re-run `invoke analysis.stats` to "
+                "populate the requested correction.",
+                path.name, correction, PVAL_KEYS[correction], available,
+            )
     return tvals, pvals
 
 
@@ -191,6 +200,14 @@ def _load_classif(path: Path, correction: str) -> Tuple[np.ndarray, Optional[np.
     with np.load(path, allow_pickle=True) as npz:
         observed = np.asarray(npz["observed"]).flatten()
         pvals = _pick_pvals(npz, PVAL_KEYS[correction])
+        if pvals is None:
+            available = [k for k in npz.files if k.startswith("pvals")]
+            logger.warning(
+                "Classif file %s has no pval key for correction=%r "
+                "(tried %s); available pval keys in file: %s. "
+                "No mask will be drawn.",
+                path.name, correction, PVAL_KEYS[correction], available,
+            )
     return observed, pvals
 
 
