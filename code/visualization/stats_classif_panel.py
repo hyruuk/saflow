@@ -24,9 +24,14 @@ uses the ``pvals_fdr_bh`` field (Benjamini-Hochberg
 over the 270 sensors of that feature). Old stats files used the key
 ``pvals_corrected_fdr`` for the same quantity; both are accepted.
 
-Selection of the FOOOF spectra location: strongest exponent IN-vs-OUT
-difference (i.e. largest |t-value| from the FOOOF-exponent stats map),
-regardless of p-value significance.
+Selection of the spectra (panels C–F): the sensor is the one with the
+largest |group t| among group-significant sensors on the FOOOF-exponent
+map (falling back to the overall |t|-max if no sensor survives
+correction). By default (``--spectra=average``) the panels show the
+group mean ± SEM across all subjects at that sensor. With
+``--spectra=topsubject``, the panels show one subject — the one whose
+individual IN-vs-OUT FOOOF-exponent difference at that sensor is
+largest — as single lines (no SEM band).
 
 Output: reports/figures/stats_classif_panel_space-<space>_type-<trial>_correction-<corr>.png
 """
@@ -326,14 +331,19 @@ def _mean_sem(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
                    arr_out: np.ndarray, show_legend: bool = False,
                    logx: bool = True, axhline_zero: bool = False):
+    # With a single subject (n_rows < 2) the SEM is undefined — just draw
+    # the line. ddof=1 with n=1 would emit a RuntimeWarning and fill_between
+    # would silently no-op on NaN bands.
+    single = min(arr_in.shape[0], arr_out.shape[0]) < 2
     for arr, color, label in (
         (arr_in, COLOR_IN, "IN"),
         (arr_out, COLOR_OUT, "OUT"),
     ):
         mean, sem = _mean_sem(arr)
         ax.plot(freqs, mean, color=color, lw=1.6, label=label)
-        ax.fill_between(freqs, mean - sem, mean + sem,
-                        color=color, alpha=0.22, lw=0)
+        if not single:
+            ax.fill_between(freqs, mean - sem, mean + sem,
+                            color=color, alpha=0.22, lw=0)
     if logx:
         ax.set_xscale("log")
     if axhline_zero:
@@ -401,6 +411,14 @@ def main() -> int:
                         help="(Deprecated) alias for --classif-cv.")
 
     parser.add_argument("--n-events-window", type=int, default=8)
+    parser.add_argument(
+        "--spectra", default="average",
+        choices=["topsubject", "average"],
+        help="Panels C-F content. 'average' (default): group mean ± SEM "
+             "across all subjects at the group-best sensor. 'topsubject': "
+             "the single subject with the strongest IN-vs-OUT exponent "
+             "contrast at that sensor — one line per condition, no SEM band.",
+    )
     parser.add_argument("--inout-selection", default=None,
                         choices=["strict", "lenient", "vtcfilt", "vtcraw"],
                         help="IN/OUT selection strategy whose outputs to read. "
@@ -512,20 +530,31 @@ def main() -> int:
         from code.visualization.render import _get_sensor_info
         info = _get_sensor_info(config, data_root)
 
-    # ---- Channel spectra at sensor/region with strongest exponent diff --
-    # Selection criterion: largest |t| on the FOOOF-exponent map (strongest
-    # IN-vs-OUT difference), not the smallest p-value. We want the panel to
-    # showcase the spatial unit where the effect is biggest, even if it
-    # doesn't survive correction.
+    # ---- Channel spectra: one subject at the group-best exponent sensor -
+    # Sensor pick: largest |group t| on the FOOOF-exponent map, restricted
+    # to group-significant sensors. Falls back to the overall |t|-max if
+    # no sensor survives correction (logged).
+    # Subject pick: at that sensor, the subject with the largest individual
+    # IN-vs-OUT FOOOF-exponent difference.
     logger.info("Loading channel spectra for panels C-F...")
     from code.statistics.subject_spectrum import load_channel_spectra
-    exp_t, _exp_p = rows["fooof"][0]
-    sel_idx = int(np.nanargmax(np.abs(exp_t)))
+    exp_t, exp_p = rows["fooof"][0]
+    sig_mask_exp = (exp_p < args.alpha) if exp_p is not None else None
+    if sig_mask_exp is not None and sig_mask_exp.any():
+        sig_idx = np.flatnonzero(sig_mask_exp)
+        sel_idx = int(sig_idx[np.nanargmax(np.abs(exp_t[sig_idx]))])
+        sel_basis = (f"|t|-max within {len(sig_idx)} group-sig sensors "
+                     f"({args.stats_correction}, alpha={args.alpha})")
+    else:
+        sel_idx = int(np.nanargmax(np.abs(exp_t)))
+        sel_basis = ("no group-sig sensors — fallback to overall |t|-max"
+                     if sig_mask_exp is not None
+                     else "no pvals — using overall |t|-max")
     spatial_unit_names = roi_names if is_atlas else list(info["ch_names"])
     sel_name = (spatial_unit_names[sel_idx]
                 if sel_idx < len(spatial_unit_names) else f"unit-{sel_idx}")
-    logger.info("Selected unit: %s (idx=%d, |t|=%.3f)",
-                sel_name, sel_idx, float(np.abs(exp_t[sel_idx])))
+    logger.info("Selected sensor: %s (idx=%d, |t|=%.3f) — %s",
+                sel_name, sel_idx, float(np.abs(exp_t[sel_idx])), sel_basis)
 
     sfile_exp = _stats_file(stats_dir, "fooof_exponent", inout_str,
                             args.trial_type, level=args.stats_level,
@@ -544,10 +573,46 @@ def main() -> int:
         space=args.space,
         inout_bounds=tuple(inout_bounds),
         config=config,
+        trial_type=args.trial_type,
         bad_trial_rule=bad_rule,
         interp_reject_threshold=interp_thr,
         n_events_window=args.n_events_window,
+        inout_selection=inout_selection,
     )
+    # Mode 'topsubject': slice the per-subject arrays to a single subject —
+    # the one with the largest |IN-OUT| FOOOF exponent at sel_idx — so the
+    # spectrum plotters render a single line per condition (no SEM band).
+    # Mode 'average': leave all subjects in place so _plot_spectrum draws
+    # the cohort mean ± SEM.
+    sel_subject: Optional[str] = None
+    if args.spectra == "topsubject":
+        exp_in = np.asarray(spectra["IN"]["exponent"], dtype=float)
+        exp_out = np.asarray(spectra["OUT"]["exponent"], dtype=float)
+        delta = np.abs(exp_in - exp_out)
+        if not np.isfinite(delta).any():
+            raise RuntimeError(
+                f"No valid IN/OUT exponent for any subject at sensor "
+                f"{sel_name} (idx={sel_idx})."
+            )
+        best_subj_pos = int(np.nanargmax(delta))
+        sel_subject = spectra["subjects"][best_subj_pos]
+        logger.info(
+            "Selected subject: sub-%s (|Δexp|=%.3f at %s)",
+            sel_subject, float(delta[best_subj_pos]), sel_name,
+        )
+        for cond in ("IN", "OUT"):
+            block = spectra[cond]
+            for key, val in list(block.items()):
+                arr = np.asarray(val)
+                if arr.ndim >= 1 and arr.shape[0] == len(spectra["subjects"]):
+                    block[key] = arr[best_subj_pos:best_subj_pos + 1]
+        spectra["subjects"] = [sel_subject]
+        spectra["n_subjects"] = 1
+    else:
+        logger.info(
+            "Spectra mode 'average': drawing mean ± SEM across %d subjects "
+            "at sensor %s.", spectra["n_subjects"], sel_name,
+        )
     freqs = np.asarray(spectra["freqs"], dtype=float)
     freqs_fit = np.asarray(spectra["freqs_fit"], dtype=float)
     fooof_cfg = config.get("features", {}).get("fooof", [{}])
@@ -569,11 +634,16 @@ def main() -> int:
     # hspace was 0.45 (≈45% inter-row gap relative to row height); reduced
     # to 0.10 so blank space between rows is ~10–15% of a row instead of
     # nearly an entire row.
+    # Colorbar column widened from 0.10 → 0.25: gives the centered
+    # "OUT > IN" / "IN > OUT" badges room without overflowing the
+    # figure right margin. The actual colorbar bar is then shrunk
+    # *within* this cell by _add_cbar (smaller bar, more breathing
+    # room for labels — see user request).
     n_cols = 8
-    col_widths = [1.0] * 7 + [0.10]
+    col_widths = [1.0] * 7 + [0.25]
     spatial_row_h = 1.0
     row_heights = [spatial_row_h, spatial_row_h,
-                   1.10, 1.10,
+                   0.78, 0.78,
                    spatial_row_h, spatial_row_h]
     fig_w = 13.2
     fig_h = 13.0
@@ -581,8 +651,8 @@ def main() -> int:
     gs = GridSpec(
         nrows=6, ncols=n_cols, figure=fig,
         width_ratios=col_widths, height_ratios=row_heights,
-        left=0.045, right=0.965, top=0.97, bottom=0.045,
-        hspace=0.10, wspace=0.12,
+        left=0.045, right=0.955, top=0.965, bottom=0.045,
+        hspace=0.32, wspace=0.12,
     )
 
     band_labels = ["Theta\n(4-8Hz)", "Alpha\n(8-12Hz)",
@@ -600,19 +670,17 @@ def main() -> int:
 
     def _draw_selection_inset(ax_d):
         """Top-right inset on panel D: small topomap (or brain) showing the
-        selected sensor/region, with the region name as a title.
-
-        Rect is sized to keep the inset fully inside the parent axes
-        (max x = 0.99, max y = 0.97 leaves room for the title) and to give
-        the brain a 4:3-ish aspect so ``aspect="equal"`` doesn't waste
-        space. ``set_axis_off`` would hide the title too, so we strip
-        ticks/spines individually instead.
+        selected sensor/region. The region/sensor name sits BELOW the
+        inset (drawn with inset.text, since set_xlabel renders awkwardly
+        on a spineless axes). The 7Networks_ atlas prefix is stripped
+        from the displayed name.
         """
         if is_atlas:
-            # Wider than tall — fits a single lateral hemisphere with title.
-            rect = [0.54, 0.54, 0.45, 0.42]
+            # Wider than tall — fits a single lateral hemisphere; the
+            # label sits below so we leave a small bottom margin in y0.
+            rect = [0.60, 0.62, 0.32, 0.30]
         else:
-            rect = [0.74, 0.60, 0.26, 0.40]
+            rect = [0.74, 0.62, 0.18, 0.30]
         inset = ax_d.inset_axes(rect)
         if is_atlas:
             from code.visualization.plot_surface import (
@@ -645,12 +713,16 @@ def main() -> int:
                 vlim=(-1, 1), extrapolate="local",
                 outlines="head", sphere=0.15, contours=0,
             )
-        # Strip ticks + spines (but keep the axes "on" so set_title renders).
         inset.set_xticks([])
         inset.set_yticks([])
         for spine in inset.spines.values():
             spine.set_visible(False)
-        inset.set_title(sel_name, fontsize=7, pad=1)
+        # 7Networks_ atlas prefix bloats the label; strip it for display only.
+        display_name = sel_name.replace("7Networks_", "")
+        inset_label = (f"sub-{sel_subject} · {display_name}"
+                       if sel_subject is not None else display_name)
+        inset.text(0.5, -0.04, inset_label, transform=inset.transAxes,
+                   ha="center", va="top", fontsize=7)
 
     def _label_with_n_sig(label: str, mask: Optional[np.ndarray]) -> str:
         if mask is None:
@@ -704,8 +776,7 @@ def main() -> int:
             show_legend=True,
         )
         ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
-        ax.set_ylabel("PSD (log$_{10}$ power) — raw / aperiodic",
-                      fontsize=8.5)
+        ax.set_ylabel("PSD (log$_{10}$)", fontsize=8.5)
 
     def panel_D(ax):
         _plot_spectrum(
@@ -723,8 +794,7 @@ def main() -> int:
             axhline_zero=True,
         )
         ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
-        ax.set_ylabel("Log$_{10}$ power — corrected / periodic",
-                      fontsize=8.5)
+        ax.set_ylabel("PSD (log$_{10}$)", fontsize=8.5)
 
     def panel_F(ax):
         _plot_spectrum(
@@ -749,6 +819,20 @@ def main() -> int:
     cax_J = draw_band_row(5, aurows["psdc"], vmin_a, vmax_a, CMAP_AUC, band_labels)
 
     def _add_cbar(cax, vmin, vmax, cmap, label, diverging=False):
+        # Shrink the actual bar to leave breathing room above + below
+        # for the "OUT > IN" / "IN > OUT" badges (diverging colorbars).
+        # Width is also pulled in so the bar looks slim — the slimmer
+        # bar makes the badges visually align with its centerline.
+        pos = cax.get_position()
+        new_h = pos.height * 0.78
+        new_w = pos.width * 0.42
+        cax.set_position([
+            pos.x0 + (pos.width - new_w) / 2,
+            pos.y0 + (pos.height - new_h) / 2,
+            new_w,
+            new_h,
+        ])
+
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
@@ -758,9 +842,9 @@ def main() -> int:
             cbar.set_ticks([vmin, 0, vmax])
             cbar.set_ticklabels([f"{vmin:.1f}", "0", f"{vmax:.1f}"])
             cbar.set_label(label, fontsize=8)
-            cax.text(2.2, 1.02, "OUT > IN", transform=cax.transAxes,
+            cax.text(0.3, 1.06, "OUT > IN", transform=cax.transAxes,
                      fontsize=7, ha="center", va="bottom", color="#a40000")
-            cax.text(2.2, -0.02, "IN > OUT", transform=cax.transAxes,
+            cax.text(0.3, -0.06, "IN > OUT", transform=cax.transAxes,
                      fontsize=7, ha="center", va="top", color="#00408a")
         else:
             mid = (vmin + vmax) / 2
@@ -775,10 +859,47 @@ def main() -> int:
     _add_cbar(cax_I, vmin_t, vmax_t, CMAP_T, "T-values", diverging=True)
     _add_cbar(cax_J, vmin_a, vmax_a, CMAP_AUC, "AUC")
 
+    # ---- Atlas-only row repositioning -----------------------------------
+    # In atlas mode the brain composites are letterboxed inside their
+    # axes (intrinsic aspect ~4:3), so the A-B and I-J gaps look
+    # excessive compared with the C-H rows. Shrink those two gaps by
+    # 30% by moving row 0 (A) down and row 5 (J) up — neither shift
+    # affects the C/D/E/F/G/H gaps the user is happy with, and any
+    # extra figure-edge whitespace is trimmed by bbox_inches="tight".
+    row_delta: Dict[int, float] = {}
+    if is_atlas:
+        def _shift_row(row_idx: int, delta: float) -> None:
+            pos = gs[row_idx, 0].get_position(fig)
+            yc_target = 0.5 * (pos.y0 + pos.y1)
+            for ax in fig.axes:
+                bb = ax.get_position()
+                yc = 0.5 * (bb.y0 + bb.y1)
+                if abs(yc - yc_target) < 0.01:
+                    ax.set_position([bb.x0, bb.y0 + delta,
+                                     bb.width, bb.height])
+
+        pos_a = gs[0, 0].get_position(fig)
+        pos_b = gs[1, 0].get_position(fig)
+        delta_ab = -(pos_a.y0 - pos_b.y1) * 0.30
+        _shift_row(0, delta_ab)
+        row_delta[0] = delta_ab
+
+        pos_i = gs[4, 0].get_position(fig)
+        pos_j = gs[5, 0].get_position(fig)
+        delta_ij = (pos_i.y0 - pos_j.y1) * 0.30
+        _shift_row(5, delta_ij)
+        row_delta[5] = delta_ij
+
     # ---- Letter labels --------------------------------------------------
     fig.canvas.draw()
 
-    def _stamp(ax, letter, dx=-0.028, dy=0.020):
+    def _stamp(ax, letter, dx=0.0, dy=0.008):
+        # ha="left" + dx=0 keeps the letter's left edge flush with the
+        # panel's x-axis origin (no bleed onto neighbors — the wspace
+        # gap between col 3 and col 4 is only ~1.4% of fig width, so
+        # G/H must stay at dx=0). dy=0.008 + fontsize=14 sits the
+        # letter just above the top spine without crowding the row
+        # above (hspace was bumped to give the room).
         bb = ax.get_position()
         fig.text(bb.x0 + dx, bb.y1 + dy, letter,
                  fontsize=14, fontweight="bold", ha="left", va="bottom")
@@ -786,7 +907,9 @@ def main() -> int:
     def _row_first_topo(row_idx):
         outer_ss = gs[row_idx, 0]
         bb = outer_ss.get_position(fig)
-        target_yc = 0.5 * (bb.y0 + bb.y1)
+        # Apply atlas-mode row shift (if any) so the lookup hits the
+        # post-shift y-center; rows that were not shifted have delta=0.
+        target_yc = 0.5 * (bb.y0 + bb.y1) + row_delta.get(row_idx, 0.0)
         cands = [ax for ax in fig.axes
                  if abs(0.5 * (ax.get_position().y0 + ax.get_position().y1) - target_yc) < 0.01]
         return min(cands, key=lambda a: a.get_position().x0) if cands else None
@@ -805,9 +928,9 @@ def main() -> int:
         if ax is not None:
             _stamp(ax, letter)
     for ax, letter in [(axes_CD[0], "C"), (axes_CD[1], "D")]:
-        _stamp(ax, letter, dx=-0.024, dy=0.012)
+        _stamp(ax, letter)
     for ax, letter in [(axes_EF[0], "E"), (axes_EF[1], "F")]:
-        _stamp(ax, letter, dx=-0.024, dy=0.012)
+        _stamp(ax, letter)
     for row_idx, letter in [(2, "G"), (3, "H")]:
         ax = _row_first_fooof(row_idx)
         if ax is not None:

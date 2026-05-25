@@ -833,8 +833,10 @@ def run_statistical_test(
         groups: Subject indices, shape (n_trials,).
         test_type: 'paired_ttest' (default) or 'independent_ttest'. Only
             applies in subject-level mode.
-        n_permutations: Permutations for trial-level ttest_ind. Only used
-            when ``single_trials=True``. Set to 0 to disable.
+        n_permutations: Unused here (kept for signature compatibility).
+            Per-element trial-level p-values are analytic; permutation-based
+            multiple-comparison correction (cluster/tmax) is applied
+            downstream in :func:`apply_corrections`.
         single_trials: If True, treat all trials as independent observations
             and run ttest_ind (legacy behaviour). Default False.
         aggregate: 'median' (default) or 'mean'. The per-subject aggregation
@@ -869,17 +871,11 @@ def run_statistical_test(
         tvals = np.zeros((n_features, X.shape[2]))
         pvals = np.zeros((n_features, X.shape[2]))
 
-        perm_kwarg = {}
-        if n_permutations > 0:
-            perm_kwarg["permutations"] = n_permutations
-            logger.info(f"Using {n_permutations} permutations")
-
         for feat_idx in range(n_features):
             t, p = stats.ttest_ind(
                 X[feat_idx, out_mask, :],
                 X[feat_idx, in_mask, :],
                 axis=0,
-                **perm_kwarg,
             )
             tvals[feat_idx, :] = t
             pvals[feat_idx, :] = p

@@ -407,17 +407,20 @@ def _label_with_n_sig(label: str, mask: Optional[np.ndarray],
 
 
 def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
-                  space: str, trial: str, inout: str, clf: str,
+                  space: str, trial_types: Sequence[str], inout: str, clf: str,
                   classif_cv: str, features: Sequence[str], alpha: float,
                   stats_level: str, stats_correction: str,
                   classif_level: str, classif_correction: str,
                   yeo_overlay: Optional[int],
                   inout_selection: str = "strict") -> None:
-    """Tier 1 — two rows of 2x2 brain composites + colorbars.
+    """Tier 1 — brain composites stacked per trial-type for comparison.
 
-    Row A (stats) and Row B (classif) use independent (level, correction)
-    settings so the panel can show e.g. ``average / FDR`` per-parcel
-    t-values together with ``single-epoch / tmax`` per-parcel AUCs.
+    Layout: ``2 × n_trials`` rows × ``n_feat + 1`` cols.
+      block per trial-type:
+        row a (t-values, stats — diverging)
+        row b (AUC, classif — sequential)
+    The trial-type label is written into the row's y-axis so Correct vs
+    Lapse rows can be compared at-a-glance for each feature column.
     """
     from code.visualization.plot_surface import (
         _get_fsaverage_surfaces,
@@ -425,129 +428,150 @@ def _tier1_brains(gs, fig, stats_dir: Path, clf_group_dir: Path,
     )
 
     n_feat = len(features)
-    # Inner grid: 2 rows (t, AUC) × (n_feat + 1) cols (features + colorbar).
-    # Bias height toward the brain composites so they aren't squeezed
-    # vertically by the xlabel + spacing budget.
+    n_trials = len(trial_types)
+    n_rows = 2 * n_trials
     inner = GridSpecFromSubplotSpec(
-        2, n_feat + 1, subplot_spec=gs,
+        n_rows, n_feat + 1, subplot_spec=gs,
         width_ratios=[1.0] * n_feat + [0.06],
-        height_ratios=[1.0, 1.0], hspace=0.32, wspace=0.04,
+        height_ratios=[1.0] * n_rows,
+        hspace=0.36, wspace=0.04,
     )
 
     fsaverage = _get_fsaverage_surfaces()
     roi_names = _get_roi_names(space, [], [])
 
-    t_collect: List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]] = []
-    auc_collect: List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]] = []
-    for feat in features:
-        sp = _find_stats_file(stats_dir, feat, trial, inout,
-                              level=stats_level,
-                              inout_selection=inout_selection)
-        if sp is None:
-            logger.info(f"  tier1 stats not found for {feat} "
-                        f"(level={stats_level})")
-            t_collect.append((None, None))
-        else:
-            try:
-                t_collect.append(_load_stats_per_parcel(sp, stats_correction))
-            except Exception as exc:
-                logger.warning(f"  tier1 t-load failed for {feat}: {exc}")
-                t_collect.append((None, None))
+    # Collect data per trial-type so we can compute shared vlims.
+    t_data: Dict[str, List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]]] = {}
+    auc_data: Dict[str, List[Tuple[Optional[np.ndarray], Optional[np.ndarray]]]] = {}
+    for trial in trial_types:
+        t_data[trial] = []
+        auc_data[trial] = []
+        for feat in features:
+            sp = _find_stats_file(stats_dir, feat, trial, inout,
+                                  level=stats_level,
+                                  inout_selection=inout_selection)
+            if sp is None:
+                logger.info(f"  tier1 stats not found for {feat}/{trial} "
+                            f"(level={stats_level})")
+                t_data[trial].append((None, None))
+            else:
+                try:
+                    t_data[trial].append(
+                        _load_stats_per_parcel(sp, stats_correction))
+                except Exception as exc:
+                    logger.warning(
+                        f"  tier1 t-load failed for {feat}/{trial}: {exc}")
+                    t_data[trial].append((None, None))
 
-        cp = _find_classif_file(clf_group_dir, feat, trial, inout, clf,
-                                classif_cv, space, level=classif_level,
-                                inout_selection=inout_selection)
-        if cp is None:
-            logger.info(f"  tier1 classif not found for {feat} "
-                        f"(level={classif_level}, cv={classif_cv})")
-            auc_collect.append((None, None))
-        else:
-            try:
-                auc_collect.append(
-                    _load_classif_per_parcel(cp, classif_correction))
-            except Exception as exc:
-                logger.warning(f"  tier1 auc-load failed for {feat}: {exc}")
-                auc_collect.append((None, None))
+            cp = _find_classif_file(clf_group_dir, feat, trial, inout, clf,
+                                    classif_cv, space, level=classif_level,
+                                    inout_selection=inout_selection)
+            if cp is None:
+                logger.info(f"  tier1 classif not found for {feat}/{trial} "
+                            f"(level={classif_level}, cv={classif_cv})")
+                auc_data[trial].append((None, None))
+            else:
+                try:
+                    auc_data[trial].append(
+                        _load_classif_per_parcel(cp, classif_correction))
+                except Exception as exc:
+                    logger.warning(
+                        f"  tier1 auc-load failed for {feat}/{trial}: {exc}")
+                    auc_data[trial].append((None, None))
 
-    # Global vlims: symmetric for t (diverging), [0.5, max] for AUC.
-    finite_t = [t[0] for t in t_collect if t[0] is not None]
-    if finite_t:
-        all_t = np.concatenate([t.flatten() for t in finite_t])
-        tmax = float(np.nanpercentile(np.abs(all_t), 98)) if all_t.size else 3.0
+    # Shared vlims across trial-types so Correct/Lapse rows are comparable.
+    all_t = []
+    for trial in trial_types:
+        for t, _ in t_data[trial]:
+            if t is not None:
+                all_t.append(t.flatten())
+    if all_t:
+        all_t_arr = np.concatenate(all_t)
+        tmax = float(np.nanpercentile(np.abs(all_t_arr), 98)) if all_t_arr.size else 3.0
     else:
         tmax = 3.0
-    finite_auc = [a[0] for a in auc_collect if a[0] is not None]
-    if finite_auc:
-        all_auc = np.concatenate([a.flatten() for a in finite_auc])
+
+    all_auc = []
+    for trial in trial_types:
+        for a, _ in auc_data[trial]:
+            if a is not None:
+                all_auc.append(a.flatten())
+    if all_auc:
+        all_auc_arr = np.concatenate(all_auc)
         auc_lo = 0.5
-        auc_hi = float(np.nanpercentile(all_auc, 98))
+        auc_hi = float(np.nanpercentile(all_auc_arr, 98))
         if not np.isfinite(auc_hi) or auc_hi <= auc_lo:
             auc_hi = auc_lo + 0.1
     else:
         auc_lo, auc_hi = 0.5, 0.7
 
-    row_a_label = (f"Tier 1A · per-parcel t (OUT − IN)\n"
-                   f"{stats_level} / {stats_correction}")
-    row_b_label = (f"Tier 1B · per-parcel AUC\n"
-                   f"{classif_level} / {classif_correction}")
+    # Render: 2 rows per trial-type (t on top, AUC on bottom of each block)
+    for ti, trial in enumerate(trial_types):
+        row_t = 2 * ti
+        row_a = 2 * ti + 1
+        trial_lbl = TRIAL_LABEL.get(trial, trial)
+        row_t_label = (f"{trial_lbl}\nt (OUT−IN)\n"
+                       f"{stats_level} / {stats_correction}")
+        row_a_label = (f"{trial_lbl}\nAUC\n"
+                       f"{classif_level} / {classif_correction}")
 
-    for j, feat in enumerate(features):
-        # ---- row 0: t-values (stats) ----
-        ax_t = fig.add_subplot(inner[0, j])
-        vals_t, pvals_t = t_collect[j]
-        mask_t = ((pvals_t < alpha) if pvals_t is not None
-                  else None) if vals_t is not None else None
-        if vals_t is None:
-            _placeholder(ax_t)
-        else:
-            _render_brain_into(
-                ax_t, vals_t, mask_t, roi_names, space, fsaverage,
-                vmin=-tmax, vmax=tmax, cmap="RdBu_r",
-                yeo_overlay=yeo_overlay,
+        for j, feat in enumerate(features):
+            # ---- t-values row ----
+            ax_t = fig.add_subplot(inner[row_t, j])
+            vals_t, pvals_t = t_data[trial][j]
+            mask_t = ((pvals_t < alpha) if pvals_t is not None
+                      else None) if vals_t is not None else None
+            if vals_t is None:
+                _placeholder(ax_t)
+            else:
+                _render_brain_into(
+                    ax_t, vals_t, mask_t, roi_names, space, fsaverage,
+                    vmin=-tmax, vmax=tmax, cmap="RdBu_r",
+                    yeo_overlay=yeo_overlay,
+                )
+            ax_t.set_xlabel(
+                _label_with_n_sig(FEATURE_DISPLAY.get(feat, feat), mask_t,
+                                  data_available=vals_t is not None),
+                fontsize=8.5, labelpad=2,
             )
-        ax_t.set_xlabel(
-            _label_with_n_sig(FEATURE_DISPLAY.get(feat, feat), mask_t,
-                              data_available=vals_t is not None),
-            fontsize=8.5, labelpad=2,
-        )
-        if j == 0:
-            ax_t.set_ylabel(row_a_label, fontsize=9)
+            if j == 0:
+                ax_t.set_ylabel(row_t_label, fontsize=9)
 
-        # ---- row 1: AUC (classif) ----
-        ax_a = fig.add_subplot(inner[1, j])
-        vals_a, pvals_a = auc_collect[j]
-        mask_a = ((pvals_a < alpha) if pvals_a is not None
-                  else None) if vals_a is not None else None
-        if vals_a is None:
-            _placeholder(ax_a)
-        else:
-            _render_brain_into(
-                ax_a, vals_a, mask_a, roi_names, space, fsaverage,
-                vmin=auc_lo, vmax=auc_hi, cmap="magma",
-                yeo_overlay=yeo_overlay,
+            # ---- AUC row ----
+            ax_a = fig.add_subplot(inner[row_a, j])
+            vals_a, pvals_a = auc_data[trial][j]
+            mask_a = ((pvals_a < alpha) if pvals_a is not None
+                      else None) if vals_a is not None else None
+            if vals_a is None:
+                _placeholder(ax_a)
+            else:
+                _render_brain_into(
+                    ax_a, vals_a, mask_a, roi_names, space, fsaverage,
+                    vmin=auc_lo, vmax=auc_hi, cmap="magma",
+                    yeo_overlay=yeo_overlay,
+                )
+            ax_a.set_xlabel(
+                _label_with_n_sig(FEATURE_DISPLAY.get(feat, feat), mask_a,
+                                  data_available=vals_a is not None),
+                fontsize=8.5, labelpad=2,
             )
-        ax_a.set_xlabel(
-            _label_with_n_sig(FEATURE_DISPLAY.get(feat, feat), mask_a,
-                              data_available=vals_a is not None),
-            fontsize=8.5, labelpad=2,
-        )
-        if j == 0:
-            ax_a.set_ylabel(row_b_label, fontsize=9)
+            if j == 0:
+                ax_a.set_ylabel(row_a_label, fontsize=9)
 
-    # Colorbars (one per row in the last column)
-    cax_t = fig.add_subplot(inner[0, -1])
-    norm_t = mcolors.Normalize(vmin=-tmax, vmax=tmax)
-    sm_t = plt.cm.ScalarMappable(cmap="RdBu_r", norm=norm_t)
-    sm_t.set_array([])
-    fig.colorbar(sm_t, cax=cax_t).set_label("t-value", fontsize=8)
-    cax_t.tick_params(labelsize=7)
+        # Colorbars per block (last column of each metric row)
+        cax_t = fig.add_subplot(inner[row_t, -1])
+        norm_t = mcolors.Normalize(vmin=-tmax, vmax=tmax)
+        sm_t = plt.cm.ScalarMappable(cmap="RdBu_r", norm=norm_t)
+        sm_t.set_array([])
+        fig.colorbar(sm_t, cax=cax_t).set_label("t-value", fontsize=8)
+        cax_t.tick_params(labelsize=7)
 
-    cax_a = fig.add_subplot(inner[1, -1])
-    norm_a = mcolors.Normalize(vmin=auc_lo, vmax=auc_hi)
-    sm_a = plt.cm.ScalarMappable(cmap="magma", norm=norm_a)
-    sm_a.set_array([])
-    fig.colorbar(sm_a, cax=cax_a).set_label("AUC", fontsize=8)
-    cax_a.tick_params(labelsize=7)
+        cax_a = fig.add_subplot(inner[row_a, -1])
+        norm_a = mcolors.Normalize(vmin=auc_lo, vmax=auc_hi)
+        sm_a = plt.cm.ScalarMappable(cmap="magma", norm=norm_a)
+        sm_a.set_array([])
+        fig.colorbar(sm_a, cax=cax_a).set_label("AUC", fontsize=8)
+        cax_a.tick_params(labelsize=7)
 
 
 # Per-trial-type visual encoding used by the Tier-2 Esterman-style overlay.
@@ -721,119 +745,262 @@ def _tier2_network_bars(gs, fig, net_dir: Path, trial_types: Sequence[str],
             )
 
 
-def _tier3_classif(gs, fig, net_dir: Path, trial: str, clf: str, cv: str,
-                   n_networks: int, families: Sequence[str],
+def _tier3_classif(gs, fig, net_dir: Path, trial_types: Sequence[str],
+                   clf: str, cv: str, n_networks: int,
+                   families: Sequence[str],
                    per_feature_subset: Sequence[str], alpha: float) -> None:
-    """Tier 3 — per-family bars (row 0) + per-feature heatmap (row 1)."""
-    pfam = _load_net_classif(net_dir, "per-family", trial, clf, cv, n_networks)
-    pfeat = _load_net_classif(net_dir, "per-feature", trial, clf, cv, n_networks)
+    """Tier 3 — per-family bars (grouped per trial-type) + one heatmap per trial-type.
+
+    Row 0   : per-family AUC bars per network, with Correct vs Lapse grouped
+              within each network (mirrors the Esterman-style Tier 2 overlay
+              but for the classification side).
+    Row 1.. : per-feature × network AUC heatmap, one row per trial-type.
+    """
     palette = network_palette(n_networks)
     nets = network_order(n_networks)
+    n_trials = len(trial_types)
 
+    pfam_per_trial: Dict[str, Optional[Dict[str, np.ndarray]]] = {
+        tt: _load_net_classif(net_dir, "per-family", tt, clf, cv, n_networks)
+        for tt in trial_types
+    }
+    pfeat_per_trial: Dict[str, Optional[Dict[str, np.ndarray]]] = {
+        tt: _load_net_classif(net_dir, "per-feature", tt, clf, cv, n_networks)
+        for tt in trial_types
+    }
+
+    n_heatmap_rows = max(1, n_trials)
     inner = GridSpecFromSubplotSpec(
-        2, len(families), subplot_spec=gs,
-        height_ratios=[1.0, 1.2], hspace=0.55, wspace=0.30,
+        1 + n_heatmap_rows, len(families), subplot_spec=gs,
+        height_ratios=[1.0] + [1.2] * n_heatmap_rows,
+        hspace=0.55, wspace=0.30,
     )
 
-    # ---- Row 0: per-family bars
-    if pfam is None:
+    # ---- Row 0: per-family bars, grouped by trial-type ----
+    has_any_pfam = any(b is not None for b in pfam_per_trial.values())
+    if not has_any_pfam:
         for j in range(len(families)):
             _placeholder(fig.add_subplot(inner[0, j]), "no per-family classif")
     else:
-        fam_idx = {f: i for i, f in enumerate(pfam["families"].tolist())}
+        # Determine shared y-range so the family panels are comparable
+        all_scores = []
+        for tt, b in pfam_per_trial.items():
+            if b is not None:
+                all_scores.append(b["scores"].flatten())
+        all_scores_arr = np.concatenate(all_scores) if all_scores else np.array([0.5])
+        y_top = max(0.7, float(np.nanmax(all_scores_arr)) + 0.02) \
+            if np.isfinite(all_scores_arr).any() else 0.7
+
+        legend_done = False
         for j, fam in enumerate(families):
             ax = fig.add_subplot(inner[0, j])
-            col = fam_idx.get(fam)
-            if col is None:
+            vals_per_trial: Dict[str, np.ndarray] = {}
+            sig_per_trial: Dict[str, Optional[np.ndarray]] = {}
+            for tt in trial_types:
+                b = pfam_per_trial[tt]
+                if b is None:
+                    continue
+                fam_idx = {f: i for i, f in enumerate(b["families"].tolist())}
+                col = fam_idx.get(fam)
+                if col is None:
+                    continue
+                vals_per_trial[tt] = b["scores"][:, col]
+                p = b["pvals"][:, col]
+                sig_per_trial[tt] = np.where(np.isfinite(p), p < alpha, False)
+            if not vals_per_trial:
                 _placeholder(ax, "family absent")
                 continue
-            scores = pfam["scores"][:, col]
-            pvals = pfam["pvals"][:, col]
-            sig = np.where(np.isfinite(pvals), pvals < alpha, False)
-            _draw_network_bar(
-                ax, scores, nets, palette,
+            _draw_grouped_network_bars(
+                ax, vals_per_trial, sig_per_trial, nets, palette,
                 title=FAMILY_DISPLAY.get(fam, fam),
                 ylabel="AUC" if j == 0 else "",
-                sig_mask=sig, axhline=0.5,
-                ylim=(0.4, max(0.7, float(np.nanmax(scores)) + 0.02)
-                      if np.isfinite(scores).any() else (0.4, 0.7)),
+                axhline=0.5,
             )
+            ax.set_ylim(0.4, y_top)
+            if j == 0 and not legend_done:
+                ax.legend(fontsize=7, frameon=False, loc="best", ncol=1)
+                legend_done = True
 
-    # ---- Row 1: per-feature heatmap spanning the full width
-    ax_hm = fig.add_subplot(inner[1, :])
-    if pfeat is None:
-        _placeholder(ax_hm, "no per-feature classif")
-    else:
-        feats = pfeat["features"].tolist()
-        # Keep only the user-requested subset, in that order
+    # ---- Rows 1..N: per-feature × network heatmap, one per trial-type ----
+    # Compute shared vmin/vmax across all trial-types for direct comparison.
+    all_M = []
+    for tt, b in pfeat_per_trial.items():
+        if b is not None:
+            all_M.append(b["scores"].flatten())
+    all_M_arr = np.concatenate(all_M) if all_M else np.array([0.5])
+    vmax_hm = (max(0.7, float(np.nanmax(all_M_arr)))
+               if np.isfinite(all_M_arr).any() else 0.7)
+
+    for ti, tt in enumerate(trial_types):
+        ax_hm = fig.add_subplot(inner[1 + ti, :])
+        b = pfeat_per_trial[tt]
+        if b is None:
+            _placeholder(ax_hm, f"no per-feature classif ({tt})")
+            continue
+        feats = b["features"].tolist()
         col_order = [feats.index(f) for f in per_feature_subset if f in feats]
         used_features = [feats[c] for c in col_order]
-        M = pfeat["scores"][:, col_order] if col_order else pfeat["scores"]
-        P = pfeat["pvals"][:, col_order] if col_order else pfeat["pvals"]
+        M = b["scores"][:, col_order] if col_order else b["scores"]
+        P = b["pvals"][:, col_order] if col_order else b["pvals"]
         sig = np.where(np.isfinite(P), P < alpha, False)
         col_labels = [FEATURE_DISPLAY.get(f, f) for f in used_features]
-        vmax = (max(0.7, float(np.nanmax(M)))
-                if np.isfinite(M).any() else 0.7)
         _draw_heatmap(
             ax_hm, M, row_labels=list(nets), col_labels=col_labels,
-            title="per-feature × network AUC",
-            cmap="magma", vmin=0.45, vmax=vmax, cbar_label="AUC",
+            title=f"{TRIAL_LABEL.get(tt, tt)} · per-feature × network AUC",
+            cmap="magma", vmin=0.45, vmax=vmax_hm, cbar_label="AUC",
             sig_mask=sig,
         )
 
 
 def _tier4_importance_coherence(gs, fig, classif_net_dir: Path,
-                                stats_net_dir: Path, trial: str, clf: str,
+                                stats_net_dir: Path,
+                                trial_types: Sequence[str], clf: str,
                                 cv: str, label: str, n_networks: int,
                                 features: Sequence[str]) -> None:
-    """Tier 4 — joint-importance heatmap (row 0) + coherence bars (row 1)."""
-    imp = _load_net_importance(classif_net_dir, trial, clf, cv, label, n_networks)
-    inner = GridSpecFromSubplotSpec(
-        2, len(features), subplot_spec=gs,
-        height_ratios=[1.2, 1.0], hspace=0.55, wspace=0.30,
-    )
+    """Tier 4 — importance heatmap per trial-type + coherence bars per trial-type.
 
-    # ---- Row 0: importance heatmap spanning full width
-    ax_hm = fig.add_subplot(inner[0, :])
-    if imp is None:
-        _placeholder(ax_hm, "no joint-importance bundle")
-    else:
+    Layout: ``n_trials`` rows of importance heatmaps (full width each) +
+    1 row of coherence bars, where each feature column has Correct vs
+    Lapse within / between bars side-by-side.
+    """
+    palette = network_palette(n_networks)
+    nets = network_order(n_networks)
+    n_trials = len(trial_types)
+
+    # Pre-load importance bundles
+    imp_per_trial: Dict[str, Optional[Dict[str, np.ndarray]]] = {
+        tt: _load_net_importance(classif_net_dir, tt, clf, cv, label, n_networks)
+        for tt in trial_types
+    }
+    # Shared vmax across trial-types for direct comparison
+    all_M = []
+    for tt, imp in imp_per_trial.items():
+        if imp is not None:
+            all_M.append(np.abs(imp["importance_sum"]).flatten())
+    all_M_arr = np.concatenate(all_M) if all_M else np.array([1.0])
+    imp_vmax = (float(np.nanpercentile(all_M_arr, 98))
+                if np.isfinite(all_M_arr).any() else 1.0)
+
+    # Pick a stable set of columns (top features by mean importance across trial-types)
+    col_keep: Optional[np.ndarray] = None
+    col_labels: List[str] = []
+    for tt, imp in imp_per_trial.items():
+        if imp is None:
+            continue
         feats_in_bundle = imp["features"].tolist()
         M = imp["importance_sum"]
-        # Drop near-zero columns for readability if too many features
-        col_keep = np.arange(M.shape[1])
-        if M.shape[1] > 16:
-            col_means = np.nanmean(np.abs(M), axis=0)
-            keep_ix = np.argsort(col_means)[-16:]
-            col_keep = np.sort(keep_ix)
-        M_show = M[:, col_keep]
-        col_labels = [feats_in_bundle[c] for c in col_keep]
+        if col_keep is None:
+            if M.shape[1] > 16:
+                col_means = np.nanmean(np.abs(M), axis=0)
+                keep_ix = np.argsort(col_means)[-16:]
+                col_keep = np.sort(keep_ix)
+            else:
+                col_keep = np.arange(M.shape[1])
+            col_labels = [feats_in_bundle[c] for c in col_keep]
+        break
+
+    inner = GridSpecFromSubplotSpec(
+        n_trials + 1, len(features), subplot_spec=gs,
+        height_ratios=[1.2] * n_trials + [1.0],
+        hspace=0.65, wspace=0.30,
+    )
+
+    # ---- Importance heatmaps (one row per trial-type) ----
+    for ti, tt in enumerate(trial_types):
+        ax_hm = fig.add_subplot(inner[ti, :])
+        imp = imp_per_trial[tt]
+        if imp is None:
+            _placeholder(ax_hm, f"no joint-importance bundle ({tt})")
+            continue
+        M_show = imp["importance_sum"][:, col_keep]
         _draw_heatmap(
             ax_hm, M_show, row_labels=imp["network_names"].tolist(),
             col_labels=col_labels,
-            title="joint classifier — per-network Σ permutation importance",
+            title=(f"{TRIAL_LABEL.get(tt, tt)} · joint classifier — "
+                   f"per-network Σ permutation importance"),
             cmap="magma",
             vmin=0.0,
-            vmax=(float(np.nanpercentile(np.abs(M_show), 98))
-                  if np.isfinite(M_show).any() else 1.0),
+            vmax=imp_vmax,
             cbar_label="Σ importance",
         )
 
-    # ---- Row 1: coherence bars per feature
-    palette = network_palette(n_networks)
-    nets = network_order(n_networks)
+    # ---- Coherence bars per feature, Correct vs Lapse overlay ----
     for j, feat in enumerate(features):
-        ax = fig.add_subplot(inner[1, j])
-        coh = _load_coherence(stats_net_dir, feat, trial, n_networks)
-        if coh is None:
+        ax = fig.add_subplot(inner[-1, j])
+        within_per: Dict[str, np.ndarray] = {}
+        between_per: Dict[str, np.ndarray] = {}
+        for tt in trial_types:
+            coh = _load_coherence(stats_net_dir, feat, tt, n_networks)
+            if coh is None:
+                continue
+            within_per[tt] = coh["within_r"]
+            between_per[tt] = coh["between_r"]
+        if not within_per:
             _placeholder(ax, "no coherence")
             continue
-        within = coh["within_r"]
-        between = coh["between_r"]
-        _draw_grouped_within_between(
-            ax, within, between, nets, palette,
+        _draw_coherence_overlay(
+            ax, within_per, between_per, nets, palette,
             title=FEATURE_DISPLAY.get(feat, feat),
+            show_legend=(j == 0),
         )
+
+
+def _draw_coherence_overlay(
+    ax,
+    within_per_trial: Dict[str, np.ndarray],
+    between_per_trial: Dict[str, np.ndarray],
+    networks: Sequence[str],
+    palette: Dict[str, str],
+    title: str,
+    show_legend: bool = False,
+) -> None:
+    """Within/between coherence bars with Correct vs Lapse grouped per network.
+
+    Layout per network: 4 bars (correct-within, correct-between, lapse-within,
+    lapse-between). Within bars use the Yeo color (solid + trial hatch);
+    between bars use the same color at half alpha.
+    """
+    trials = list(within_per_trial.keys())
+    n_trials = len(trials)
+    if n_trials == 0:
+        _placeholder(ax)
+        return
+
+    xs = np.arange(len(networks))
+    total_w = 0.84
+    n_bars_per_net = 2 * n_trials  # within + between, per trial
+    bar_w = total_w / n_bars_per_net
+    offsets = (np.arange(n_bars_per_net) - (n_bars_per_net - 1) / 2.0) * bar_w
+
+    for k, trial in enumerate(trials):
+        hatch = TRIAL_HATCH.get(trial, "")
+        within = within_per_trial[trial]
+        between = between_per_trial[trial]
+        colors = [palette.get(n, "#888888") for n in networks]
+        # within bar (solid color + hatch)
+        ax.bar(
+            xs + offsets[2 * k], within, width=bar_w * 0.94,
+            color=colors, edgecolor="black", linewidth=0.6, hatch=hatch,
+            label=f"{TRIAL_LABEL.get(trial, trial)} · within"
+            if k < 2 else None,
+        )
+        # between bar (half-alpha + hatch)
+        ax.bar(
+            xs + offsets[2 * k + 1], between, width=bar_w * 0.94,
+            color=[mcolors.to_rgba(c, alpha=0.40) for c in colors],
+            edgecolor="black", linewidth=0.6, hatch=hatch,
+            label=f"{TRIAL_LABEL.get(trial, trial)} · between"
+            if k < 2 else None,
+        )
+
+    ax.axhline(0, color="black", linewidth=0.5, alpha=0.5)
+    ax.set_xticks(xs)
+    ax.set_xticklabels(networks, rotation=35, ha="right", fontsize=7)
+    ax.tick_params(axis="y", labelsize=7)
+    ax.set_title(title, fontsize=9)
+    ax.set_ylabel("Pearson r", fontsize=8)
+    if show_legend:
+        ax.legend(fontsize=6, frameon=False, loc="best", ncol=2)
 
 
 def _draw_yeo_legend(ax, n_networks: int) -> None:
@@ -859,8 +1026,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--space", required=True,
                    help="Atlas space (e.g. schaefer_400).")
-    p.add_argument("--trial-type", default="correct",
-                   choices=["alltrials", "correct", "lapse"])
+    p.add_argument("--trial-types", nargs="+",
+                   default=["correct", "lapse"],
+                   choices=["alltrials", "correct", "lapse", "rare",
+                            "correct_commission"],
+                   help="Trial-types compared side-by-side across all tiers "
+                        "(Tier 1 brains, Tier 2 bars, Tier 3 bars/heatmaps, "
+                        "Tier 4 importance + coherence). Default: correct lapse "
+                        "(success vs failure). Pass a single trial-type to "
+                        "render a non-comparison panel.")
+    p.add_argument("--trial-type", default=None,
+                   choices=["alltrials", "correct", "lapse", "rare",
+                            "correct_commission"],
+                   help="Deprecated; use --trial-types. When set, sets "
+                        "--trial-types to a single value.")
     p.add_argument("--yeo", type=int, default=7, choices=[7, 17])
     p.add_argument("--alpha", type=float, default=0.05)
 
@@ -912,11 +1091,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-yeo-overlay", action="store_true",
                    help="Skip the Yeo network boundary overlay on Tier 1 "
                         "(faster, useful while iterating).")
-    p.add_argument("--overlay-trial-types", nargs="+",
-                   default=["correct", "lapse"],
-                   help="Trial-types overlaid in Tier 2 (Esterman-style "
-                        "grouped bars). Default: correct lapse. Pass a single "
-                        "trial-type to disable the overlay.")
     p.add_argument("--data-root", default=None,
                    help="Override config.paths.data_root (e.g. point at a "
                         "synthetic sandbox built by synthetic_network_bundle.py).")
@@ -930,6 +1104,9 @@ def parse_args() -> argparse.Namespace:
         args.classif_cv = args.cv
     if args.classif_cv is None:
         args.classif_cv = "logo" if args.classif_level == "epoch" else "group"
+    # Back-compat: --trial-type (singular) → single-element --trial-types.
+    if args.trial_type is not None:
+        args.trial_types = [args.trial_type]
     return args
 
 
@@ -962,31 +1139,37 @@ def main() -> int:
     families = args.families.split()
     per_feature_subset = args.per_feature_features.split()
 
+    trial_tag = "-vs-".join(args.trial_types)
     out_path = (Path(args.output) if args.output
-                else Path("reports/figures")
+                else Path("reports/figures/temp")
                 / (f"network_story_space-{args.space}_yeo{args.yeo}_"
-                   f"type-{args.trial_type}.png"))
+                   f"type-{trial_tag}.png"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ---- Figure geometry: 4 tiers + header + legend
-    # Heights are in arbitrary units; we tune to give brain rows the most space.
+    # Heights scale with the number of compared trial-types so brains, classif
+    # heatmaps, and importance heatmaps all get enough room.
+    n_trials = len(args.trial_types)
     fig_w = 24.0
-    fig_h = 30.0
+    fig_h = 18.0 + 14.0 * n_trials  # 32h for 1 trial, 46h for 2
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=110, facecolor="white")
 
-    # Top: title + Yeo legend; then 4 tiers
+    tier1_h = 10.5 * n_trials  # one 2-row brain block per trial-type
+    tier3_h = 5.0 + 3.5 * n_trials  # bars row + heatmap rows
+    tier4_h = 5.5 * n_trials + 2.0  # importance heatmaps + coherence row
     gs = GridSpec(
         nrows=6, ncols=1, figure=fig,
-        height_ratios=[0.5, 0.45, 10.5, 5.0, 7.0, 7.0],
+        height_ratios=[0.5, 0.45, tier1_h, 5.0, tier3_h, tier4_h],
         hspace=0.25, left=0.04, right=0.98, top=0.97, bottom=0.03,
     )
 
     # ---- Title
     ax_title = fig.add_subplot(gs[0])
     ax_title.axis("off")
+    trial_pretty = " vs ".join(TRIAL_LABEL.get(t, t) for t in args.trial_types)
     title = (
         f"Network story panel — space={args.space} · "
-        f"yeo-{args.yeo} · trial-type={args.trial_type}  |  "
+        f"yeo-{args.yeo} · {trial_pretty}  |  "
         f"stats: {args.stats_level}/{args.stats_correction} · "
         f"classif: {args.classif_level}/{args.classif_correction} "
         f"(cv={args.classif_cv}, scoring=AUC)"
@@ -998,13 +1181,13 @@ def main() -> int:
     # ---- Yeo legend
     _draw_yeo_legend(fig.add_subplot(gs[1]), args.yeo)
 
-    # ---- Tier 1
-    logger.info("Tier 1 — whole-brain maps")
+    # ---- Tier 1 (one 2-row brain block per trial-type)
+    logger.info(f"Tier 1 — whole-brain maps · {trial_pretty}")
     yeo_overlay = None if args.no_yeo_overlay else args.yeo
     try:
         _tier1_brains(
             gs[2], fig, stats_dir=stats_dir, clf_group_dir=clf_group_dir,
-            space=args.space, trial=args.trial_type, inout=inout_str,
+            space=args.space, trial_types=args.trial_types, inout=inout_str,
             clf=args.clf, classif_cv=args.classif_cv,
             features=features, alpha=args.alpha,
             stats_level=args.stats_level,
@@ -1018,14 +1201,12 @@ def main() -> int:
         logger.exception(f"Tier 1 failed: {exc}")
         _placeholder(fig.add_subplot(gs[2]), f"Tier 1 failed: {exc}")
 
-    # ---- Tier 2 (Esterman-style overlay: trial-types grouped per network)
-    logger.info(
-        f"Tier 2 — Esterman overlay: {' vs '.join(args.overlay_trial_types)}"
-    )
+    # ---- Tier 2 (Esterman-style overlay across the compared trial-types)
+    logger.info(f"Tier 2 — Esterman overlay · {trial_pretty}")
     try:
         _tier2_network_bars(
             gs[3], fig, net_dir=stats_net_dir,
-            trial_types=args.overlay_trial_types,
+            trial_types=args.trial_types,
             correction=args.stats_correction,
             features=features, n_networks=args.yeo, alpha=args.alpha,
         )
@@ -1033,12 +1214,13 @@ def main() -> int:
         logger.exception(f"Tier 2 failed: {exc}")
         _placeholder(fig.add_subplot(gs[3]), f"Tier 2 failed: {exc}")
 
-    # ---- Tier 3
-    logger.info("Tier 3 — network-restricted classification")
+    # ---- Tier 3 (per-family bars grouped by trial-type + heatmap per trial-type)
+    logger.info(f"Tier 3 — network-restricted classification · {trial_pretty}")
     try:
         _tier3_classif(
             gs[4], fig, net_dir=classif_net_dir,
-            trial=args.trial_type, clf=args.clf, cv=args.classif_cv,
+            trial_types=args.trial_types,
+            clf=args.clf, cv=args.classif_cv,
             n_networks=args.yeo, families=families,
             per_feature_subset=per_feature_subset, alpha=args.alpha,
         )
@@ -1046,12 +1228,12 @@ def main() -> int:
         logger.exception(f"Tier 3 failed: {exc}")
         _placeholder(fig.add_subplot(gs[4]), f"Tier 3 failed: {exc}")
 
-    # ---- Tier 4
-    logger.info("Tier 4 — multivariate importance + coherence")
+    # ---- Tier 4 (importance heatmap per trial-type + coherence overlay)
+    logger.info(f"Tier 4 — importance + coherence · {trial_pretty}")
     try:
         _tier4_importance_coherence(
             gs[5], fig, classif_net_dir=classif_net_dir,
-            stats_net_dir=stats_net_dir, trial=args.trial_type,
+            stats_net_dir=stats_net_dir, trial_types=args.trial_types,
             clf=args.clf, cv=args.classif_cv, label=args.mf_label,
             n_networks=args.yeo, features=features,
         )
