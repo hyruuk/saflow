@@ -26,7 +26,7 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import yaml
@@ -37,6 +37,7 @@ from code.statistics.corrections import (
     apply_fdr_correction,
     apply_bonferroni_correction,
     apply_tmax_correction,
+    cluster_based_permutation_correction,
 )
 from code.statistics.effect_sizes import (
     compute_cohens_d,
@@ -288,6 +289,7 @@ def load_all_features_batched(
     total_bad_excluded = 0
     per_subject: Dict[str, Dict[str, int]] = {}
     bad_metadata_present = False
+    ch_names_all: Optional[List[str]] = None  # captured once from any npz
 
     for subj_idx, subject in enumerate(
         tqdm(subjects, desc="Loading subjects", unit="subj", disable=None)
@@ -315,6 +317,8 @@ def load_all_features_batched(
             except Exception as exc:
                 logger.warning(f"Could not open {file_path.name}: {exc}")
                 continue
+            if ch_names_all is None and "ch_names" in npz_data.files:
+                ch_names_all = [str(n) for n in npz_data["ch_names"]]
 
             try:
                 meta = npz_data["trial_metadata"].item()
@@ -468,9 +472,13 @@ def load_all_features_batched(
     y = np.array(all_y)
     groups = np.array(all_groups)
 
-    # Spatial names (one lookup is enough)
+    # Spatial names (one lookup is enough). For sensor we use the ch_names
+    # collected from the feature npz files; for atlases we look up the
+    # labels by name.
     spatial_names = None
-    if space not in ("sensor", "source"):
+    if space in ("sensor", "source"):
+        spatial_names = list(ch_names_all) if ch_names_all is not None else None
+    else:
         try:
             import mne
             from code.source_reconstruction.apply_atlas import get_mne_atlas_name
@@ -972,6 +980,62 @@ def compute_all_effect_sizes(
     return effect_sizes
 
 
+def build_sensor_adjacency(
+    spatial_names: Optional[List[str]], config: Dict
+) -> Optional[Tuple[Any, List[str]]]:
+    """Build a sensor adjacency matrix matching ``spatial_names`` order.
+
+    MNE's :func:`mne.channels.find_ch_adjacency` loads the canonical CTF275
+    layout (274 base names like ``MLC11``), while our PSD files carry channel
+    names with a hardware suffix (``MLC11-3105``). We match by base name and
+    re-order/sub-select the adjacency rows to match our data.
+
+    Args:
+        spatial_names: Channel names (in the order they appear in X). If
+            None or empty, returns None.
+        config: Project config (used to find a sample preprocessed MEG file).
+
+    Returns:
+        (adjacency, names) where ``adjacency`` is a sparse n×n matrix and
+        ``names`` is the order matching the input. None if no info can be
+        loaded or names don't match the builtin layout.
+    """
+    import mne
+
+    if not spatial_names:
+        return None
+    spatial_names = list(spatial_names)
+
+    data_root = Path(config["paths"]["data_root"])
+    proc = data_root / "derivatives" / "preprocessed"
+    sample = next(proc.glob("sub-*/meg/*proc-clean_meg.fif"), None)
+    if sample is None:
+        logger.warning(
+            "build_sensor_adjacency: no preprocessed MEG file found under "
+            f"{proc} — cluster correction unavailable."
+        )
+        return None
+    raw = mne.io.read_raw_fif(sample, preload=False, verbose=False)
+    raw.pick_types(meg=True, ref_meg=False, eeg=False, eog=False, stim=False)
+    info = raw.info
+    adj, adj_chs = mne.channels.find_ch_adjacency(info, ch_type=None)
+    # Match by base name (strip "-NNNN" suffix) — find_ch_adjacency on CTF
+    # returns canonical names without the suffix.
+    base_to_idx = {n: i for i, n in enumerate(adj_chs)}
+    order = []
+    for n in spatial_names:
+        base = n.split("-")[0]
+        if base not in base_to_idx:
+            logger.warning(
+                f"build_sensor_adjacency: channel {n!r} (base {base!r}) "
+                f"absent from layout — cluster correction unavailable."
+            )
+            return None
+        order.append(base_to_idx[base])
+    adj = adj[order][:, order]
+    return adj, spatial_names
+
+
 def apply_corrections(
     pvals: np.ndarray,
     tvals: np.ndarray,
@@ -984,6 +1048,9 @@ def apply_corrections(
     n_jobs: int = -1,
     aggregate: str = "median",
     fdr_method: str = "bh",
+    space: Optional[str] = None,
+    spatial_names: Optional[List[str]] = None,
+    config: Optional[Dict] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Apply multiple comparison correction.
 
@@ -994,14 +1061,24 @@ def apply_corrections(
     ``single_trials`` mode, prefer FDR — the tmax null built here is on a
     different scale than a trial-level ``ttest_ind`` t.)
 
+    For ``cluster`` (sensor-level only): MNE's spatio_temporal_cluster_1samp
+    on per-subject IN−OUT differences, with sensor adjacency from the CTF275
+    layout. For non-sensor spaces, falls back to FDR-BH with a warning.
+
     Args:
         pvals, tvals: shape (n_features, n_spatial).
-        correction: 'none', 'fdr', 'bonferroni', 'tmax'.
+        correction: 'none', 'fdr', 'bonferroni', 'tmax', or 'cluster'.
         X, y, groups: trial-level data + labels + subject indices.
-        n_permutations, n_jobs: tmax knobs.
+        n_permutations, n_jobs: tmax / cluster knobs.
         aggregate: 'median' (default) or 'mean' — must match the main
             test's aggregation to keep the test stat and the null
             distribution on the same scale.
+        space: spatial-unit identifier ('sensor' for cluster; atlas name
+            otherwise). Required for ``cluster``.
+        spatial_names: channel names matching the spatial axis of ``X``.
+            Required for ``cluster`` on sensor data.
+        config: project config (used to find a sample MEG file for adjacency).
+            Required for ``cluster``.
 
     Returns:
         (corrected_pvals, sig_mask).
@@ -1057,6 +1134,45 @@ def apply_corrections(
                         ) / (n_permutations + 1)
                     else:
                         corrected[i, j] = 1.0
+
+    elif correction == "cluster":
+        if X is None or y is None or groups is None:
+            logger.warning(
+                "cluster correction requires X, y, groups. Falling back to FDR-BH."
+            )
+            corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
+        elif space != "sensor":
+            logger.warning(
+                f"cluster correction needs a sensor adjacency; space={space!r} "
+                f"has no native adjacency support — falling back to FDR-BH."
+            )
+            corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
+        else:
+            adj_result = build_sensor_adjacency(spatial_names, config or {})
+            if adj_result is None:
+                logger.warning(
+                    "cluster correction: sensor adjacency unavailable — "
+                    "falling back to FDR-BH."
+                )
+                corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
+            else:
+                adjacency, _names = adj_result
+                subj_in, subj_out, _kept = _subject_aggregate(
+                    X, y, groups, aggregate=aggregate
+                )
+                subj_diffs = subj_in - subj_out  # IN − OUT (paired)
+                logger.info(
+                    f"cluster permutation: n_subj={subj_diffs.shape[0]}, "
+                    f"n_features={subj_diffs.shape[1]}, "
+                    f"n_chans={subj_diffs.shape[2]}, n_perm={n_permutations}"
+                )
+                corrected = cluster_based_permutation_correction(
+                    subj_diff=subj_diffs,
+                    adjacency=adjacency,
+                    alpha=alpha,
+                    n_permutations=n_permutations,
+                    n_jobs=n_jobs,
+                )
 
     else:
         logger.warning(f"Unknown correction method: {correction}. Using none.")
@@ -1128,6 +1244,7 @@ def save_statistical_results(
         "tmax": "pvals_tmax",
         "bonferroni": "pvals_bonferroni",
         "holm_bonferroni": "pvals_holm_bonferroni",
+        "cluster": "pvals_cluster_perm",
         "none": "pvals_uncorrected",
     }
     results_dict = {
@@ -1221,9 +1338,15 @@ def main():
     parser.add_argument(
         "--correction",
         type=str,
-        default="fdr",
-        choices=["none", "fdr", "bonferroni", "tmax"],
-        help="Multiple comparison correction method",
+        default="cluster",
+        choices=["none", "fdr", "bonferroni", "tmax", "cluster"],
+        help=(
+            "Multiple comparison correction. 'cluster' (default) uses MNE's "
+            "spatio_temporal_cluster_1samp_test on per-subject IN−OUT diffs "
+            "with sensor adjacency; respects spatial structure and is the "
+            "right default for MEG sensor topomaps. Non-sensor spaces fall "
+            "back to FDR-BH automatically."
+        ),
     )
     parser.add_argument(
         "--fdr-method",
@@ -1465,6 +1588,9 @@ def main():
                     n_jobs=args.n_jobs,
                     aggregate=eff_aggregate or "median",
                     fdr_method=fdr_method,
+                    space=args.space,
+                    spatial_names=metadata.get("spatial_names"),
+                    config=config,
                 )
                 corrected_pvals_dict = {args.correction: corrected_pvals}
 

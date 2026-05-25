@@ -209,6 +209,9 @@ def load_subject_spectrum_features(
     per_subject_counts: Dict[str, Dict[str, Any]] = {}
     input_git_hashes: set = set()
     bad_metadata_present = False
+    # Tracked across subjects — channels should be uniform per the
+    # ch_names_uniform invariant (see memory feedback_ch_names_uniform).
+    ch_names_all: Optional[List[str]] = None
 
     # File desc suffix depends on the window size used by compute_welch_psd
     desc_suffix = "welch" if n_events_window <= 1 else f"welchw{n_events_window}"
@@ -282,6 +285,7 @@ def load_subject_spectrum_features(
         out_run_means: List[np.ndarray] = []
         n_in_total, n_out_total, n_bad_in, n_bad_out = 0, 0, 0, 0
         freqs: Optional[np.ndarray] = None
+        ch_names_subj: Optional[List[str]] = None
 
         for file_path, (in_zone, out_zone), task, inc_task_run, bad in zip(
             run_psd_files, per_run_zones, all_task, all_inc_task, all_bad
@@ -289,6 +293,15 @@ def load_subject_spectrum_features(
             loaded = safe_npz_load(file_path, ["psds", "freqs"])
             psd_block = np.asarray(loaded["psds"])  # (n_epochs, n_chans, n_freqs)
             freqs = np.asarray(loaded["freqs"])
+            if ch_names_subj is None:
+                # ch_names is required by feature writers (see memory:
+                # feedback_ch_names_uniform); read it separately so older
+                # files without the key don't break the whole load.
+                try:
+                    ch_extra = safe_npz_load(file_path, ["ch_names"])
+                    ch_names_subj = [str(n) for n in ch_extra["ch_names"]]
+                except (KeyError, OSError):
+                    ch_names_subj = None
 
             task_mask = select_window_mask(
                 included_task_per_epoch=inc_task_run,
@@ -375,6 +388,8 @@ def load_subject_spectrum_features(
             "n_bad_in": n_bad_in,
             "n_bad_out": n_bad_out,
         }
+        if ch_names_all is None and ch_names_subj is not None:
+            ch_names_all = ch_names_subj
 
     if not subj_cond_agg:
         raise ValueError("No data loaded for any subject in subject-spectrum mode")
@@ -426,6 +441,8 @@ def load_subject_spectrum_features(
             "per_subject": per_subject_counts,
             "input_git_hashes": sorted(input_git_hashes),
         }
+        if ch_names_all is not None:
+            metadata["spatial_names"] = list(ch_names_all)
         out[ft] = (X, y, groups, metadata)
 
     logger.info(

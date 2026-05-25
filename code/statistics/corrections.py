@@ -303,54 +303,88 @@ def apply_tmax_correction(
 
 
 def cluster_based_permutation_correction(
-    X: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
+    subj_diff: np.ndarray,
+    adjacency,
     alpha: float = 0.05,
-    n_permutations: int = 10000,
+    n_permutations: int = 1024,
     threshold: Optional[float] = None,
-    adjacency: Optional[np.ndarray] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Apply cluster-based permutation correction (placeholder).
+    seed: int = 42,
+    n_jobs: int = -1,
+) -> np.ndarray:
+    """MNE cluster-based permutation 1-samp test on per-subject IN-OUT diffs.
 
-    Cluster-based permutation testing identifies clusters of adjacent
-    significant tests and evaluates their significance using permutation
-    testing. This is particularly useful for spatially or temporally
-    structured data.
-
-    Note: This is a placeholder for future implementation using MNE-Python's
-    cluster-based permutation testing.
+    The cluster-forming threshold is the two-sided t-critical at ``alpha`` with
+    ``n_subjects - 1`` degrees of freedom (override via ``threshold``).
+    Each channel's returned p-value is the minimum p-value across all clusters
+    that include the channel (channels not in any cluster get 1.0). This
+    matches the convention used elsewhere in the pipeline (sensor mask =
+    ``pvals < alpha``).
 
     Args:
-        X: Feature data, shape (n_features, n_trials, n_spatial).
-        y: Labels, shape (n_trials,).
-        groups: Subject indices, shape (n_trials,).
-        alpha: Significance threshold. Defaults to 0.05.
-        n_permutations: Number of permutations. Defaults to 10000.
-        threshold: Cluster-forming threshold. Defaults to None (uses t-distribution).
-        adjacency: Spatial adjacency matrix. Defaults to None.
+        subj_diff: Per-subject IN−OUT difference, shape ``(n_subjects, n_features, n_spatial)``.
+            NaN values are zeroed (the corresponding channels stay invalid via
+            the adjacency / valid mask).
+        adjacency: ``scipy.sparse`` adjacency matrix over the spatial axis
+            (square, shape ``(n_spatial, n_spatial)``). Use
+            :func:`build_sensor_adjacency` (in ``run_group_statistics``) for
+            MEG sensor layouts.
+        alpha: Significance threshold (and the cluster-forming threshold if
+            ``threshold`` is None). Defaults to 0.05.
+        n_permutations: Number of sign-flip permutations. Defaults to 1024.
+        threshold: Explicit cluster-forming t-threshold; defaults to the
+            two-sided t-critical at ``alpha``.
+        seed: RNG seed for the permutation. Defaults to 42.
+        n_jobs: Parallel jobs for MNE's permutation loop.
 
     Returns:
-        Tuple containing:
-        - cluster_pvals: P-values for each cluster
-        - cluster_labels: Cluster assignment for each test
-
-    Examples:
-        >>> cluster_pvals, labels = cluster_based_permutation_correction(
-        ...     X, y, groups, n_permutations=10000
-        ... )
+        ``cluster_pvals`` of shape ``(n_features, n_spatial)``. Channels not in
+        any cluster get 1.0; NaN channels in input stay NaN.
     """
-    logger.warning(
-        "Cluster-based permutation correction not yet implemented. "
-        "Consider using MNE-Python's cluster_level.permutation_cluster_test()"
+    from mne.stats import spatio_temporal_cluster_1samp_test
+
+    if subj_diff.ndim != 3:
+        raise ValueError(
+            f"subj_diff must be (n_subj, n_features, n_spatial); got {subj_diff.shape}"
+        )
+    n_subj, n_feat, n_chan = subj_diff.shape
+    if n_subj < 4:
+        logger.warning(
+            f"cluster permutation: only {n_subj} subjects — results unreliable"
+        )
+
+    if threshold is None:
+        threshold = float(stats.t.ppf(1 - alpha / 2, df=n_subj - 1))
+
+    out = np.full((n_feat, n_chan), 1.0)
+    for feat_idx in range(n_feat):
+        d = subj_diff[:, feat_idx, :]
+        valid = ~np.isnan(d).any(axis=0)
+        X = np.where(np.isnan(d), 0.0, d)[:, np.newaxis, :]  # (n_subj, 1, n_chan)
+        try:
+            _, clusters, cluster_pv, _ = spatio_temporal_cluster_1samp_test(
+                X, n_permutations=n_permutations, threshold=threshold,
+                tail=0, adjacency=adjacency, n_jobs=n_jobs, seed=seed,
+                out_type="indices", verbose=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"cluster permutation failed (feat={feat_idx}): {exc}; "
+                f"returning 1.0 for all channels"
+            )
+            out[feat_idx, ~valid] = np.nan
+            continue
+        for i, cl in enumerate(clusters):
+            # cl is a tuple; for (n_obs, 1, n_chan) input cl = (time_idx, chan_idx)
+            chan_idx = cl[1] if len(cl) > 1 else cl[0]
+            out[feat_idx, chan_idx] = np.minimum(out[feat_idx, chan_idx], cluster_pv[i])
+        out[feat_idx, ~valid] = np.nan
+
+    n_sig = int(np.sum(out < alpha))
+    logger.info(
+        f"cluster permutation: {n_sig} channels in significant clusters "
+        f"(α={alpha}, n_perm={n_permutations}, t_thresh={threshold:.3f})"
     )
-
-    # Placeholder: return uncorrected p-values
-    from code.utils.statistics import subject_contrast
-
-    _, _, pvals = subject_contrast(X, y)
-
-    return pvals, np.zeros_like(pvals)
+    return out
 
 
 def compare_correction_methods(

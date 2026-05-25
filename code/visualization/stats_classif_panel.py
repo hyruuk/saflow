@@ -18,7 +18,9 @@ composites (left/right × lateral/medial):
 
 Significance is computed within each topomap's set of spatial units (e.g.
 270 sensors), independently per feature — never pooled across bands or
-metrics. The default FDR uses the ``pvals_fdr_bh`` field (Benjamini-Hochberg
+metrics. The default cluster correction uses the ``pvals_cluster_perm`` field
+(MNE spatio-temporal cluster permutation; sensor-level). The legacy FDR option
+uses the ``pvals_fdr_bh`` field (Benjamini-Hochberg
 over the 270 sensors of that feature). Old stats files used the key
 ``pvals_corrected_fdr`` for the same quantity; both are accepted.
 
@@ -85,6 +87,7 @@ CMAP_AUC = "magma"
 # (current writers) come first; legacy stats keys are kept as fallbacks so
 # pre-rename npz files still load.
 PVAL_KEYS = {
+    "cluster":     ["pvals_cluster_perm", "pvals_corrected_cluster_perm"],
     "fdr":         ["pvals_fdr_bh", "pvals_corrected_fdr_bh", "pvals_corrected_fdr"],
     "tmax":        ["pvals_tmax", "pvals_corrected_tmax"],
     "bonferroni":  ["pvals_bonferroni", "pvals_corrected_bonferroni"],
@@ -344,10 +347,11 @@ def main() -> int:
     # Stats vs classif knobs are independent. Default panel mixes
     # subject-level / FDR stats with single-epoch / tmax classification.
     parser.add_argument(
-        "--stats-correction", default="fdr", choices=list(PVAL_KEYS.keys()),
+        "--stats-correction", default="cluster", choices=list(PVAL_KEYS.keys()),
         help="P-value correction for stats topomaps/brains (rows A, G, I). "
              "Computed per spatial map (per-feature, never pooled across "
-             "bands/metrics). Default: fdr.",
+             "bands/metrics). Default: cluster (MNE spatio-temporal cluster "
+             "permutation, sensor-level). 'fdr' falls back to Benjamini-Hochberg.",
     )
     parser.add_argument(
         "--stats-level", default="average", choices=["average", "epoch"],
