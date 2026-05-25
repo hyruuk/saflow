@@ -3472,6 +3472,46 @@ slurm = Collection("slurm")
 slurm.add_task(slurm_jobs, name="jobs")
 slurm.add_task(slurm_cancel, name="cancel")
 
+
+# Manuscript helpers
+@task(help={
+    "fig": "Which figure to export (2, 3, 4, 5, or 'all').",
+    "space": "Spatial label for the stats/classif files (default: schaefer_400).",
+    "trial_type": "Trial-type token in the result filenames (default: alltrials).",
+    "alpha": "Significance threshold for the n_significant counts (default: 0.05).",
+})
+def manuscript_export_tables(c, fig="all", space="schaefer_400",
+                              trial_type="alltrials", alpha=0.05):
+    """Export per-figure CSV tables of values plotted in the manuscript figures.
+
+    Writes long-format and summary CSVs to reports/manuscript/tables/. Tables
+    for Figures 4 and 5 emit a warning until their result files are produced.
+    """
+    cmd = [
+        get_python_executable(),
+        "scripts/export_figure_tables.py",
+        "--fig", fig,
+        "--space", space,
+        "--trial-type", trial_type,
+        "--alpha", str(alpha),
+    ]
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task(help={"open_pdf": "Open the rendered PDF after building (default: False)."})
+def manuscript_render(c, open_pdf=False):
+    """Render reports/manuscript/main.tex to main.pdf (pdflatex + biber + 2 passes)."""
+    cmd = ["scripts/render_manuscript.sh"]
+    if open_pdf:
+        cmd.append("--open")
+    c.run(" ".join(cmd), pty=True)
+
+
+manuscript = Collection("manuscript")
+manuscript.add_task(manuscript_export_tables, name="export-tables")
+manuscript.add_task(manuscript_render, name="render")
+
 # Build main namespace
 namespace = Collection()
 namespace.add_collection(dev)
@@ -3481,6 +3521,7 @@ namespace.add_collection(pipeline)
 namespace.add_collection(analysis)
 namespace.add_collection(viz)
 namespace.add_collection(slurm)
+namespace.add_collection(manuscript)
 
 
 # Default task
