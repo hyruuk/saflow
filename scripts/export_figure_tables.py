@@ -1,11 +1,23 @@
 """Export per-figure CSV tables from result files for the manuscript.
 
-For each figure in the manuscript, produces a long CSV (one row per
-ROI/sensor x feature) and a short summary CSV (one row per feature).
-Tables are written to reports/tables/.
+Tables are exhaustive (more inclusive than the cherry-picked figure panels):
+they contain every feature, trial-type and analysis-level for which a result
+file exists. The figure panels select a subset of these for the headline plot;
+the manuscript text and supplementary tables can read the full picture from
+these CSVs.
 
-Tables for Fig 4 (multifeature) and Fig 5 (networks) are stubbed and
-emit a warning until their result files are produced.
+Outputs (under reports/tables/, override with --out-dir):
+  - fig2_behavior_per_subject.csv, fig2_behavior_summary.csv
+  - fig3_stats_per_roi.csv      (long: per feature × trial_type × ROI)
+  - fig3_stats_summary.csv      (one row per feature × trial_type)
+  - fig3_classif_per_roi.csv    (long: per feature × trial_type × level × ROI)
+  - fig3_classif_summary.csv    (one row per feature × trial_type × level)
+  - fig4_*.csv, fig5_*.csv      (stub warnings until results files exist)
+
+Stats and classification values use the same keys as
+code/visualization/stats_classif_panel.py — `pvals_cluster_perm` and
+`pvals_tmax` respectively — so n_significant counts in this CSV will match
+the `n=X sig` overlays printed on the panel figure.
 
 Usage:
     python scripts/export_figure_tables.py --fig all
@@ -17,9 +29,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -31,25 +44,39 @@ if str(PROJECT_ROOT) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-SCHAEFER_400_FEATURES: Tuple[Tuple[str, str, str], ...] = (
-    ("psd_theta",            "Theta (4-8 Hz)",           "raw"),
-    ("psd_alpha",            "Alpha (8-12 Hz)",          "raw"),
-    ("psd_lobeta",           "Low Beta (12-20 Hz)",      "raw"),
-    ("psd_hibeta",           "High Beta (20-30 Hz)",     "raw"),
-    ("psd_gamma1",           "Gamma 1 (30-60 Hz)",       "raw"),
-    ("psd_gamma2",           "Gamma 2 (60-90 Hz)",       "raw"),
-    ("psd_gamma3",           "Gamma 3 (90-120 Hz)",      "raw"),
-    ("fooof_exponent",       "FOOOF exponent",           "fooof"),
-    ("fooof_offset",         "FOOOF offset",             "fooof"),
-    ("fooof_r_squared",      "FOOOF R^2",                "fooof"),
-    ("psd_corrected_theta",  "Corrected Theta",          "corrected"),
-    ("psd_corrected_alpha",  "Corrected Alpha",          "corrected"),
-    ("psd_corrected_lobeta", "Corrected Low Beta",       "corrected"),
-    ("psd_corrected_hibeta", "Corrected High Beta",      "corrected"),
-    ("psd_corrected_gamma1", "Corrected Gamma 1",        "corrected"),
-    ("psd_corrected_gamma2", "Corrected Gamma 2",        "corrected"),
-    ("psd_corrected_gamma3", "Corrected Gamma 3",        "corrected"),
+# ---------------------------------------------------------------------------
+# Region-name parsing (Schaefer 400, 7-network ordering)
+# ---------------------------------------------------------------------------
+
+_SCHAEFER_RE = re.compile(
+    r"7Networks_(?P<hemi>LH|RH)_(?P<network>[A-Za-z]+)_(?P<region>.+)-(?P<hemi_suffix>lh|rh)$"
 )
+
+
+def _parse_schaefer_label(name: str) -> Tuple[str, str, str]:
+    """Return (network, hemisphere, sub-region) for a Schaefer ROI label.
+
+    Background/medial-wall labels return ("Background", hemi, "MedialWall").
+    """
+    if name.startswith("Background"):
+        hemi = "lh" if name.endswith("-lh") else "rh"
+        return "Background", hemi, "MedialWall"
+    m = _SCHAEFER_RE.match(name)
+    if not m:
+        return "Unknown", "unknown", name
+    return m.group("network"), m.group("hemi").lower(), m.group("region")
+
+
+def _load_schaefer_400_roi_names() -> List[str]:
+    import mne
+    sd = mne.get_config("SUBJECTS_DIR")
+    labels = mne.read_labels_from_annot(
+        "fsaverage",
+        parc="Schaefer2018_400Parcels_7Networks_order",
+        subjects_dir=sd,
+        verbose=False,
+    )
+    return sorted(label.name for label in labels)
 
 
 # ---------------------------------------------------------------------------
@@ -136,19 +163,63 @@ def export_fig2(out_dir: Path, inout_bounds: Tuple[int, int] = (25, 75)) -> None
 
 
 # ---------------------------------------------------------------------------
-# Fig 3 — stats + classification (Schaefer 400)
+# Fig 3 — feature catalogue
 # ---------------------------------------------------------------------------
 
-def _load_schaefer_400_roi_names() -> list:
-    import mne
-    sd = mne.get_config("SUBJECTS_DIR")
-    labels = mne.read_labels_from_annot(
-        "fsaverage",
-        parc="Schaefer2018_400Parcels_7Networks_order",
-        subjects_dir=sd,
-        verbose=False,
-    )
-    return sorted(label.name for label in labels)
+PSD_BANDS = ("delta", "theta", "alpha", "lobeta", "hibeta", "gamma1", "gamma2", "gamma3")
+FOOOF_PARAMS = ("exponent", "offset", "r_squared")
+COMPLEXITY_FEATURES = (
+    "complexity_lzc_median",
+    "complexity_entropy_permutation",
+    "complexity_entropy_spectral",
+    "complexity_entropy_svd",
+    "complexity_fractal_petrosian",
+)
+
+
+def _enumerate_features() -> List[Tuple[str, str, str]]:
+    """Return list of (feature_id, feature_group, display_name)."""
+    out: List[Tuple[str, str, str]] = []
+    band_display = {
+        "delta": "Delta (2-4 Hz)",
+        "theta": "Theta (4-8 Hz)",
+        "alpha": "Alpha (8-12 Hz)",
+        "lobeta": "Low Beta (12-20 Hz)",
+        "hibeta": "High Beta (20-30 Hz)",
+        "gamma1": "Gamma 1 (30-60 Hz)",
+        "gamma2": "Gamma 2 (60-90 Hz)",
+        "gamma3": "Gamma 3 (90-120 Hz)",
+    }
+    for b in PSD_BANDS:
+        out.append((f"psd_{b}", "raw_psd", band_display[b]))
+    for p in FOOOF_PARAMS:
+        out.append((f"fooof_{p}",
+                    "fooof",
+                    {"exponent": "FOOOF exponent",
+                     "offset": "FOOOF offset",
+                     "r_squared": "FOOOF R^2"}[p]))
+    for b in PSD_BANDS:
+        out.append((f"psd_corrected_{b}",
+                    "corrected_psd",
+                    f"Corrected {band_display[b]}"))
+    for c in COMPLEXITY_FEATURES:
+        out.append((c, "complexity", c.replace("complexity_", "").replace("_", " ").title()))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Fig 3 — stats (per-ROI long + per-feature summary)
+# ---------------------------------------------------------------------------
+
+STATS_KEYS = {
+    "tvals": "tvals",
+    "contrast": "contrast",
+    "pvals_uncorrected": "p_uncorrected",
+    "pvals_cluster_perm": "p_cluster_perm",
+    "effectsize_cohens_d_paired": "cohens_d",
+    "effectsize_hedges_g_paired": "hedges_g",
+    "effectsize_eta_squared": "eta_squared",
+}
 
 
 def _stats_path(stats_dir: Path, feature: str, trial_type: str) -> Path:
@@ -158,110 +229,236 @@ def _stats_path(stats_dir: Path, feature: str, trial_type: str) -> Path:
     )
 
 
-def _classif_path(clf_dir: Path, feature: str, space: str, trial_type: str) -> Path:
+def _load_stats_arrays(path: Path) -> dict:
+    out = {}
+    with np.load(path, allow_pickle=True) as npz:
+        for src_key, dst_key in STATS_KEYS.items():
+            if src_key in npz.files:
+                out[dst_key] = np.asarray(npz[src_key]).flatten()
+            else:
+                out[dst_key] = None
+    return out
+
+
+def _classif_path(clf_dir: Path, feature: str, space: str,
+                  trial_type: str, level: str) -> Path:
+    cv = "logo" if level == "epoch" else "group"
     return clf_dir / (
         f"feature-{feature}_space-{space}_inout-2575_clf-logistic_"
-        f"cv-logo_mode-univariate_level-epoch_type-{trial_type}_scores.npz"
+        f"cv-{cv}_mode-univariate_level-{level}_type-{trial_type}_scores.npz"
     )
+
+
+CLASSIF_KEYS = {
+    "observed": "observed",
+    "metrics_roc_auc": "AUC",
+    "metrics_balanced_accuracy": "balanced_accuracy",
+    "metrics_accuracy": "accuracy",
+    "pvals_uncorrected": "p_uncorrected",
+    "pvals_tmax": "p_tmax",
+    "pvals_fdr_bh": "p_fdr_bh",
+    "pvals_bonferroni": "p_bonferroni",
+}
+
+
+def _load_classif_arrays(path: Path) -> dict:
+    out = {}
+    with np.load(path, allow_pickle=True) as npz:
+        for src_key, dst_key in CLASSIF_KEYS.items():
+            if src_key in npz.files:
+                out[dst_key] = np.asarray(npz[src_key]).flatten()
+            else:
+                out[dst_key] = None
+    return out
 
 
 def export_fig3(
     results_root: Path,
     out_dir: Path,
     space: str = "schaefer_400",
-    trial_type: str = "alltrials",
+    trial_types: Iterable[str] = ("alltrials", "correct", "lapse"),
+    levels: Iterable[str] = ("average", "epoch"),
     alpha: float = 0.05,
 ) -> None:
     stats_dir = results_root / f"statistics_{space}"
     clf_dir = results_root / f"classification_{space}" / "group"
     roi_names = _load_schaefer_400_roi_names()
-    n_rois_expected = len(roi_names)
+    n_expected = len(roi_names)
 
-    long_rows = []
-    summary_rows = []
+    parsed = [_parse_schaefer_label(n) for n in roi_names]
+    networks = [p[0] for p in parsed]
+    hemis = [p[1] for p in parsed]
+    subregions = [p[2] for p in parsed]
 
-    for feature, display, group in SCHAEFER_400_FEATURES:
-        stats_fp = _stats_path(stats_dir, feature, trial_type)
-        clf_fp = _classif_path(clf_dir, feature, space, trial_type)
-        if not stats_fp.exists():
-            logger.warning("missing stats: %s", stats_fp.name)
-            continue
-        if not clf_fp.exists():
-            logger.warning("missing classif: %s", clf_fp.name)
-            continue
+    features = _enumerate_features()
 
-        sd = np.load(stats_fp, allow_pickle=True)
-        cd = np.load(clf_fp, allow_pickle=True)
+    stats_rows: List[dict] = []
+    stats_summary: List[dict] = []
+    classif_rows: List[dict] = []
+    classif_summary: List[dict] = []
 
-        tvals = np.asarray(sd["tvals"]).squeeze()
-        contrast = np.asarray(sd["contrast"]).squeeze()
-        pvals_unc = np.asarray(sd["pvals_uncorrected"]).squeeze()
-        pvals_cp = np.asarray(sd["pvals_cluster_perm"]).squeeze()
-        cohens = np.asarray(sd["effectsize_cohens_d_paired"]).squeeze()
-        auc = np.asarray(cd["metrics_roc_auc"])
-        p_tmax = np.asarray(cd["pvals_tmax"])
+    for feature, group, display in features:
+        for trial_type in trial_types:
+            stats_fp = _stats_path(stats_dir, feature, trial_type)
+            if stats_fp.exists():
+                arrs = _load_stats_arrays(stats_fp)
+                if arrs["tvals"] is not None:
+                    n = arrs["tvals"].shape[0]
+                    if n != n_expected:
+                        logger.warning(
+                            "stats %s/%s: %d ROIs (expected %d) — ROI alignment may be off",
+                            feature, trial_type, n, n_expected,
+                        )
+                    rn = roi_names[:n]
+                    rn_net = networks[:n]
+                    rn_hemi = hemis[:n]
+                    rn_sub = subregions[:n]
+                    sig_clust = (arrs["p_cluster_perm"] < alpha).astype(bool) \
+                        if arrs["p_cluster_perm"] is not None else np.zeros(n, bool)
+                    sig_unc = (arrs["p_uncorrected"] < alpha).astype(bool) \
+                        if arrs["p_uncorrected"] is not None else np.zeros(n, bool)
+                    for i in range(n):
+                        row = {
+                            "feature": feature,
+                            "feature_group": group,
+                            "display": display,
+                            "trial_type": trial_type,
+                            "roi_name": rn[i],
+                            "network": rn_net[i],
+                            "hemisphere": rn_hemi[i],
+                            "subregion": rn_sub[i],
+                        }
+                        for k in ("tvals", "contrast", "p_uncorrected",
+                                  "p_cluster_perm", "cohens_d", "hedges_g",
+                                  "eta_squared"):
+                            arr = arrs[k]
+                            out_name = "t" if k == "tvals" else k
+                            row[out_name] = float(arr[i]) if arr is not None else np.nan
+                        row["sig_cluster_perm"] = bool(sig_clust[i])
+                        row["sig_uncorrected"] = bool(sig_unc[i])
+                        stats_rows.append(row)
 
-        n = tvals.shape[0]
-        if n != n_rois_expected:
-            logger.warning(
-                "feature %s: %d ROIs (expected %d) — names may be misaligned",
-                feature, n, n_rois_expected,
-            )
-        rn = roi_names[:n]
+                    valid = np.where(np.isfinite(arrs["tvals"]))[0]
+                    if valid.size:
+                        order = valid[np.argsort(-np.abs(arrs["tvals"][valid]))]
+                    else:
+                        order = np.array([], int)
+                    pos = [i for i in order if arrs["tvals"][i] > 0][:3]
+                    neg = [i for i in order if arrs["tvals"][i] < 0][:3]
+                    stats_summary.append({
+                        "feature": feature,
+                        "feature_group": group,
+                        "display": display,
+                        "trial_type": trial_type,
+                        "n_significant_cluster_perm": int(sig_clust.sum()),
+                        "n_significant_uncorrected": int(sig_unc.sum()),
+                        "n_positive_t_sig": int((sig_clust & (arrs["tvals"] > 0)).sum()),
+                        "n_negative_t_sig": int((sig_clust & (arrs["tvals"] < 0)).sum()),
+                        "max_abs_t": float(np.nanmax(np.abs(arrs["tvals"]))),
+                        "max_pos_t": float(np.nanmax(arrs["tvals"])),
+                        "max_neg_t": float(np.nanmin(arrs["tvals"])),
+                        "min_p_cluster_perm": float(np.nanmin(arrs["p_cluster_perm"]))
+                            if arrs["p_cluster_perm"] is not None else np.nan,
+                        "min_p_uncorrected": float(np.nanmin(arrs["p_uncorrected"]))
+                            if arrs["p_uncorrected"] is not None else np.nan,
+                        "mean_cohens_d": float(np.nanmean(arrs["cohens_d"]))
+                            if arrs["cohens_d"] is not None else np.nan,
+                        "top3_positive_t":
+                            "; ".join(f"{rn[i]} (t={arrs['tvals'][i]:+.2f}, "
+                                      f"p_cp={arrs['p_cluster_perm'][i]:.3g})"
+                                      for i in pos),
+                        "top3_negative_t":
+                            "; ".join(f"{rn[i]} (t={arrs['tvals'][i]:+.2f}, "
+                                      f"p_cp={arrs['p_cluster_perm'][i]:.3g})"
+                                      for i in neg),
+                    })
 
-        sig_stats = pvals_cp < alpha
-        sig_clf = p_tmax < alpha
+            for level in levels:
+                clf_fp = _classif_path(clf_dir, feature, space, trial_type, level)
+                if not clf_fp.exists():
+                    continue
+                carrs = _load_classif_arrays(clf_fp)
+                if carrs["AUC"] is None:
+                    continue
+                n = carrs["AUC"].shape[0]
+                if n != n_expected:
+                    logger.warning(
+                        "classif %s/%s/%s: %d ROIs (expected %d)",
+                        feature, trial_type, level, n, n_expected,
+                    )
+                rn = roi_names[:n]
+                rn_net = networks[:n]
+                rn_hemi = hemis[:n]
+                rn_sub = subregions[:n]
+                sig_tmax = (carrs["p_tmax"] < alpha).astype(bool) \
+                    if carrs["p_tmax"] is not None else np.zeros(n, bool)
+                sig_fdr = (carrs["p_fdr_bh"] < alpha).astype(bool) \
+                    if carrs["p_fdr_bh"] is not None else np.zeros(n, bool)
+                for i in range(n):
+                    row = {
+                        "feature": feature,
+                        "feature_group": group,
+                        "display": display,
+                        "trial_type": trial_type,
+                        "analysis_level": level,
+                        "cv": "logo" if level == "epoch" else "group",
+                        "roi_name": rn[i],
+                        "network": rn_net[i],
+                        "hemisphere": rn_hemi[i],
+                        "subregion": rn_sub[i],
+                    }
+                    for k in ("AUC", "balanced_accuracy", "accuracy",
+                              "p_uncorrected", "p_tmax", "p_fdr_bh", "p_bonferroni"):
+                        arr = carrs[k]
+                        row[k] = float(arr[i]) if arr is not None else np.nan
+                    row["sig_tmax"] = bool(sig_tmax[i])
+                    row["sig_fdr_bh"] = bool(sig_fdr[i])
+                    classif_rows.append(row)
 
-        for i in range(n):
-            long_rows.append({
-                "feature":       feature,
-                "feature_group": group,
-                "display":       display,
-                "roi_name":      rn[i],
-                "contrast":      float(contrast[i]),
-                "t":             float(tvals[i]),
-                "p_uncorrected": float(pvals_unc[i]),
-                "p_cluster_perm": float(pvals_cp[i]),
-                "cohens_d":      float(cohens[i]),
-                "AUC":           float(auc[i]),
-                "p_tmax":        float(p_tmax[i]),
-                "sig_stats":     bool(sig_stats[i]),
-                "sig_classif":   bool(sig_clf[i]),
-            })
+                valid = np.where(np.isfinite(carrs["AUC"]))[0]
+                if valid.size:
+                    order = valid[np.argsort(-carrs["AUC"][valid])]
+                else:
+                    order = np.array([], int)
+                top = list(order[:3])
+                classif_summary.append({
+                    "feature": feature,
+                    "feature_group": group,
+                    "display": display,
+                    "trial_type": trial_type,
+                    "analysis_level": level,
+                    "cv": "logo" if level == "epoch" else "group",
+                    "n_significant_tmax": int(sig_tmax.sum()),
+                    "n_significant_fdr_bh": int(sig_fdr.sum()),
+                    "mean_AUC": float(np.nanmean(carrs["AUC"])),
+                    "max_AUC": float(np.nanmax(carrs["AUC"])),
+                    "min_p_tmax": float(np.nanmin(carrs["p_tmax"]))
+                        if carrs["p_tmax"] is not None else np.nan,
+                    "top3_parcels_by_AUC":
+                        "; ".join(f"{rn[i]} (AUC={carrs['AUC'][i]:.3f}, "
+                                  f"p_tmax={carrs['p_tmax'][i]:.3g})"
+                                  for i in top),
+                })
 
-        valid_t = np.where(np.isfinite(tvals))[0]
-        idx_t = valid_t[np.argsort(-np.abs(tvals[valid_t]))[:3]] if valid_t.size else np.array([], dtype=int)
-        valid_auc = np.where(np.isfinite(auc))[0]
-        idx_auc = valid_auc[np.argsort(-auc[valid_auc])[:3]] if valid_auc.size else np.array([], dtype=int)
+    stats_long_df = pd.DataFrame(stats_rows)
+    stats_long_path = out_dir / "fig3_stats_per_roi.csv"
+    stats_long_df.to_csv(stats_long_path, index=False)
+    logger.info("wrote %s (%d rows)", stats_long_path, len(stats_long_df))
 
-        summary_rows.append({
-            "feature":               feature,
-            "feature_group":         group,
-            "display":               display,
-            "n_significant_stats":   int(sig_stats.sum()),
-            "max_abs_t":             float(np.nanmax(np.abs(tvals))),
-            "min_p_cluster_perm":    float(np.nanmin(pvals_cp)),
-            "mean_cohens_d":         float(np.nanmean(cohens)),
-            "top3_rois_by_abs_t":    "; ".join(
-                f"{rn[i]} (t={tvals[i]:+.2f})" for i in idx_t
-            ),
-            "n_significant_classif": int(sig_clf.sum()),
-            "mean_AUC":              float(np.nanmean(auc)),
-            "max_AUC":               float(np.nanmax(auc)),
-            "top3_rois_by_AUC":      "; ".join(
-                f"{rn[i]} (AUC={auc[i]:.3f})" for i in idx_auc
-            ),
-        })
+    stats_summary_df = pd.DataFrame(stats_summary)
+    stats_summary_path = out_dir / "fig3_stats_summary.csv"
+    stats_summary_df.to_csv(stats_summary_path, index=False)
+    logger.info("wrote %s (%d rows)", stats_summary_path, len(stats_summary_df))
 
-    long_df = pd.DataFrame(long_rows)
-    long_path = out_dir / "fig3_stats_classif_per_roi.csv"
-    long_df.to_csv(long_path, index=False)
-    logger.info("wrote %s (%d rows)", long_path, len(long_df))
+    classif_long_df = pd.DataFrame(classif_rows)
+    classif_long_path = out_dir / "fig3_classif_per_roi.csv"
+    classif_long_df.to_csv(classif_long_path, index=False)
+    logger.info("wrote %s (%d rows)", classif_long_path, len(classif_long_df))
 
-    summary_df = pd.DataFrame(summary_rows)
-    summary_path = out_dir / "fig3_stats_classif_summary.csv"
-    summary_df.to_csv(summary_path, index=False)
-    logger.info("wrote %s (%d rows)", summary_path, len(summary_df))
+    classif_summary_df = pd.DataFrame(classif_summary)
+    classif_summary_path = out_dir / "fig3_classif_summary.csv"
+    classif_summary_df.to_csv(classif_summary_path, index=False)
+    logger.info("wrote %s (%d rows)", classif_summary_path, len(classif_summary_df))
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +487,10 @@ def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fig", choices=["2", "3", "4", "5", "all"], default="all")
     parser.add_argument("--space", default="schaefer_400")
-    parser.add_argument("--trial-type", default="alltrials")
+    parser.add_argument("--trial-types", nargs="+",
+                        default=["alltrials", "correct", "lapse"])
+    parser.add_argument("--levels", nargs="+",
+                        default=["average", "epoch"])
     parser.add_argument("--results-root", default=None,
                         help="Override results path; defaults to paths.results in config.yaml")
     parser.add_argument("--out-dir", default=None,
@@ -327,7 +527,8 @@ def main(argv: Optional[list] = None) -> int:
             export_fig3(
                 results_root, out_dir,
                 space=args.space,
-                trial_type=args.trial_type,
+                trial_types=tuple(args.trial_types),
+                levels=tuple(args.levels),
                 alpha=args.alpha,
             )
         elif f == "4":
