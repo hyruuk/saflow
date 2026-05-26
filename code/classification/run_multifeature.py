@@ -591,6 +591,28 @@ def run_joint(
 # Persistence
 # ---------------------------------------------------------------------------
 
+def _output_is_complete(scores_path: Path, meta_path: Path) -> bool:
+    """Return True if both result files exist and load without error.
+
+    Used to skip already-completed runs when an array job is re-launched
+    after some tasks died (timeouts, scratch hiccups). A corrupted/partial
+    npz returns False and the caller recomputes.
+    """
+    if not (scores_path.exists() and meta_path.exists()):
+        return False
+    try:
+        with np.load(scores_path, allow_pickle=True) as npz:
+            if "observed" not in npz.files:
+                return False
+        json.loads(meta_path.read_text())
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
+        logger.warning(
+            f"Existing output looks invalid ({e}); will recompute: {scores_path.name}"
+        )
+        return False
+    return True
+
+
 def build_mf_base_name(
     feature_label: str,
     space: str,
@@ -847,6 +869,15 @@ def main():
         "--output-dir", default=None,
         help="Override output directory (default: <results>/classification_<space>/group/).",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help=(
+            "Recompute even when valid result files already exist on disk. "
+            "Default behavior skips axes whose scores.npz + metadata.json are "
+            "both present and loadable — lets a full re-submission of a "
+            "partially-failed array job only re-run the missing pieces."
+        ),
+    )
     args = parser.parse_args()
 
     config = load_config(Path(args.config))
@@ -895,6 +926,44 @@ def main():
     logger.info(f"inout={inout_bounds}  selection={inout_selection}  "
                 f"n_permutations={args.n_permutations}")
     logger.info("=" * 78)
+
+    # Resolve output directory + skip already-complete axes. Filenames depend
+    # only on args (no need to load features first), so a partially-failed
+    # array job can be wholesale re-submitted and this will short-circuit the
+    # axes that already wrote good output.
+    data_root = Path(config["paths"]["data_root"])
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    else:
+        output_dir = (
+            data_root / config["paths"]["results"]
+            / f"classification_{args.space}" / "group_mf"
+        )
+
+    chunkable_axes = {"per-cell", "per-spatial"}
+    axes_pending: List[str] = []
+    for axis in axes:
+        base = build_mf_base_name(
+            label, args.space, inout_bounds, args.clf, args.cv, axis,
+            args.importance, args.trial_type,
+            analysis_level=args.analysis_level,
+            inout_selection=inout_selection,
+        )
+        if args.n_chunks > 1 and axis in chunkable_axes:
+            base += f"_chunk-{args.chunk_idx}of{args.n_chunks}"
+        scores_path = output_dir / f"{base}_scores.npz"
+        meta_path = output_dir / f"{base}_metadata.json"
+        if not args.force and _output_is_complete(scores_path, meta_path):
+            logger.info(f"SKIP axis={axis}: already complete -> {scores_path.name}")
+            continue
+        axes_pending.append(axis)
+
+    if not axes_pending:
+        logger.info("All requested axes already complete; exiting without recompute.")
+        return
+    if axes_pending != axes:
+        logger.info(f"Pending axes after skip: {axes_pending}")
+    axes = axes_pending
 
     # Load stacked features → (n_trials, n_spatial, n_features)
     if len(features) == 1:
@@ -962,22 +1031,11 @@ def main():
             f"feature_importances_; importance will be skipped per slice."
         )
 
-    # Output directory
-    data_root = Path(config["paths"]["data_root"])
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-    else:
-        output_dir = (
-            data_root / config["paths"]["results"]
-            / f"classification_{args.space}" / "group_mf"
-        )
-
     args_dict = {k: v for k, v in vars(args).items()}
 
     # Chunkable axes split their unit-loop into n_chunks slices. All chunks
     # share --seed so the y-permutation sequence is identical, letting the
     # aggregator recompute t-max / FDR / Bonferroni across the full unit set.
-    chunkable_axes = {"per-cell", "per-spatial"}
     chunk_info_by_axis: Dict[str, Optional[Dict]] = {}
     for axis in axes:
         if args.n_chunks > 1 and axis in chunkable_axes:

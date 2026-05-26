@@ -76,6 +76,40 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Transient I/O retry (Lustre / Compute Canada scratch)
+# ---------------------------------------------------------------------------
+
+def _retry_io(func, *, attempts: int = 5, base_delay: float = 0.5,
+              max_delay: float = 10.0, where: str = ""):
+    """Run ``func()`` and retry on transient filesystem errors.
+
+    Compute Canada scratch (Lustre) intermittently raises BrokenPipeError
+    (Errno 108 ESHUTDOWN) on plain stat()/open() when a network hiccup
+    drops the client connection. One bad call would otherwise kill an
+    8-hour classification mid-load.
+    """
+    import random
+    import time
+    last_exc: Optional[OSError] = None
+    for attempt in range(attempts):
+        try:
+            return func()
+        except OSError as e:
+            last_exc = e
+            if attempt + 1 >= attempts:
+                break
+            delay = min(max_delay, base_delay * (2 ** attempt))
+            delay *= 0.5 + random.random()
+            logger.warning(
+                "Transient I/O error%s (attempt %d/%d): %s; retrying in %.1fs",
+                f" on {where}" if where else "", attempt + 1, attempts, e, delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
+# ---------------------------------------------------------------------------
 # Config / provenance
 # ---------------------------------------------------------------------------
 
@@ -239,7 +273,7 @@ def load_classification_data(
 
     data_root = Path(config["paths"]["data_root"])
     feature_root = data_root / config["paths"]["features"] / f"{folder_prefix}_{space}"
-    if not feature_root.exists():
+    if not _retry_io(feature_root.exists, where=str(feature_root)):
         raise FileNotFoundError(f"Feature folder not found: {feature_root}")
 
     if subjects is None:
@@ -268,7 +302,7 @@ def load_classification_data(
 
     for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading", unit="subj", disable=None)):
         subj_dir = feature_root / f"sub-{subject}"
-        if not subj_dir.exists():
+        if not _retry_io(subj_dir.exists, where=str(subj_dir)):
             continue
 
         subj_data = []
@@ -279,21 +313,30 @@ def load_classification_data(
         run_metas: List[RunMeta] = []
 
         for run_pos, run in enumerate(runs):
-            files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_suffix}"))
+            glob_pat = f"sub-{subject}_*_run-{run}_*_{file_suffix}"
+            files = _retry_io(
+                lambda: list(subj_dir.glob(glob_pat)), where=str(subj_dir / glob_pat),
+            )
             if not files:
                 continue
             file_path = files[0]
 
             try:
-                npz = np.load(file_path, allow_pickle=True)
+                npz = _retry_io(
+                    lambda: np.load(file_path, allow_pickle=True),
+                    where=str(file_path),
+                )
             except Exception as e:
                 logger.warning(f"Could not load {file_path.name}: {e}")
                 continue
 
             params_file = file_path.with_name(file_path.stem + "_params.json")
-            if params_file.exists():
+            if _retry_io(params_file.exists, where=str(params_file)):
                 try:
-                    params = json.loads(params_file.read_text())
+                    params_text = _retry_io(
+                        params_file.read_text, where=str(params_file),
+                    )
+                    params = json.loads(params_text)
                     if "git_hash" in params:
                         input_git_hashes.add(params["git_hash"])
                 except Exception:
