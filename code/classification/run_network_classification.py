@@ -71,6 +71,36 @@ logger = logging.getLogger(__name__)
 
 SCOPES: Tuple[str, ...] = ("per-family", "per-feature", "joint")
 
+
+def _output_is_complete(out_path: Path) -> bool:
+    """Return True if a network-classif npz exists and loads cleanly.
+
+    Mirrors ``run_multifeature._output_is_complete`` so a re-submitted
+    SLURM array only re-runs the (scope × trial × network) cells that
+    are actually missing or corrupted.
+    """
+    if not out_path.exists():
+        return False
+    try:
+        with np.load(out_path, allow_pickle=True) as npz:
+            if "scores" not in npz.files or "meta" not in npz.files:
+                return False
+    except (OSError, ValueError, KeyError) as e:
+        logger.warning(
+            f"Existing output looks invalid ({e}); will recompute: {out_path.name}"
+        )
+        return False
+    return True
+
+
+def _build_out_name(
+    yeo: int, scope: str, trial: str, clf: str, cv: str,
+    sel_tok: str, network: Optional[str],
+) -> str:
+    base = (f"classif-networks_yeo{yeo}_scope-{scope}_"
+            f"type-{trial}_clf-{clf}_cv-{cv}{sel_tok}")
+    return f"{base}_net-{network}.npz" if network else f"{base}.npz"
+
 # Default families used by per-family scope. Each maps to the shortcut
 # name that ``expand_feature_set`` understands.
 DEFAULT_FAMILIES: Tuple[str, ...] = ("psds_corrected", "fooof", "complexity")
@@ -336,6 +366,11 @@ def parse_args() -> argparse.Namespace:
                         "Writes a partial *_net-<network>.npz; combine via "
                         "code.classification.aggregate_network_classification. "
                         "Used by SLURM array sharding.")
+    p.add_argument("--force", action="store_true",
+                   help="Recompute even when valid output already exists. "
+                        "Default skips (trial × scope) cells whose npz is "
+                        "present and loads cleanly — lets a re-submitted "
+                        "SLURM array fill only the missing pieces.")
     return p.parse_args()
 
 
@@ -397,8 +432,28 @@ def main() -> None:
         "inout_selection": inout_selection,
     }
 
+    sel_tok = inout_selection_token(inout_selection)
     for trial in trial_types:
         logger.info(f"=== trial-type={trial} ===")
+
+        # Skip-existing: figure out which scopes still need work for this
+        # trial-type BEFORE loading features. Filenames depend only on args,
+        # so we can short-circuit the expensive load when everything is done.
+        scopes_pending: List[str] = []
+        for scope in scopes:
+            out_name = _build_out_name(
+                args.yeo, scope, trial, args.clf, args.cv, sel_tok,
+                args.network,
+            )
+            out_path = out_dir / out_name
+            if not args.force and _output_is_complete(out_path):
+                logger.info(f"  SKIP scope={scope}: already complete -> {out_name}")
+                continue
+            scopes_pending.append(scope)
+        if not scopes_pending:
+            logger.info(f"  trial={trial}: all scopes already complete; skipping load")
+            continue
+
         try:
             X, y, groups, metadata = load_combined_features(
                 features=feature_union,
@@ -467,7 +522,7 @@ def main() -> None:
             seed=args.seed,
         )
 
-        for scope in scopes:
+        for scope in scopes_pending:
             logger.info(f"--- scope={scope} ---")
             if scope == "per-family":
                 payload = _run_scope_per_family(
@@ -493,13 +548,10 @@ def main() -> None:
             else:
                 raise ValueError(f"Unknown scope {scope!r}")
 
-            sel_tok = inout_selection_token(inout_selection)
-            out_base = (f"classif-networks_yeo{args.yeo}_scope-{scope}_"
-                        f"type-{trial}_clf-{args.clf}_cv-{args.cv}{sel_tok}")
-            if args.network is not None:
-                out_name = f"{out_base}_net-{args.network}.npz"
-            else:
-                out_name = f"{out_base}.npz"
+            out_name = _build_out_name(
+                args.yeo, scope, trial, args.clf, args.cv, sel_tok,
+                args.network,
+            )
             out_path = out_dir / out_name
             np.savez(out_path, **payload,
                      meta=np.asarray(json.dumps(provenance_base | {

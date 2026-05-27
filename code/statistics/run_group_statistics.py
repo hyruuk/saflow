@@ -54,6 +54,7 @@ from code.features.inout_selection import (
     concat_zones,
     inout_selection_token,
 )
+from code.classification.run_classification import _retry_io
 from code.features.utils import select_window_mask
 from code.utils.bad_trials import compute_run_bad_mask
 from code.utils.data_loading import load_features, balance_dataset
@@ -250,7 +251,7 @@ def load_all_features_batched(
         )
     file_pattern = file_patterns.pop()
 
-    if not feature_folder.exists():
+    if not _retry_io(feature_folder.exists, where=str(feature_folder)):
         raise FileNotFoundError(f"Feature folder not found: {feature_folder}")
 
     if subjects is None:
@@ -295,7 +296,7 @@ def load_all_features_batched(
         tqdm(subjects, desc="Loading subjects", unit="subj", disable=None)
     ):
         subj_dir = feature_folder / f"sub-{subject}"
-        if not subj_dir.exists():
+        if not _retry_io(subj_dir.exists, where=str(subj_dir)):
             continue
 
         # Per-feature list of per-run arrays for this subject
@@ -307,13 +308,20 @@ def load_all_features_batched(
         run_metas: List[RunMeta] = []
 
         for run_pos, run in enumerate(runs):
-            files = list(subj_dir.glob(f"sub-{subject}_*_run-{run}_*_{file_pattern}"))
+            glob_pat = f"sub-{subject}_*_run-{run}_*_{file_pattern}"
+            files = _retry_io(
+                lambda: list(subj_dir.glob(glob_pat)),
+                where=str(subj_dir / glob_pat),
+            )
             if not files:
                 continue
             file_path = files[0]
 
             try:
-                npz_data = np.load(file_path, allow_pickle=True)
+                npz_data = _retry_io(
+                    lambda: np.load(file_path, allow_pickle=True),
+                    where=str(file_path),
+                )
             except Exception as exc:
                 logger.warning(f"Could not open {file_path.name}: {exc}")
                 continue
@@ -325,9 +333,12 @@ def load_all_features_batched(
 
                 # Provenance
                 params_file = file_path.with_name(file_path.stem + "_params.json")
-                if params_file.exists():
+                if _retry_io(params_file.exists, where=str(params_file)):
                     try:
-                        params = json.loads(params_file.read_text())
+                        params_text = _retry_io(
+                            params_file.read_text, where=str(params_file),
+                        )
+                        params = json.loads(params_text)
                         if "git_hash" in params:
                             input_git_hashes.add(params["git_hash"])
                     except Exception:

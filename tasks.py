@@ -3187,15 +3187,26 @@ def networks_importance(c, space="schaefer_400", label="all", trial_type="all",
 @task
 def networks_all(c, space="schaefer_400", trial_type="all", yeo=7,
                  correction="fdr", clf="logistic", cv="logo",
-                 n_permutations=1000, label="all"):
+                 n_permutations=1000, label="all", slurm=False,
+                 slurm_time=None, slurm_mem=None, slurm_cpus=None,
+                 dry_run=False):
     """Run the full network-layer pipeline (stats agg + coherence + classif + importance).
+
+    With --slurm, the heavy classification stage is submitted as a SLURM
+    array (one task per scope × trial-type × network, with skip-existing
+    so re-submits only fill missing cells) plus an afterok aggregator.
+    The fast stages (stats agg, coherence, importance) still run locally
+    — they're I/O-bound, not CPU-bound, and importance skips trial-types
+    whose joint-mf input hasn't landed yet.
 
     Examples:
         invoke analysis.networks.all --space=schaefer_400
+        invoke analysis.networks.all --space=schaefer_400 --slurm
         invoke analysis.networks.all --space=schaefer_400 --yeo=17
     """
     print("=" * 80)
-    print("Network analysis pipeline (4 stages)")
+    print("Network analysis pipeline (4 stages)" +
+          (" — classify via SLURM" if slurm else ""))
     print("=" * 80)
     networks_aggregate_stats(
         c, space=space, trial_type=trial_type, correction=correction, yeo=yeo,
@@ -3204,6 +3215,8 @@ def networks_all(c, space="schaefer_400", trial_type="all", yeo=7,
     networks_classify(
         c, space=space, scope="all", trial_type=trial_type, yeo=yeo,
         clf=clf, cv=cv, n_permutations=n_permutations,
+        slurm=slurm, slurm_time=slurm_time, slurm_mem=slurm_mem,
+        slurm_cpus=slurm_cpus, dry_run=dry_run,
     )
     networks_importance(
         c, space=space, label=label, trial_type=trial_type, yeo=yeo,
