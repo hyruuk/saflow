@@ -1,7 +1,9 @@
 """Apply atlas/parcellation to source estimates (Stage 2b).
 
 This script applies cortical parcellations (e.g., aparc.a2009s, Schaefer) to morphed
-source estimates, averaging time series within each ROI/label.
+source estimates, aggregating time series within each ROI/label using
+``mne.extract_label_time_course``. Default mode is ``mean_flip`` (appropriate
+for signed dSPM/MNE sources).
 
 Outputs:
 - ROI-averaged time series (.npz format with data + region names)
@@ -26,7 +28,6 @@ import json
 import logging
 import subprocess
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -109,6 +110,15 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        choices=["mean_flip", "mean", "pca_flip", "max", "auto"],
+        help="ROI aggregation mode (passed to mne.extract_label_time_course). "
+             "Default reads from config.source_reconstruction.label_mode (mean_flip).",
+    )
+
+    parser.add_argument(
         "--bids-root",
         type=Path,
         help="Override BIDS root directory from config",
@@ -184,71 +194,67 @@ def apply_atlas_to_stc(
     stc: mne.SourceEstimate,
     atlas: str,
     subjects_dir: Path,
+    mode: str = "mean_flip",
 ) -> Dict[str, np.ndarray]:
-    """Apply atlas to source estimate and average within ROIs.
+    """Apply atlas to source estimate and aggregate within ROIs.
+
+    Uses MNE's ``extract_label_time_course``. For signed source estimates
+    (dSPM, MNE), ``mean_flip`` projects each vertex onto its label's dominant
+    cortical orientation before averaging, avoiding sign cancellation between
+    vertices with opposing dipole orientations.
 
     Args:
-        stc: Source estimate (should be in fsaverage space)
+        stc: Source estimate in fsaverage space
         atlas: Atlas/parcellation name (short name, will be converted to MNE name)
         subjects_dir: FreeSurfer subjects directory
+        mode: Aggregation mode passed to ``extract_label_time_course``
+            (e.g. ``mean_flip``, ``mean``, ``pca_flip``, ``max``).
 
     Returns:
-        Dictionary mapping region names to averaged time series
+        Dictionary mapping region names to aggregated time series
     """
     logger = logging.getLogger(__name__)
 
-    # Convert short name to full MNE atlas name
     mne_atlas_name = get_mne_atlas_name(atlas)
 
-    # Load atlas labels
     logger.debug(f"Loading atlas '{atlas}' ({mne_atlas_name}) from fsaverage")
     labels = mne.read_labels_from_annot(
         "fsaverage", parc=mne_atlas_name, subjects_dir=subjects_dir, verbose=False
     )
     logger.info(f"Loaded {len(labels)} labels from atlas '{atlas}'")
 
-    # Get vertices for left and right hemispheres
-    vertices_lh = stc.vertices[0]
-    vertices_rh = stc.vertices[1]
+    # mean_flip needs cortical surface normals → load the fsaverage source space
+    fsaverage_src_path = subjects_dir / "fsaverage" / "bem" / "fsaverage-oct-6-src.fif"
+    if not fsaverage_src_path.exists():
+        raise FileNotFoundError(
+            f"fsaverage source space not found at {fsaverage_src_path}. "
+            "Run run_inverse_solution.py first to generate it."
+        )
+    src = mne.read_source_spaces(str(fsaverage_src_path), verbose=False)
 
-    # Map vertices to regions (separate by hemisphere to avoid index collisions)
-    vertex_to_region_lh = {}
-    vertex_to_region_rh = {}
+    # Drop labels whose vertices don't intersect this STC's vertices (e.g. medial
+    # wall / unknown). Preserves the previous behavior of only returning ROIs
+    # that actually contain sources.
+    vertices_lh = set(int(v) for v in stc.vertices[0])
+    vertices_rh = set(int(v) for v in stc.vertices[1])
+    nonempty_labels = []
+    for lbl in labels:
+        target = vertices_lh if lbl.hemi == "lh" else vertices_rh
+        if set(int(v) for v in lbl.vertices) & target:
+            nonempty_labels.append(lbl)
+    n_dropped = len(labels) - len(nonempty_labels)
+    if n_dropped:
+        logger.info(f"Dropped {n_dropped} label(s) with no vertices in source space")
 
-    for label in labels:
-        label_vertices = label.vertices
+    label_ts = mne.extract_label_time_course(
+        stc, nonempty_labels, src, mode=mode, allow_empty=False, verbose=False
+    )
+    # label_ts shape: (n_labels, n_times)
 
-        if label.hemi == "lh":
-            common_vertices = np.intersect1d(vertices_lh, label_vertices)
-            for vert in common_vertices:
-                vertex_to_region_lh[vert] = label.name
-        else:
-            common_vertices = np.intersect1d(vertices_rh, label_vertices)
-            for vert in common_vertices:
-                vertex_to_region_rh[vert] = label.name
-
-    logger.debug(f"Mapped {len(vertex_to_region_lh)} lh vertices, {len(vertex_to_region_rh)} rh vertices to regions")
-
-    # Collect data for each region
-    region_data = defaultdict(list)
-
-    # Process left hemisphere
-    for vert_idx, region in vertex_to_region_lh.items():
-        idx = np.where(vertices_lh == vert_idx)[0][0]
-        region_data[region].append(stc.data[idx])
-
-    # Process right hemisphere
-    for vert_idx, region in vertex_to_region_rh.items():
-        idx = np.where(vertices_rh == vert_idx)[0][0]
-        region_data[region].append(stc.data[len(vertices_lh) + idx])
-
-    # Average within each region
     region_averages = {
-        region: np.mean(np.array(data), axis=0)
-        for region, data in region_data.items()
+        lbl.name: label_ts[i] for i, lbl in enumerate(nonempty_labels)
     }
-
-    logger.info(f"Computed averages for {len(region_averages)} regions")
+    logger.info(f"Computed '{mode}' aggregates for {len(region_averages)} regions")
 
     return region_averages
 
@@ -261,6 +267,7 @@ def process_single_run(
     config: dict,
     derivatives_root: Path,
     skip_existing: bool,
+    mode: str = "mean_flip",
 ) -> bool:
     """Process a single subject/run with one atlas.
 
@@ -320,7 +327,7 @@ def process_single_run(
 
     # Apply atlas
     try:
-        region_averages = apply_atlas_to_stc(stc, atlas, fs_subjects_dir)
+        region_averages = apply_atlas_to_stc(stc, atlas, fs_subjects_dir, mode=mode)
     except Exception as e:
         logger.error(f"Failed to apply atlas '{atlas}': {e}", exc_info=True)
         return False
@@ -361,6 +368,7 @@ def process_single_run(
         "run": run,
         "atlas": atlas,
         "processing": processing,
+        "label_mode": mode,
         "n_rois": len(region_names),
         "n_timepoints": int(region_data.shape[1]),
         "sfreq": float(stc.sfreq),
@@ -397,6 +405,13 @@ def main() -> int:
         # Use atlases from config, or fall back to hardcoded defaults
         atlases = config.get("source_reconstruction", {}).get("atlases", DEFAULT_ATLASES)
 
+    # Resolve ROI aggregation mode: CLI > config > default
+    mode = (
+        args.mode
+        or config.get("source_reconstruction", {}).get("label_mode")
+        or "mean_flip"
+    )
+
     # Setup logging
     log_dir = Path(config["paths"]["logs"]) / "source_reconstruction"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -413,6 +428,7 @@ def main() -> int:
     logger.info("=" * 80)
     logger.info(f"Subject: {args.subject}")
     logger.info(f"Atlases: {', '.join(atlases)}")
+    logger.info(f"Label aggregation mode: {mode}")
 
     # Determine paths
     data_root = Path(config["paths"]["data_root"])
@@ -460,6 +476,7 @@ def main() -> int:
                 config=config,
                 derivatives_root=derivatives_root,
                 skip_existing=args.skip_existing,
+                mode=mode,
             )
 
             if success:
