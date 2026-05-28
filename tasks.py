@@ -701,6 +701,155 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
     print(f"\n✓ Atlas application complete for {len(subjects)} subject(s)")
 
 
+@task
+def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
+         skip_existing=True, atlases=None, space="sensor schaefer_400",
+         feature_type="all", n_events_window=8, dry_run=False):
+    """Submit the full per-run pipeline as a chained SLURM job graph.
+
+    Chains preprocess → source-recon → atlas → features as four (or more)
+    SLURM job arrays linked by ``aftercorr:``. All arrays iterate
+    ``for subj in subjects: for run in runs:`` so task N in every array
+    refers to the same (subject, run), letting a slow (sub, run) only
+    block its own downstream chain — other subjects/runs fan out
+    independently. Each stage's ``--skip-existing`` makes no-op tasks exit
+    0 so the chain still triggers.
+
+    Topology (per --space value):
+      - space=sensor      → features depends aftercorr on preprocess
+      - space≠sensor      → features depends aftercorr on atlas
+    Pass multiple spaces as a space-separated string to fan out one
+    features array per space (default: 'sensor schaefer_400').
+
+    Args:
+        subject: single subject id (default: all subjects in config).
+        runs: space-separated run ids (default: all runs in config).
+        bids_root: override BIDS root (default: from config).
+        skip_existing: forwarded to every stage (default True).
+        atlases: forwarded to atlas stage (default: config defaults).
+        space: one or more feature spaces (space-separated).
+        feature_type: forwarded to features stage (default 'all' = PSD +
+            FOOOF + complexity).
+        n_events_window: welch window size (default 8).
+        dry_run: render every per-task script and print the planned chain
+            without submitting.
+
+    Examples:
+        invoke pipeline.full                         # all subjects, sensor + schaefer_400
+        invoke pipeline.full --subject=04            # one subject end-to-end
+        invoke pipeline.full --space=sensor          # sensor features only
+        invoke pipeline.full --feature-type=psd      # PSD only at the features stage
+        invoke pipeline.full --dry-run               # preview submission graph
+    """
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import save_job_manifest
+
+    print("=" * 80)
+    print("pipeline.full | per-run preprocess → source-recon → atlas → features")
+    print("=" * 80)
+
+    config = load_config()
+    subjects = [subject] if subject else config["bids"]["subjects"]
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+    space_list = space.split() if isinstance(space, str) else list(space)
+
+    print(f"Subjects ({len(subjects)}): {' '.join(subjects)}")
+    print(f"Runs ({len(run_list)}): {' '.join(run_list)}")
+    print(f"Feature spaces ({len(space_list)}): {' '.join(space_list)}")
+    print(f"Feature type: {feature_type}  Window: {n_events_window}")
+    print(f"Skip existing: {skip_existing}  Dry-run: {dry_run}")
+    print("=" * 80)
+
+    def _deps(*ids):
+        """Drop None ids; return None if nothing is left so submit_slurm_job
+        omits the --dependency flag (dry-run helpers return None)."""
+        valid = [i for i in ids if i]
+        return valid or None
+
+    # Stage 1: preprocessing (no upstream dep).
+    print(f"\n{'#' * 80}\n# Stage 1/4: preprocessing\n{'#' * 80}")
+    prep_id = _preprocess_slurm(
+        c, subject=subject, runs=runs, bids_root=bids_root,
+        log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
+    )
+
+    # Stage 2: source reconstruction (aftercorr on preprocessing).
+    print(f"\n{'#' * 80}\n# Stage 2/4: source reconstruction "
+          f"(aftercorr:{prep_id or '<prep_array>'})\n{'#' * 80}")
+    src_id = _source_recon_slurm(
+        c, subject=subject, runs=runs, bids_root=bids_root,
+        log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
+        dependencies=_deps(prep_id), dep_type="aftercorr",
+    )
+
+    # Stage 3: atlas application (aftercorr on source-recon).
+    print(f"\n{'#' * 80}\n# Stage 3/4: atlas application "
+          f"(aftercorr:{src_id or '<src_array>'})\n{'#' * 80}")
+    atlas_id = _atlas_slurm(
+        c, subject=subject, runs=runs, atlases=atlases,
+        skip_existing=skip_existing, dry_run=dry_run,
+        dependencies=_deps(src_id), dep_type="aftercorr",
+    )
+
+    # Stage 4: feature extraction — one array per requested space.
+    # sensor doesn't need source recon (operates on cleaned epochs from
+    # preprocessing); atlas-space features need the per-run atlas timeseries.
+    feature_array_ids = {}
+    for i, sp in enumerate(space_list, 1):
+        if sp == "sensor":
+            up_id = prep_id
+            up_label = "preprocess"
+        else:
+            up_id = atlas_id
+            up_label = "atlas"
+        print(f"\n{'#' * 80}\n# Stage 4/4 [{i}/{len(space_list)}]: features "
+              f"({feature_type}, space={sp}, aftercorr:{up_id or f'<{up_label}_array>'})"
+              f"\n{'#' * 80}")
+        feat_id = _features_slurm(
+            c, feature_type, subject=subject, runs=runs, space=sp,
+            skip_existing=skip_existing, log_level=log_level,
+            dry_run=dry_run, n_events_window=n_events_window,
+            dependencies=_deps(up_id), dep_type="aftercorr",
+            array_name=f"{feature_type}_{sp}_array",
+        )
+        feature_array_ids[sp] = feat_id
+
+    # Combined manifest summarizing the full chain.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "pipeline_full"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    all_ids = [j for j in (
+        prep_id, src_id, atlas_id, *feature_array_ids.values(),
+    ) if j]
+    manifest_path = log_dir / f"pipeline_full_manifest_{timestamp}.json"
+    save_job_manifest(all_ids, manifest_path, metadata={
+        "stage": "pipeline_full",
+        "timestamp": timestamp,
+        "subjects": subjects,
+        "runs": run_list,
+        "feature_type": feature_type,
+        "spaces": space_list,
+        "skip_existing": skip_existing,
+        "preprocess_array_id": prep_id,
+        "source_recon_array_id": src_id,
+        "atlas_array_id": atlas_id,
+        "features_array_ids": feature_array_ids,
+        "dry_run": dry_run,
+    })
+
+    print("\n" + "=" * 80)
+    if dry_run:
+        print(f"[DRY RUN] pipeline.full chain planned for "
+              f"{len(subjects)} subject(s) × {len(run_list)} run(s); "
+              f"manifest: {manifest_path}")
+    else:
+        print(f"✓ pipeline.full submitted: prep={prep_id}, src={src_id}, "
+              f"atlas={atlas_id}, features={feature_array_ids}")
+        print(f"  manifest: {manifest_path}")
+    print("=" * 80)
+
+
 # ==============================================================================
 # pipeline.features.* Tasks - Feature Extraction
 # ==============================================================================
@@ -1599,8 +1748,14 @@ def _preprocess_local(c, subject, runs=None, bids_root=None, log_level="INFO", s
 
 
 def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
-                      log_level="INFO", skip_existing=True, dry_run=False):
-    """Submit preprocessing jobs to SLURM."""
+                      log_level="INFO", skip_existing=True, dry_run=False,
+                      dependencies=None, dep_type="afterok"):
+    """Submit preprocessing jobs to SLURM.
+
+    Returns the array job id for the preprocessing array (the report job is
+    chained internally with afterany; callers chaining downstream stages
+    should depend on the array id, not the report id).
+    """
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
@@ -1665,7 +1820,9 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
 
     array_job_id = submit_job_array(
         task_scripts, "preproc_array", base_resources, script_dir, timestamp,
-        max_concurrent=max_concurrent, dry_run=dry_run,
+        max_concurrent=max_concurrent,
+        dependencies=dependencies, dep_type=dep_type,
+        dry_run=dry_run,
     )
 
     # One report job after the whole preprocessing array finishes.
@@ -1707,6 +1864,8 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task preprocessing "
               f"array + 1 report job")
 
+    return array_job_id
+
 
 def _source_recon_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True):
     """Run source reconstruction locally."""
@@ -1726,8 +1885,9 @@ def _source_recon_local(c, subject, runs=None, bids_root=None, log_level="INFO",
 
 
 def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
-                        log_level="INFO", skip_existing=True, dry_run=False):
-    """Submit source reconstruction jobs to SLURM."""
+                        log_level="INFO", skip_existing=True, dry_run=False,
+                        dependencies=None, dep_type="afterok"):
+    """Submit source reconstruction jobs to SLURM. Returns the array job id."""
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
@@ -1798,7 +1958,9 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
 
     array_job_id = submit_job_array(
         task_scripts, "srcrecon_array", base_resources, script_dir, timestamp,
-        max_concurrent=max_concurrent, dry_run=dry_run,
+        max_concurrent=max_concurrent,
+        dependencies=dependencies, dep_type=dep_type,
+        dry_run=dry_run,
     )
 
     if array_job_id:
@@ -1813,10 +1975,17 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
     elif dry_run:
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
+    return array_job_id
+
 
 def _atlas_slurm(c, subject=None, runs=None, atlases=None,
-                 skip_existing=True, dry_run=False):
-    """Submit atlas application jobs to SLURM."""
+                 skip_existing=True, dry_run=False,
+                 dependencies=None, dep_type="afterok"):
+    """Submit atlas application jobs to SLURM as a per-(sub, run) array.
+
+    Returns the array job id. Task ordering matches preprocess/source-recon
+    (subject-major, run-minor) so aftercorr: works across stages.
+    """
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
@@ -1851,7 +2020,7 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
     log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Subjects: {len(subjects)}, Runs: {len(run_list)}")
-    print(f"Total array tasks: {len(subjects)}")  # One task per subject (all runs)
+    print(f"Total array tasks: {len(subjects) * len(run_list)}")
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -1865,25 +2034,30 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
     )
     max_concurrent = slurm_config.get("array_throttle", 0)
 
+    # Per-(subject, run) tasks so the array can be aftercorr-chained from
+    # source-recon and into per-run feature jobs.
     task_scripts = []
     for subj in subjects:
-        job_name = f"atlas_sub-{subj}"
-        context = {
-            **base_resources,
-            "job_name": job_name,
-            "timestamp": timestamp,
-            "subject": subj,
-            "runs": " ".join(run_list),
-            "atlases": atlases,
-            "skip_existing": skip_existing,
-        }
-        script_path = script_dir / f"{job_name}_{timestamp}.sh"
-        render_slurm_script("atlas.sh.j2", context, output_path=script_path)
-        task_scripts.append(script_path)
+        for run in run_list:
+            job_name = f"atlas_sub-{subj}_run-{run}"
+            context = {
+                **base_resources,
+                "job_name": job_name,
+                "timestamp": timestamp,
+                "subject": subj,
+                "runs": run,
+                "atlases": atlases,
+                "skip_existing": skip_existing,
+            }
+            script_path = script_dir / f"{job_name}_{timestamp}.sh"
+            render_slurm_script("atlas.sh.j2", context, output_path=script_path)
+            task_scripts.append(script_path)
 
     array_job_id = submit_job_array(
         task_scripts, "atlas_array", base_resources, script_dir, timestamp,
-        max_concurrent=max_concurrent, dry_run=dry_run,
+        max_concurrent=max_concurrent,
+        dependencies=dependencies, dep_type=dep_type,
+        dry_run=dry_run,
     )
 
     if array_job_id:
@@ -1897,6 +2071,8 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
         print(f"\n✓ Submitted atlas application array ({len(task_scripts)} tasks)")
     elif dry_run:
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
+
+    return array_job_id
 
 
 def _features_local(c, feature_type, subject, runs=None, space="sensor",
@@ -1947,8 +2123,15 @@ def _features_local(c, feature_type, subject, runs=None, space="sensor",
 
 def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
                     skip_existing=True, complexity_types=None, log_level="INFO", dry_run=False,
-                    n_events_window=8):
-    """Submit feature extraction jobs to SLURM."""
+                    n_events_window=8,
+                    dependencies=None, dep_type="afterok",
+                    array_name=None):
+    """Submit feature extraction jobs to SLURM. Returns the array job id.
+
+    array_name overrides the default ``{feature_type}_array`` so multiple
+    feature arrays submitted in one orchestration (e.g. one per space) get
+    distinct array/manifest names.
+    """
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
@@ -2019,13 +2202,17 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
             render_slurm_script("features.sh.j2", context, output_path=script_path)
             task_scripts.append(script_path)
 
+    resolved_array_name = array_name or f"{feature_type}_array"
     array_job_id = submit_job_array(
-        task_scripts, f"{feature_type}_array", base_resources, script_dir, timestamp,
-        max_concurrent=max_concurrent, dry_run=dry_run,
+        task_scripts, resolved_array_name, base_resources, script_dir, timestamp,
+        max_concurrent=max_concurrent,
+        dependencies=dependencies, dep_type=dep_type,
+        dry_run=dry_run,
     )
 
     if array_job_id:
-        manifest_path = log_dir / f"{feature_type}_manifest_{timestamp}.json"
+        manifest_name = f"{resolved_array_name}_manifest_{timestamp}.json"
+        manifest_path = log_dir / manifest_name
         save_job_manifest([array_job_id], manifest_path, metadata={
             "stage": f"features_{feature_type}",
             "feature_type": feature_type,
@@ -2038,6 +2225,8 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
               f"({len(task_scripts)} tasks)")
     elif dry_run:
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
+
+    return array_job_id
 
 
 def _stats_slurm(c, feature_list, spaces, trial_types,
@@ -3326,6 +3515,7 @@ pipeline.add_task(preprocess)
 pipeline.add_task(preprocess_report, name="preprocess-report")
 pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
+pipeline.add_task(full)
 pipeline.add_collection(features)  # Nested: pipeline.features.*
 
 
