@@ -552,13 +552,16 @@ def apply_inverse_continuous(
         info, fwd, noise_cov, loose=loose, depth=depth, verbose=False
     )
 
-    # Apply inverse to continuous data
+    # pick_ori="normal" projects the loose-orientation source vector onto the
+    # cortical surface normal at each vertex, yielding a SIGNED scalar STC
+    # (positive = outward current). Required for label_mode=mean_flip to be
+    # meaningful in downstream atlasing.
     stc = apply_inverse_raw(
         preproc,
         inverse_operator,
         lambda2=lambda2,
         method=method,
-        pick_ori=None,
+        pick_ori="normal",
         verbose=False,
     )
 
@@ -601,13 +604,14 @@ def apply_inverse_to_epochs(
         info, fwd, noise_cov, loose=loose, depth=depth, verbose=False
     )
 
-    # Apply inverse to all epochs
+    # pick_ori="normal": see apply_inverse_continuous for rationale (signed
+    # normal-component STC, required for label_mode=mean_flip).
     stcs = apply_inverse_epochs(
         epochs,
         inverse_operator,
         lambda2=lambda2,
         method=method,
-        pick_ori=None,
+        pick_ori="normal",
         verbose=False,
     )
 
