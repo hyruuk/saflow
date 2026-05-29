@@ -111,6 +111,30 @@ def _fit_fooof_group_on_psd(
     """
     spectral_group_model_class = load_spectral_group_model()
 
+    n_chans = mean_psd.shape[0]
+    exponent = np.full(n_chans, np.nan)
+    offset = np.full(n_chans, np.nan)
+    r_squared = np.full(n_chans, np.nan)
+    corrected = np.full_like(mean_psd, np.nan, dtype=float)
+
+    # specparam errors out if any channel has NaN/Inf or non-positive values
+    # inside the fit range (it log-transforms internally). Fit only the valid
+    # channels and leave the rest as NaN, rather than failing the whole load.
+    in_range = (freq_bins >= freq_range[0]) & (freq_bins <= freq_range[1])
+    if not in_range.any():
+        return exponent, offset, r_squared, corrected
+    valid_ch = np.all(
+        np.isfinite(mean_psd[:, in_range]) & (mean_psd[:, in_range] > 0),
+        axis=1,
+    )
+    if not valid_ch.any():
+        return exponent, offset, r_squared, corrected
+    if not valid_ch.all():
+        logger.warning(
+            "Dropping %d/%d channels from FOOOF fit (NaN/non-positive PSD)",
+            int((~valid_ch).sum()), n_chans,
+        )
+
     fg = spectral_group_model_class(
         peak_width_limits=fooof_params.get("peak_width_limits", [1, 8]),
         max_n_peaks=fooof_params.get("max_n_peaks", 4),
@@ -119,19 +143,14 @@ def _fit_fooof_group_on_psd(
         aperiodic_mode=fooof_params.get("aperiodic_mode", "fixed"),
         verbose=False,
     )
-    fg.fit(freq_bins, mean_psd, freq_range=freq_range, n_jobs=1)
-
-    n_chans = mean_psd.shape[0]
-    exponent = np.full(n_chans, np.nan)
-    offset = np.full(n_chans, np.nan)
-    r_squared = np.full(n_chans, np.nan)
-    corrected = np.full_like(mean_psd, np.nan, dtype=float)
+    fg.fit(freq_bins, mean_psd[valid_ch], freq_range=freq_range, n_jobs=1)
 
     safe_freqs = np.where(freq_bins > 0, freq_bins, np.nan)
     log_psd = np.log10(np.where(mean_psd > 0, mean_psd, np.nan))
 
-    for ch in range(n_chans):
-        fm = get_group_model(fg, ch)
+    valid_idx = np.flatnonzero(valid_ch)
+    for fit_idx, ch in enumerate(valid_idx):
+        fm = get_group_model(fg, fit_idx)
         if not model_has_fit(fm):
             continue
         aperiodic_params = get_aperiodic_params(fm)
@@ -180,6 +199,7 @@ def load_subject_spectrum_features(
     if not feature_types:
         raise ValueError("feature_types must be non-empty")
     parsed = [(ft, *_classify_feature(ft)) for ft in feature_types]
+    needs_fooof = any(family in ("psd_corr", "fooof") for _, family, _ in parsed)
 
     analysis_cfg = config.get("analysis", {})
     bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
@@ -327,13 +347,22 @@ def load_subject_spectrum_features(
         if not in_run_means or not out_run_means or freqs is None:
             continue
 
-        # Mean-of-run-means PSD per condition → one FOOOF fit each.
+        # Mean-of-run-means PSD per condition → one FOOOF fit each (only when
+        # at least one requested feature actually needs FOOOF; raw band power
+        # features are derived directly from mean_psd).
         cond_agg: Dict[str, Dict[str, np.ndarray]] = {}
         for cond, run_means in (("IN", in_run_means), ("OUT", out_run_means)):
             mean_psd = np.nanmean(np.stack(run_means, axis=0), axis=0)
-            exp, offs, r2, corr = _fit_fooof_group_on_psd(
-                mean_psd, freqs, freq_range, fooof_params
-            )
+            if needs_fooof:
+                exp, offs, r2, corr = _fit_fooof_group_on_psd(
+                    mean_psd, freqs, freq_range, fooof_params
+                )
+            else:
+                n_chans = mean_psd.shape[0]
+                exp = np.full(n_chans, np.nan)
+                offs = np.full(n_chans, np.nan)
+                r2 = np.full(n_chans, np.nan)
+                corr = np.full_like(mean_psd, np.nan, dtype=float)
             cond_agg[cond] = dict(
                 mean_psd=mean_psd,
                 corrected_psd=corr,

@@ -142,8 +142,16 @@ def fit_fooof_single(
         verbose=False,
     )
 
-    fm.fit(freq_bins, psd, freq_range=freq_range)
-    has_fit = model_has_fit(fm)
+    # specparam errors out on any NaN/Inf or non-positive value in the input
+    # (it log-transforms internally). Skip the fit and return NaNs instead of
+    # raising — one bad sensor/trial should not kill an entire run.
+    in_range = (freq_bins >= freq_range[0]) & (freq_bins <= freq_range[1])
+    psd_in_range = psd[in_range]
+    if psd_in_range.size == 0 or not np.all(np.isfinite(psd_in_range) & (psd_in_range > 0)):
+        has_fit = False
+    else:
+        fm.fit(freq_bins, psd, freq_range=freq_range)
+        has_fit = model_has_fit(fm)
     aperiodic_params = get_aperiodic_params(fm) if has_fit else np.array([np.nan, np.nan])
 
     # Extract parameters
