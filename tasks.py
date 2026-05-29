@@ -704,7 +704,7 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
 @task
 def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
          skip_existing=True, atlases=None, space="sensor schaefer_400",
-         feature_type="all", n_events_window=8, dry_run=False):
+         feature_type="all", n_events_window=8, skip=None, dry_run=False):
     """Submit the full per-run pipeline as a chained SLURM job graph.
 
     Chains preprocess → source-recon → atlas → features as four (or more)
@@ -731,6 +731,13 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         feature_type: forwarded to features stage (default 'all' = PSD +
             FOOOF + complexity).
         n_events_window: welch window size (default 8).
+        skip: comma-separated stage names to skip submitting. Valid names:
+            ``preprocess``, ``source-recon`` (alias ``source_recon``),
+            ``atlas``, ``features``. Skipped stages are not submitted;
+            downstream stages chain ``aftercorr`` to the most recent
+            non-skipped upstream stage (or no dep if none run). Useful
+            when the corresponding outputs already exist on disk and you
+            only want to (re)run a subset of the chain.
         dry_run: render every per-task script and print the planned chain
             without submitting.
 
@@ -739,6 +746,9 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         invoke pipeline.full --subject=04            # one subject end-to-end
         invoke pipeline.full --space=sensor          # sensor features only
         invoke pipeline.full --feature-type=psd      # PSD only at the features stage
+        invoke pipeline.full --skip=preprocess       # source-recon + atlas + features
+        invoke pipeline.full --skip=preprocess,source-recon  # atlas + features only
+        invoke pipeline.full --skip=features         # everything but features
         invoke pipeline.full --dry-run               # preview submission graph
     """
     from datetime import datetime
@@ -748,6 +758,22 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
     print("=" * 80)
     print("pipeline.full | per-run preprocess → source-recon → atlas → features")
     print("=" * 80)
+
+    # Parse --skip into a normalized set. Accept both source-recon and
+    # source_recon for the source reconstruction stage.
+    valid_stages = {"preprocess", "source-recon", "atlas", "features"}
+    skip_aliases = {"source_recon": "source-recon"}
+    if skip:
+        raw = [s.strip().lower() for s in skip.split(",") if s.strip()]
+        skip_set = {skip_aliases.get(s, s) for s in raw}
+        unknown = skip_set - valid_stages
+        if unknown:
+            raise ValueError(
+                f"Unknown --skip stage(s): {sorted(unknown)}. "
+                f"Valid: {sorted(valid_stages)}"
+            )
+    else:
+        skip_set = set()
 
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
@@ -759,6 +785,8 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
     print(f"Feature spaces ({len(space_list)}): {' '.join(space_list)}")
     print(f"Feature type: {feature_type}  Window: {n_events_window}")
     print(f"Skip existing: {skip_existing}  Dry-run: {dry_run}")
+    if skip_set:
+        print(f"Skipping stages: {', '.join(sorted(skip_set))}")
     print("=" * 80)
 
     def _deps(*ids):
@@ -767,53 +795,89 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         valid = [i for i in ids if i]
         return valid or None
 
+    def _upstream_dep(*candidate_ids):
+        """Walk a chain of (stage_job_id) tuples from immediate-upstream to
+        root and return the most recent non-None id. Skipped stages are
+        passed in as None so downstream chains to the next available."""
+        for cid in candidate_ids:
+            if cid:
+                return _deps(cid)
+        return None
+
     # Stage 1: preprocessing (no upstream dep).
-    print(f"\n{'#' * 80}\n# Stage 1/4: preprocessing\n{'#' * 80}")
-    prep_id = _preprocess_slurm(
-        c, subject=subject, runs=runs, bids_root=bids_root,
-        log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
-    )
+    if "preprocess" in skip_set:
+        print(f"\n{'#' * 80}\n# Stage 1/4: preprocessing  [SKIP]\n{'#' * 80}")
+        prep_id = None
+    else:
+        print(f"\n{'#' * 80}\n# Stage 1/4: preprocessing\n{'#' * 80}")
+        prep_id = _preprocess_slurm(
+            c, subject=subject, runs=runs, bids_root=bids_root,
+            log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
+        )
 
-    # Stage 2: source reconstruction (aftercorr on preprocessing).
-    print(f"\n{'#' * 80}\n# Stage 2/4: source reconstruction "
-          f"(aftercorr:{prep_id or '<prep_array>'})\n{'#' * 80}")
-    src_id = _source_recon_slurm(
-        c, subject=subject, runs=runs, bids_root=bids_root,
-        log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
-        dependencies=_deps(prep_id), dep_type="aftercorr",
-    )
+    # Stage 2: source reconstruction (aftercorr on preprocessing if it ran).
+    if "source-recon" in skip_set:
+        print(f"\n{'#' * 80}\n# Stage 2/4: source reconstruction  [SKIP]\n{'#' * 80}")
+        src_id = None
+    else:
+        src_dep = _upstream_dep(prep_id)
+        print(f"\n{'#' * 80}\n# Stage 2/4: source reconstruction "
+              f"(aftercorr:{prep_id or '<none>'})\n{'#' * 80}")
+        src_id = _source_recon_slurm(
+            c, subject=subject, runs=runs, bids_root=bids_root,
+            log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
+            dependencies=src_dep, dep_type="aftercorr",
+        )
 
-    # Stage 3: atlas application (aftercorr on source-recon).
-    print(f"\n{'#' * 80}\n# Stage 3/4: atlas application "
-          f"(aftercorr:{src_id or '<src_array>'})\n{'#' * 80}")
-    atlas_id = _atlas_slurm(
-        c, subject=subject, runs=runs, atlases=atlases,
-        skip_existing=skip_existing, dry_run=dry_run,
-        dependencies=_deps(src_id), dep_type="aftercorr",
-    )
+    # Stage 3: atlas application (aftercorr on the nearest upstream stage).
+    if "atlas" in skip_set:
+        print(f"\n{'#' * 80}\n# Stage 3/4: atlas application  [SKIP]\n{'#' * 80}")
+        atlas_id = None
+    else:
+        atlas_dep = _upstream_dep(src_id, prep_id)
+        upstream_label = src_id and "src" or prep_id and "prep" or "<none>"
+        atlas_dep_str = (atlas_dep[0] if atlas_dep else "<none>")
+        print(f"\n{'#' * 80}\n# Stage 3/4: atlas application "
+              f"(aftercorr:{atlas_dep_str} [{upstream_label}])\n{'#' * 80}")
+        atlas_id = _atlas_slurm(
+            c, subject=subject, runs=runs, atlases=atlases,
+            skip_existing=skip_existing, dry_run=dry_run,
+            dependencies=atlas_dep, dep_type="aftercorr",
+        )
 
     # Stage 4: feature extraction — one array per requested space.
     # sensor doesn't need source recon (operates on cleaned epochs from
     # preprocessing); atlas-space features need the per-run atlas timeseries.
     feature_array_ids = {}
-    for i, sp in enumerate(space_list, 1):
-        if sp == "sensor":
-            up_id = prep_id
-            up_label = "preprocess"
-        else:
-            up_id = atlas_id
-            up_label = "atlas"
-        print(f"\n{'#' * 80}\n# Stage 4/4 [{i}/{len(space_list)}]: features "
-              f"({feature_type}, space={sp}, aftercorr:{up_id or f'<{up_label}_array>'})"
-              f"\n{'#' * 80}")
-        feat_id = _features_slurm(
-            c, feature_type, subject=subject, runs=runs, space=sp,
-            skip_existing=skip_existing, log_level=log_level,
-            dry_run=dry_run, n_events_window=n_events_window,
-            dependencies=_deps(up_id), dep_type="aftercorr",
-            array_name=f"{feature_type}_{sp}_array",
-        )
-        feature_array_ids[sp] = feat_id
+    if "features" in skip_set:
+        print(f"\n{'#' * 80}\n# Stage 4/4: features  [SKIP]\n{'#' * 80}")
+    else:
+        for i, sp in enumerate(space_list, 1):
+            if sp == "sensor":
+                # sensor features chain back through preprocess only.
+                up_dep = _upstream_dep(prep_id)
+                up_label = "preprocess"
+            else:
+                # non-sensor features prefer atlas → source-recon → preprocess.
+                up_dep = _upstream_dep(atlas_id, src_id, prep_id)
+                up_label = (
+                    "atlas" if atlas_id
+                    else "source-recon" if src_id
+                    else "preprocess" if prep_id
+                    else "<none>"
+                )
+            up_dep_str = up_dep[0] if up_dep else "<none>"
+            print(f"\n{'#' * 80}\n# Stage 4/4 [{i}/{len(space_list)}]: features "
+                  f"({feature_type}, space={sp}, aftercorr:{up_dep_str} [{up_label}])"
+                  f"\n{'#' * 80}")
+            feat_id = _features_slurm(
+                c, feature_type, subject=subject, runs=runs, space=sp,
+                skip_existing=skip_existing, log_level=log_level,
+                dry_run=dry_run, n_events_window=n_events_window,
+                dependencies=up_dep, dep_type="aftercorr",
+                array_name=f"{feature_type}_{sp}_array",
+            )
+            feature_array_ids[sp] = feat_id
 
     # Combined manifest summarizing the full chain.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -831,6 +895,7 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         "feature_type": feature_type,
         "spaces": space_list,
         "skip_existing": skip_existing,
+        "skipped_stages": sorted(skip_set),
         "preprocess_array_id": prep_id,
         "source_recon_array_id": src_id,
         "atlas_array_id": atlas_id,
