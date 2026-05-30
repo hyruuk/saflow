@@ -515,6 +515,32 @@ def validate_inputs(c, data_root=None, verbose=False):
 
 
 @task
+def validate_all(c, space=None, families=None, subjects=None, window=8):
+    """Validate the feature pipeline and print a copy-pasteable health report.
+
+    Scans welch_psds / welch_psds_corrected / fooof / complexity across spaces,
+    flags NaN/dead-trial corruption (incl. the contiguous valid-block
+    signature), degenerate all-zero metrics, missing ch_names, and all-NaN
+    group-stats outputs. Prints a plain-text report + a REGENERATE list.
+
+    Examples:
+        invoke validate.all
+        invoke validate.all --space schaefer_400
+        invoke validate.all --space schaefer_400 --families fooof,welch_psds
+        invoke validate.all --subjects 17,18,26
+    """
+    python_exe = get_python_executable()
+    cmd = [python_exe, "-m", "code.utils.validate_pipeline", "--window", str(window)]
+    if space:
+        cmd.extend(["--space", space])
+    if families:
+        cmd.extend(["--families", families])
+    if subjects:
+        cmd.extend(["--subjects", subjects])
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def bids(c, input_dir=None, output_dir=None, subjects=None, log_level="INFO", dry_run=False):
     """Run BIDS conversion (Stage 0).
 
@@ -3780,11 +3806,16 @@ manuscript = Collection("manuscript")
 manuscript.add_task(manuscript_export_tables, name="export-tables")
 manuscript.add_task(manuscript_render, name="render")
 
+# Pipeline / feature validation
+validate = Collection("validate")
+validate.add_task(validate_all, name="all")
+
 # Build main namespace
 namespace = Collection()
 namespace.add_collection(dev)
 namespace.add_collection(env)
 namespace.add_collection(get)
+namespace.add_collection(validate)
 namespace.add_collection(pipeline)
 namespace.add_collection(analysis)
 namespace.add_collection(viz)

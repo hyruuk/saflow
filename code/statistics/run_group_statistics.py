@@ -1043,6 +1043,126 @@ def build_sensor_adjacency(
     return adj, spatial_names
 
 
+# Parcel adjacency is identical for every feature/contrast in a run, so the
+# expensive surface walk is cached per atlas (keyed by space).
+_ATLAS_ADJ_CACHE: Dict[str, Tuple[Any, List[str]]] = {}
+
+
+def build_atlas_adjacency(
+    space: str, spatial_names: Optional[List[str]], config: Dict
+) -> Optional[Tuple[Any, List[str]]]:
+    """Build a parcel adjacency matrix for an atlas space (e.g. schaefer_400).
+
+    Two parcels are adjacent when any edge of the fsaverage cortical-surface
+    triangulation connects a vertex in one parcel to a vertex in the other.
+    The two hemispheres stay disconnected (separate surfaces), which is the
+    anatomically correct behaviour for a cortical parcellation. The full
+    parcel graph is cached per ``space``; the returned matrix is reordered /
+    sub-selected to match ``spatial_names`` by exact label name, mirroring
+    :func:`build_sensor_adjacency`.
+
+    Args:
+        space: Atlas short name (``'schaefer_400'``, ``'aparc.a2009s'``, …).
+        spatial_names: ROI label names in the order they appear in X
+            (e.g. ``'7Networks_LH_Cont_Cing_1-lh'``). None/empty → None.
+        config: Project config (kept for signature parity with
+            :func:`build_sensor_adjacency`; fsaverage is fetched via MNE).
+
+    Returns:
+        (adjacency, names) with ``adjacency`` a sparse n×n matrix matching
+        ``spatial_names`` order, or None if the atlas/labels/surface can't be
+        loaded or a requested ROI is absent from the parcellation.
+    """
+    import os.path as op
+
+    from scipy import sparse
+
+    if not spatial_names:
+        return None
+    spatial_names = list(spatial_names)
+
+    if space not in _ATLAS_ADJ_CACHE:
+        try:
+            import mne
+            from code.source_reconstruction.apply_atlas import get_mne_atlas_name
+
+            fsaverage_path = mne.datasets.fetch_fsaverage(verbose=False)
+            subjects_dir = Path(fsaverage_path).parent
+            mne_atlas = get_mne_atlas_name(space)
+            labels = mne.read_labels_from_annot(
+                "fsaverage", parc=mne_atlas,
+                subjects_dir=str(subjects_dir), verbose=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"build_atlas_adjacency: could not load atlas '{space}': {exc}"
+            )
+            return None
+
+        names = [lab.name for lab in labels]
+        n_parc = len(labels)
+        rows: List[int] = []
+        cols: List[int] = []
+        for hemi in ("lh", "rh"):
+            hemi_labels = [
+                (gi, lab) for gi, lab in enumerate(labels) if lab.hemi == hemi
+            ]
+            if not hemi_labels:
+                continue
+            surf = op.join(
+                str(subjects_dir), "fsaverage", "surf", f"{hemi}.white"
+            )
+            try:
+                _coords, tris = mne.read_surface(surf, verbose=False)
+            except Exception as exc:
+                logger.warning(
+                    f"build_atlas_adjacency: cannot read surface {surf}: {exc}"
+                )
+                return None
+            # Map every surface vertex to its parcel index (-1 = unassigned).
+            n_vert = int(tris.max()) + 1
+            vert2parc = np.full(n_vert, -1, dtype=np.int64)
+            for gi, lab in hemi_labels:
+                v = lab.vertices[lab.vertices < n_vert]
+                vert2parc[v] = gi
+            # A triangle edge whose two endpoints sit in different parcels is
+            # a parcel border → those parcels are adjacent. (pa != pb already
+            # excludes self-loops, so the diagonal stays zero.)
+            for a, b in ((0, 1), (1, 2), (0, 2)):
+                pa = vert2parc[tris[:, a]]
+                pb = vert2parc[tris[:, b]]
+                m = (pa >= 0) & (pb >= 0) & (pa != pb)
+                rows.extend(pa[m].tolist())
+                cols.extend(pb[m].tolist())
+
+        if not rows:
+            logger.warning(
+                f"build_atlas_adjacency: no parcel borders found for '{space}'."
+            )
+            return None
+        data = np.ones(len(rows), dtype=np.int8)
+        adj_full = sparse.coo_matrix(
+            (data, (rows, cols)), shape=(n_parc, n_parc)
+        ).tocsr()
+        # Symmetrise (each border edge was recorded in one direction only).
+        adj_full = ((adj_full + adj_full.T) > 0).astype(np.int8)
+        _ATLAS_ADJ_CACHE[space] = (adj_full, names)
+
+    adj_full, names = _ATLAS_ADJ_CACHE[space]
+    name_to_idx = {n: i for i, n in enumerate(names)}
+    order = []
+    for n in spatial_names:
+        if n not in name_to_idx:
+            logger.warning(
+                f"build_atlas_adjacency: ROI {n!r} absent from atlas "
+                f"'{space}' parcellation — cluster correction unavailable."
+            )
+            return None
+        order.append(name_to_idx[n])
+    adj = adj_full[order][:, order]
+    return adj, spatial_names
+
+
 def apply_corrections(
     pvals: np.ndarray,
     tvals: np.ndarray,
@@ -1148,17 +1268,22 @@ def apply_corrections(
                 "cluster correction requires X, y, groups. Falling back to FDR-BH."
             )
             corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
-        elif space != "sensor":
-            logger.warning(
-                f"cluster correction needs a sensor adjacency; space={space!r} "
-                f"has no native adjacency support — falling back to FDR-BH."
-            )
-            corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
         else:
-            adj_result = build_sensor_adjacency(spatial_names, config or {})
+            if space == "sensor":
+                adj_result = build_sensor_adjacency(spatial_names, config or {})
+                adj_kind = "sensor"
+            else:
+                # Atlas/parcellation spaces (e.g. schaefer_400): build a
+                # parcel-border adjacency from the fsaverage surface. Returns
+                # None for spaces without a parcellation (e.g. raw 'source'),
+                # which falls through to FDR-BH below.
+                adj_result = build_atlas_adjacency(
+                    space, spatial_names, config or {}
+                )
+                adj_kind = f"atlas:{space}"
             if adj_result is None:
                 logger.warning(
-                    "cluster correction: sensor adjacency unavailable — "
+                    f"cluster correction: {adj_kind} adjacency unavailable — "
                     "falling back to FDR-BH."
                 )
                 corrected = apply_fdr_correction(pvals, alpha, method=fdr_method)
