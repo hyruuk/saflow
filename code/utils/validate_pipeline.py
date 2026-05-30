@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import yaml
+from tqdm import tqdm
 
 # --------------------------------------------------------------------------
 # Family specs: how to find files and what to validate in each.
@@ -220,8 +221,12 @@ def run(config_path: str, spaces: List[str], families: List[str],
         P("")
 
     # ---- feature families x spaces ---------------------------------------
+    combo_bar = tqdm(total=len(spaces) * len(families),
+                     desc="validating feature sets", unit="set")
     for space in spaces:
         for family in families:
+            combo_bar.set_postfix_str(f"{family}_{space}")
+            combo_bar.update(1)
             spec = specs[family]
             fam_dir = features_root / f"{family}_{space}"
             P("-" * 78)
@@ -244,7 +249,9 @@ def run(config_path: str, spaces: List[str], families: List[str],
 
             # ---- single pass: measure every file -------------------------
             measures: Dict[Tuple[str, str], dict] = {}
-            for key, path in sorted(found.items()):
+            for key, path in tqdm(sorted(found.items()),
+                                  desc=f"  scan {family}_{space}",
+                                  unit="file", leave=False):
                 measures[key] = _measure_file(path, spec)
 
             # ---- systematic context: which metrics are dead/degenerate ---
@@ -334,6 +341,7 @@ def run(config_path: str, spaces: List[str], families: List[str],
 
             P(f"  health   : {clean}/{len(found)} files clean")
             P("")
+    combo_bar.close()
 
     # ---- group statistics NaN check --------------------------------------
     results_root = data_root / config["paths"]["results"]
@@ -347,7 +355,9 @@ def run(config_path: str, spaces: List[str], families: List[str],
         nan_feats: Dict[str, int] = {}
         ok_files = 0
         n_nan = 0
-        for f in sorted(sdir.glob("*_results.npz")):
+        for f in tqdm(sorted(sdir.glob("*_results.npz")),
+                      desc=f"  scan statistics_{space}",
+                      unit="file", leave=False):
             feat = f.name.split("_inout")[0].replace("feature-", "")
             try:
                 with np.load(f, allow_pickle=True) as z:
