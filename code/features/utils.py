@@ -168,7 +168,7 @@ def segment_spatial_temporal_data(
     stim_trials["bad_ar2"] = per_trial_bad
     stim_trials["bad_ar1"] = per_trial_bad_ar1
 
-    segmented_array = []
+    window_bounds = []  # (start_sample, end_sample) per kept window
     metadata_rows = []
 
     for i, trial in stim_trials.iterrows():
@@ -194,9 +194,9 @@ def segment_spatial_temporal_data(
             logger.debug(f"Skipping trial {i}: window starts before data")
             continue
 
-        # Extract segment
-        segment = data[:, start_sample:end_sample]
-        segmented_array.append(segment)
+        # Record window bounds; the actual fixed-length extraction happens
+        # after the loop once the common window length is known.
+        window_bounds.append((start_sample, end_sample))
 
         row = dict(trial)  # anchor trial's events row
         row["window_start"] = start_sample / sfreq
@@ -243,18 +243,31 @@ def segment_spatial_temporal_data(
 
         metadata_rows.append(row)
 
-    if segmented_array:
-        max_len = max(segment.shape[1] for segment in segmented_array)
-        min_len = min(segment.shape[1] for segment in segmented_array)
-        if max_len != min_len:
-            logger.warning(
-                "Windowed segments have variable lengths from irregular event onsets; "
-                "padding shorter segments with NaN to preserve actual timing."
+    if window_bounds:
+        # Onset-to-onset windows have variable sample length because gradCPT
+        # event onsets are irregular. A previous version NaN-padded to the max
+        # length, but mne.psd_array_welch requires an identical NaN mask across
+        # all epochs and silently NaN'd (or asserted on) every window whose
+        # length differed from the first — corrupting most of the run. Instead
+        # we extract a single fixed sample length (the median window, anchored
+        # at the window END so the anchor trial is always included). ~All
+        # windows already share this length; only rare gap-spanning outliers
+        # are trimmed (their silent gap should not enter the PSD anyway).
+        lengths = np.array([e - s for s, e in window_bounds])
+        win_samples = int(np.median(lengths))
+        if lengths.min() != lengths.max():
+            logger.info(
+                "Windowed segments span %d..%d samples (irregular onsets); "
+                "extracting a fixed %d-sample window (anchored at window end) "
+                "for uniform Welch PSD / complexity.",
+                int(lengths.min()), int(lengths.max()), win_samples,
             )
-        padded = np.full((len(segmented_array), data.shape[0], max_len), np.nan)
-        for idx, segment in enumerate(segmented_array):
-            padded[idx, :, : segment.shape[1]] = segment
-        segmented_array = padded
+        n_times = data.shape[1]
+        segmented_array = np.empty((len(window_bounds), data.shape[0], win_samples))
+        for idx, (_start, end_sample) in enumerate(window_bounds):
+            # Clamp into the recording so boundary windows stay fixed-length.
+            end = min(max(end_sample, win_samples), n_times)
+            segmented_array[idx] = data[:, end - win_samples:end]
     else:
         segmented_array = np.empty((0, data.shape[0], epoch_length))
     trial_metadata = pd.DataFrame(metadata_rows).reset_index(drop=True)

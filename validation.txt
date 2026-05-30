@@ -1,0 +1,853 @@
+validating feature sets:   0%|                          | 0/16 [00:00<?, ?set/s]validating feature sets:   0%| | 0/16 [00:00<?, ?set/s, welch_psds_corrected_schvalidating feature sets:   6%| | 1/16 [00:00<00:00, 37.70set/s, welch_psds_correvalidating feature sets:  12%|▏| 2/16 [00:00<00:00, 75.08set/s, fooof_corrected_validating feature sets:  19%|▏| 3/16 [00:00<00:00, 112.33set/s, complexity_corrvalidating feature sets:  25%|▎| 4/16 [00:00<00:00, 149.45set/s, welch_psds_corrvalidating feature sets:  31%|▎| 5/16 [00:00<00:00, 149.18set/s, welch_psds_corrvalidating feature sets:  38%|▍| 6/16 [00:00<00:00, 178.53set/s, fooof_correctedvalidating feature sets:  44%|▍| 7/16 [00:00<00:00, 207.84set/s, complexity_corrvalidating feature sets:  50%|▌| 8/16 [00:00<00:00, 237.14set/s, welch_psds_scha
+  scan welch_psds_schaefer_400:   0%|                 | 0/142 [00:00<?, ?file/s][A
+  scan welch_psds_schaefer_400:   1%|       | 1/142 [00:29<1:10:22, 29.95s/file][A
+  scan welch_psds_schaefer_400:   3%|▎        | 4/142 [00:36<17:22,  7.55s/file][A
+  scan welch_psds_schaefer_400:  15%|█▏      | 21/142 [00:38<02:07,  1.05s/file][A
+  scan welch_psds_schaefer_400:  29%|██▎     | 41/142 [00:38<00:45,  2.23file/s][A
+  scan welch_psds_schaefer_400:  30%|██▍     | 43/142 [00:48<01:19,  1.25file/s][A
+  scan welch_psds_schaefer_400:  32%|██▌     | 45/142 [00:51<01:25,  1.13file/s][A
+  scan welch_psds_schaefer_400:  32%|██▌     | 46/142 [01:12<03:29,  2.18s/file][A
+  scan welch_psds_schaefer_400:  33%|██▋     | 47/142 [01:13<03:22,  2.14s/file][A
+  scan welch_psds_schaefer_400:  35%|██▊     | 50/142 [01:20<03:15,  2.12s/file][A
+  scan welch_psds_schaefer_400:  44%|███▍    | 62/142 [01:20<01:09,  1.15file/s][A
+  scan welch_psds_schaefer_400:  52%|████▏   | 74/142 [01:34<01:08,  1.01s/file][A
+  scan welch_psds_schaefer_400:  69%|█████▌  | 98/142 [01:35<00:19,  2.29file/s][A
+  scan welch_psds_schaefer_400:  77%|█████▎ | 109/142 [01:35<00:11,  2.92file/s][A
+                                                                                [Avalidating feature sets:  56%|▌| 9/16 [01:36<01:14, 10.67s/set, welch_psds_correvalidating feature sets:  62%|▋| 10/16 [01:36<00:57,  9.60s/set, welch_psds_corr
+  scan welch_psds_corrected_schaefer_400:   0%|       | 0/142 [00:00<?, ?file/s][A
+  scan welch_psds_corrected_schaefer_400:   1%| | 1/142 [00:34<1:22:04, 34.93s/f[A
+  scan welch_psds_corrected_schaefer_400:   2%| | 3/142 [00:51<35:10, 15.18s/fil[A
+  scan welch_psds_corrected_schaefer_400:   7%| | 10/142 [00:51<07:10,  3.26s/fi[A
+  scan welch_psds_corrected_schaefer_400:  21%|▏| 30/142 [00:53<01:35,  1.17file[A
+  scan welch_psds_corrected_schaefer_400:  34%|▎| 48/142 [01:03<01:20,  1.17file[A
+  scan welch_psds_corrected_schaefer_400:  35%|▎| 49/142 [01:09<01:17,  1.20file[A
+  scan welch_psds_corrected_schaefer_400:  60%|▌| 85/142 [01:11<00:21,  2.60file[A
+  scan welch_psds_corrected_schaefer_400:  73%|▋| 103/142 [01:14<00:12,  3.08fil[A
+  scan welch_psds_corrected_schaefer_400:  91%|▉| 129/142 [01:14<00:02,  4.85fil[A
+                                                                                [Avalidating feature sets:  62%|▋| 10/16 [02:51<00:57,  9.60s/set, fooof_schaefer_validating feature sets:  69%|▋| 11/16 [02:51<01:28, 17.79s/set, fooof_schaefer_
+  scan fooof_schaefer_400:   0%|                      | 0/142 [00:00<?, ?file/s][A
+  scan fooof_schaefer_400:  58%|██████▉     | 82/142 [00:00<00:00, 778.63file/s][A
+                                                                                [Avalidating feature sets:  69%|▋| 11/16 [02:51<01:28, 17.79s/set, complexity_schavalidating feature sets:  75%|▊| 12/16 [02:51<01:00, 15.12s/set, complexity_scha
+  scan complexity_schaefer_400:   0%|                 | 0/142 [00:00<?, ?file/s][A
+  scan complexity_schaefer_400:  46%|███▎   | 66/142 [00:00<00:00, 633.02file/s][A
+                                                                                [Avalidating feature sets:  75%|▊| 12/16 [02:51<01:00, 15.12s/set, welch_psds_sensvalidating feature sets:  81%|▊| 13/16 [02:51<00:37, 12.46s/set, welch_psds_sens
+  scan welch_psds_sensor:   0%|                       | 0/192 [00:00<?, ?file/s][A
+  scan welch_psds_sensor:   1%|               | 1/192 [00:11<36:08, 11.35s/file][A
+  scan welch_psds_sensor:   2%|▎              | 4/192 [00:11<07:03,  2.25s/file][A
+  scan welch_psds_sensor:   3%|▍              | 5/192 [00:12<05:17,  1.70s/file][A
+  scan welch_psds_sensor:   4%|▋              | 8/192 [00:17<05:36,  1.83s/file][A
+  scan welch_psds_sensor:   5%|▋              | 9/192 [00:20<05:58,  1.96s/file][A
+  scan welch_psds_sensor:  28%|███▊          | 53/192 [00:33<00:58,  2.38file/s][A
+  scan welch_psds_sensor:  59%|███████▋     | 113/192 [00:39<00:16,  4.75file/s][A
+  scan welch_psds_sensor:  64%|████████▎    | 122/192 [00:41<00:15,  4.61file/s][A
+  scan welch_psds_sensor:  69%|████████▉    | 132/192 [00:43<00:13,  4.54file/s][A
+  scan welch_psds_sensor:  73%|█████████▌   | 141/192 [00:44<00:09,  5.36file/s][A
+  scan welch_psds_sensor:  75%|█████████▊   | 144/192 [00:44<00:08,  5.68file/s][A
+  scan welch_psds_sensor:  84%|██████████▉  | 162/192 [00:44<00:03,  8.51file/s][A
+  scan welch_psds_sensor:  87%|███████████▎ | 167/192 [00:51<00:07,  3.47file/s][A
+  scan welch_psds_sensor:  93%|████████████ | 178/192 [00:54<00:03,  3.63file/s][A
+  scan welch_psds_sensor:  95%|████████████▎| 182/192 [00:56<00:03,  3.20file/s][A
+  scan welch_psds_sensor:  98%|████████████▊| 189/192 [00:56<00:00,  4.06file/s][A
+                                                                                [Avalidating feature sets:  81%|▊| 13/16 [03:48<00:37, 12.46s/set, welch_psds_corrvalidating feature sets:  88%|▉| 14/16 [03:48<00:42, 21.48s/set, welch_psds_corr
+  scan welch_psds_corrected_sensor:   0%|             | 0/192 [00:00<?, ?file/s][A
+  scan welch_psds_corrected_sensor:   1%|     | 1/192 [00:15<49:23, 15.52s/file][A
+  scan welch_psds_corrected_sensor:   1%|     | 2/192 [00:24<37:44, 11.92s/file][A
+  scan welch_psds_corrected_sensor:  11%|▍   | 22/192 [00:25<01:56,  1.46file/s][A
+  scan welch_psds_corrected_sensor:  21%|▊   | 41/192 [00:25<00:47,  3.15file/s][A
+  scan welch_psds_corrected_sensor:  27%|█   | 51/192 [00:41<00:44,  3.15file/s][A
+  scan welch_psds_corrected_sensor:  27%|█   | 52/192 [00:41<01:35,  1.47file/s][A
+  scan welch_psds_corrected_sensor:  44%|█▊  | 84/192 [00:44<00:35,  3.00file/s][A
+  scan welch_psds_corrected_sensor:  49%|█▉  | 94/192 [00:45<00:27,  3.51file/s][A
+  scan welch_psds_corrected_sensor:  51%|██  | 98/192 [00:50<00:38,  2.45file/s][A
+  scan welch_psds_corrected_sensor:  54%|█▋ | 104/192 [00:52<00:32,  2.70file/s][A
+  scan welch_psds_corrected_sensor:  60%|█▊ | 115/192 [00:55<00:26,  2.92file/s][A
+  scan welch_psds_corrected_sensor:  61%|█▊ | 118/192 [00:57<00:29,  2.48file/s][A
+  scan welch_psds_corrected_sensor:  74%|██▏| 143/192 [01:00<00:11,  4.39file/s][A
+  scan welch_psds_corrected_sensor:  86%|██▌| 165/192 [01:00<00:03,  7.08file/s][A
+  scan welch_psds_corrected_sensor:  90%|██▋| 172/192 [01:02<00:03,  5.94file/s][A
+  scan welch_psds_corrected_sensor:  92%|██▊| 177/192 [01:03<00:02,  6.00file/s][A
+  scan welch_psds_corrected_sensor:  99%|██▉| 190/192 [01:04<00:00,  8.41file/s][A
+                                                                                [Avalidating feature sets:  88%|██▋| 14/16 [04:52<00:42, 21.48s/set, fooof_sensor]validating feature sets:  94%|██▊| 15/16 [04:52<00:31, 31.06s/set, fooof_sensor]
+  scan fooof_sensor:   0%|                            | 0/192 [00:00<?, ?file/s][A
+  scan fooof_sensor:  46%|████████▎         | 89/192 [00:00<00:00, 813.33file/s][A
+                                                                                [Avalidating feature sets:  94%|▉| 15/16 [04:52<00:31, 31.06s/set, complexity_sensvalidating feature sets: 100%|█| 16/16 [04:52<00:00, 23.55s/set, complexity_sens
+  scan complexity_sensor:   0%|                       | 0/192 [00:00<?, ?file/s][A
+  scan complexity_sensor:  42%|█████▍       | 81/192 [00:00<00:00, 782.89file/s][A
+                                                                                [Avalidating feature sets: 100%|█| 16/16 [04:52<00:00, 18.30s/set, complexity_sens
+  scan statistics_schaefer_400:   0%|                 | 0/144 [00:00<?, ?file/s]  scan statistics_schaefer_400:  81%|████ | 117/144 [00:00<00:00, 1166.17file/s]                                                                                  scan statistics_sensor:   0%|                       | 0/142 [00:00<?, ?file/s]  scan statistics_sensor:  86%|█████████▍ | 122/142 [00:00<00:00, 1211.42file/s]                                                                                ==============================================================================
+SAFLOW PIPELINE VALIDATION REPORT
+==============================================================================
+data_root : /scratch/hyruuk/cocolab/saflow_data
+window    : n_events_window=8 (desc token *fooofw8*)
+grid      : 32 subjects x 6 runs = 192 expected files per family/space
+subjects  : 04,05,06,07,08,09,10,11,12,13,14,15,17,18,19,20,21,22,23,24,26,28,29,30,31,32,33,34,35,36,37,38
+spaces    : corrected_schaefer_400, corrected_sensor, schaefer_400, sensor    families: welch_psds, welch_psds_corrected, fooof, complexity
+jobs      : 40 (parallel file loads)
+
+------------------------------------------------------------------------------
+STAGE 0  preprocessed/  (proc-clean MEG)
+------------------------------------------------------------------------------
+  found 192/192 clean files
+
+------------------------------------------------------------------------------
+welch_psds_corrected_schaefer_400
+------------------------------------------------------------------------------
+  coverage : 0/192 files (none present — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+welch_psds_corrected_corrected_schaefer_400
+------------------------------------------------------------------------------
+  (folder absent — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+fooof_corrected_schaefer_400
+------------------------------------------------------------------------------
+  (folder absent — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+complexity_corrected_schaefer_400
+------------------------------------------------------------------------------
+  (folder absent — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+welch_psds_corrected_sensor
+------------------------------------------------------------------------------
+  coverage : 0/192 files (none present — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+welch_psds_corrected_corrected_sensor
+------------------------------------------------------------------------------
+  (folder absent — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+fooof_corrected_sensor
+------------------------------------------------------------------------------
+  (folder absent — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+complexity_corrected_sensor
+------------------------------------------------------------------------------
+  (folder absent — not downloaded / not generated)
+
+------------------------------------------------------------------------------
+welch_psds_schaefer_400
+------------------------------------------------------------------------------
+  coverage : 142/192 files   MISSING: sub-22:r06; sub-23:r06; sub-30:r02,03,04,05; sub-31:r02,04,05,06,07; sub-32:all; sub-33:all; sub-34:r02,03,06,07; sub-35:all; sub-36:all; sub-37:all; sub-38:r02,03,04,05,06
+    [FAIL] sub-17 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [419-425], 99% dead
+    [FAIL] sub-17 run-05
+        - FAIL: psds: 98% dead trials (11/555 valid, scattered)
+    [FAIL] sub-17 run-06
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [260-266], 99% dead
+    [FAIL] sub-18 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [541-547], 99% dead
+    [FAIL] sub-18 run-03
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-18 run-04
+        - FAIL: psds: 95% dead trials (28/552 valid, scattered)
+    [FAIL] sub-18 run-06
+        - FAIL: psds: 94% dead trials (35/551 valid, scattered)
+    [FAIL] sub-19 run-03
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-19 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [261-267], 99% dead
+    [FAIL] sub-20 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [217-223], 99% dead
+    [FAIL] sub-20 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [337-343], 99% dead
+    [FAIL] sub-20 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [38-44], 99% dead
+    [FAIL] sub-20 run-06
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-21 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [146-152], 99% dead
+    [FAIL] sub-21 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/554 valid windows [354-360], 99% dead
+    [FAIL] sub-21 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [301-307], 99% dead
+    [FAIL] sub-21 run-06
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [349-355], 99% dead
+    [FAIL] sub-22 run-03
+        - FAIL: psds: 96% dead trials (21/552 valid, scattered)
+    [FAIL] sub-22 run-04
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-22 run-05
+        - FAIL: psds: 94% dead trials (35/551 valid, scattered)
+    [FAIL] sub-22 run-07
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [176-182], 99% dead
+    [FAIL] sub-23 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [487-493], 99% dead
+    [FAIL] sub-23 run-04
+        - FAIL: psds: 95% dead trials (28/552 valid, scattered)
+    [FAIL] sub-23 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [531-537], 99% dead
+    [FAIL] sub-23 run-07
+        - FAIL: psds: 95% dead trials (28/553 valid, scattered)
+    [FAIL] sub-24 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [425-431], 99% dead
+    [FAIL] sub-24 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [252-258], 99% dead
+    [FAIL] sub-24 run-06
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-24 run-07
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [257-263], 99% dead
+    [FAIL] sub-26 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [368-374], 99% dead
+    [FAIL] sub-26 run-03
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [58-64], 99% dead
+    [FAIL] sub-26 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [271-277], 99% dead
+    [FAIL] sub-26 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [297-303], 99% dead
+    [FAIL] sub-26 run-06
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [265-271], 99% dead
+    [FAIL] sub-26 run-07
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [112-118], 99% dead
+    [FAIL] sub-28 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 1/555 valid windows [273-273], 100% dead
+    [FAIL] sub-28 run-03
+        - FAIL: psds: 100% dead trials (2/556 valid, scattered)
+    [FAIL] sub-28 run-07
+        - FAIL: psds: 100% dead trials (2/556 valid, scattered)
+  health   : 104/142 files clean
+
+------------------------------------------------------------------------------
+welch_psds_corrected_schaefer_400
+------------------------------------------------------------------------------
+  coverage : 142/192 files   MISSING: sub-22:r06; sub-23:r06; sub-30:r02,03,04,05; sub-31:r02,04,05,06,07; sub-32:all; sub-33:all; sub-34:r02,03,06,07; sub-35:all; sub-36:all; sub-37:all; sub-38:r02,03,04,05,06
+    [FAIL] sub-17 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [419-425], 99% dead
+    [FAIL] sub-17 run-05
+        - FAIL: psds: 98% dead trials (11/555 valid, scattered)
+    [FAIL] sub-17 run-06
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [260-266], 99% dead
+    [FAIL] sub-18 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [541-547], 99% dead
+    [FAIL] sub-18 run-03
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-18 run-04
+        - FAIL: psds: 95% dead trials (28/552 valid, scattered)
+    [FAIL] sub-18 run-06
+        - FAIL: psds: 94% dead trials (35/551 valid, scattered)
+    [FAIL] sub-19 run-03
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-19 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [261-267], 99% dead
+    [FAIL] sub-20 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [217-223], 99% dead
+    [FAIL] sub-20 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [337-343], 99% dead
+    [FAIL] sub-20 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [38-44], 99% dead
+    [FAIL] sub-20 run-06
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-21 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [146-152], 99% dead
+    [FAIL] sub-21 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/554 valid windows [354-360], 99% dead
+    [FAIL] sub-21 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [301-307], 99% dead
+    [FAIL] sub-21 run-06
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [349-355], 99% dead
+    [FAIL] sub-22 run-03
+        - FAIL: psds: 96% dead trials (21/552 valid, scattered)
+    [FAIL] sub-22 run-04
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-22 run-05
+        - FAIL: psds: 94% dead trials (35/551 valid, scattered)
+    [FAIL] sub-22 run-07
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [176-182], 99% dead
+    [FAIL] sub-23 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [487-493], 99% dead
+    [FAIL] sub-23 run-04
+        - FAIL: psds: 95% dead trials (28/552 valid, scattered)
+    [FAIL] sub-23 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [531-537], 99% dead
+    [FAIL] sub-23 run-07
+        - FAIL: psds: 95% dead trials (28/553 valid, scattered)
+    [FAIL] sub-24 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [425-431], 99% dead
+    [FAIL] sub-24 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption �� only 7/556 valid windows [252-258], 99% dead
+    [FAIL] sub-24 run-06
+        - FAIL: psds: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-24 run-07
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [257-263], 99% dead
+    [FAIL] sub-26 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [368-374], 99% dead
+    [FAIL] sub-26 run-03
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [58-64], 99% dead
+    [FAIL] sub-26 run-04
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [271-277], 99% dead
+    [FAIL] sub-26 run-05
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [297-303], 99% dead
+    [FAIL] sub-26 run-06
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [265-271], 99% dead
+    [FAIL] sub-26 run-07
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [112-118], 99% dead
+    [FAIL] sub-28 run-02
+        - FAIL: psds: CONTIGUOUS-BLOCK corruption — only 1/555 valid windows [273-273], 100% dead
+    [FAIL] sub-28 run-03
+        - FAIL: psds: 100% dead trials (2/556 valid, scattered)
+    [FAIL] sub-28 run-07
+        - FAIL: psds: 100% dead trials (2/556 valid, scattered)
+  health   : 104/142 files clean
+
+------------------------------------------------------------------------------
+fooof_schaefer_400
+------------------------------------------------------------------------------
+  coverage : 142/192 files   MISSING: sub-22:r06; sub-23:r06; sub-30:r02,03,04,05; sub-31:r02,04,05,06,07; sub-32:all; sub-33:all; sub-34:r02,03,06,07; sub-35:all; sub-36:all; sub-37:all; sub-38:r02,03,04,05,06
+    [FAIL] sub-17 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [419-425], 99% dead
+    [FAIL] sub-17 run-05
+        - FAIL: exponent,offset,r_squared: 98% dead trials (11/555 valid, scattered)
+    [FAIL] sub-17 run-06
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [260-266], 99% dead
+    [FAIL] sub-18 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [541-547], 99% dead
+    [FAIL] sub-18 run-03
+        - FAIL: exponent,offset,r_squared: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-18 run-04
+        - FAIL: exponent,offset,r_squared: 95% dead trials (28/552 valid, scattered)
+    [FAIL] sub-18 run-06
+        - FAIL: exponent,offset,r_squared: 94% dead trials (35/551 valid, scattered)
+    [FAIL] sub-19 run-03
+        - FAIL: exponent,offset,r_squared: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-19 run-04
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [261-267], 99% dead
+    [FAIL] sub-20 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [217-223], 99% dead
+    [FAIL] sub-20 run-04
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [337-343], 99% dead
+    [FAIL] sub-20 run-05
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [38-44], 99% dead
+    [FAIL] sub-20 run-06
+        - FAIL: exponent,offset,r_squared: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-21 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [146-152], 99% dead
+    [FAIL] sub-21 run-04
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/554 valid windows [354-360], 99% dead
+    [FAIL] sub-21 run-05
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [301-307], 99% dead
+    [FAIL] sub-21 run-06
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [349-355], 99% dead
+    [FAIL] sub-22 run-03
+        - FAIL: exponent,offset,r_squared: 96% dead trials (21/552 valid, scattered)
+    [FAIL] sub-22 run-04
+        - FAIL: exponent,offset,r_squared: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-22 run-05
+        - FAIL: exponent,offset,r_squared: 94% dead trials (35/551 valid, scattered)
+    [FAIL] sub-22 run-07
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [176-182], 99% dead
+    [FAIL] sub-23 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [487-493], 99% dead
+    [FAIL] sub-23 run-04
+        - FAIL: exponent,offset,r_squared: 95% dead trials (28/552 valid, scattered)
+    [FAIL] sub-23 run-05
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [531-537], 99% dead
+    [FAIL] sub-23 run-07
+        - FAIL: exponent,offset,r_squared: 95% dead trials (28/553 valid, scattered)
+    [FAIL] sub-24 run-04
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [425-431], 99% dead
+    [FAIL] sub-24 run-05
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [252-258], 99% dead
+    [FAIL] sub-24 run-06
+        - FAIL: exponent,offset,r_squared: 97% dead trials (14/554 valid, scattered)
+    [FAIL] sub-24 run-07
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [257-263], 99% dead
+    [FAIL] sub-26 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [368-374], 99% dead
+    [FAIL] sub-26 run-03
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [58-64], 99% dead
+    [FAIL] sub-26 run-04
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [271-277], 99% dead
+    [FAIL] sub-26 run-05
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [297-303], 99% dead
+    [FAIL] sub-26 run-06
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/556 valid windows [265-271], 99% dead
+    [FAIL] sub-26 run-07
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 7/555 valid windows [112-118], 99% dead
+    [FAIL] sub-28 run-02
+        - FAIL: exponent,offset,r_squared: CONTIGUOUS-BLOCK corruption — only 1/555 valid windows [273-273], 100% dead
+    [FAIL] sub-28 run-03
+        - FAIL: exponent,offset,r_squared: 100% dead trials (2/556 valid, scattered)
+    [FAIL] sub-28 run-07
+        - FAIL: exponent,offset,r_squared: 100% dead trials (2/556 valid, scattered)
+  health   : 104/142 files clean
+
+------------------------------------------------------------------------------
+complexity_schaefer_400
+------------------------------------------------------------------------------
+  coverage : 142/192 files   MISSING: sub-22:r06; sub-23:r06; sub-30:r02,03,04,05; sub-31:r02,04,05,06,07; sub-32:all; sub-33:all; sub-34:r02,03,06,07; sub-35:all; sub-36:all; sub-37:all; sub-38:r02,03,04,05,06
+  NOTE     : 'entropy_approximate' systematically empty — 100% NaN in 142/142 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'entropy_sample' systematically empty — 100% NaN in 142/142 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'fractal_dfa' systematically empty — 100% NaN in 142/142 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'fractal_higuchi' systematically empty — 100% NaN in 142/142 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'fractal_katz' systematically empty — 100% NaN in 142/142 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'entropy_permutation' ~100% exactly zero in 138/142 files — degenerate, will NaN paired t-tests (zero variance)
+  NOTE     : 'entropy_svd' ~100% exactly zero in 138/142 files — degenerate, will NaN paired t-tests (zero variance)
+  health   : 142/142 files clean
+
+------------------------------------------------------------------------------
+welch_psds_sensor
+------------------------------------------------------------------------------
+  coverage : 192/192 files   (complete)
+  health   : 192/192 files clean
+
+------------------------------------------------------------------------------
+welch_psds_corrected_sensor
+------------------------------------------------------------------------------
+  coverage : 192/192 files   (complete)
+  health   : 192/192 files clean
+
+------------------------------------------------------------------------------
+fooof_sensor
+------------------------------------------------------------------------------
+  coverage : 192/192 files   (complete)
+    [WARN] sub-04 run-02
+        - warn: offset: values [-28.34,-25.33] outside [-15.0,10.0]
+    [WARN] sub-04 run-03
+        - warn: offset: values [-28.46,-25.10] outside [-15.0,10.0]
+    [WARN] sub-04 run-04
+        - warn: offset: values [-28.41,-25.45] outside [-15.0,10.0]
+    [WARN] sub-04 run-05
+        - warn: offset: values [-28.69,-25.18] outside [-15.0,10.0]
+    [WARN] sub-04 run-06
+        - warn: offset: values [-28.65,-25.45] outside [-15.0,10.0]
+    [WARN] sub-04 run-07
+        - warn: offset: values [-28.87,-25.24] outside [-15.0,10.0]
+    [WARN] sub-05 run-02
+        - warn: offset: values [-28.37,-24.94] outside [-15.0,10.0]
+    [WARN] sub-05 run-03
+        - warn: offset: values [-28.31,-24.99] outside [-15.0,10.0]
+    [WARN] sub-05 run-04
+        - warn: offset: values [-28.42,-25.07] outside [-15.0,10.0]
+    [WARN] sub-05 run-05
+        - warn: offset: values [-28.73,-24.80] outside [-15.0,10.0]
+    [WARN] sub-05 run-06
+        - warn: offset: values [-28.70,-25.03] outside [-15.0,10.0]
+    [WARN] sub-05 run-07
+        - warn: offset: values [-28.45,-25.12] outside [-15.0,10.0]
+    [WARN] sub-06 run-02
+        - warn: offset: values [-28.34,-25.43] outside [-15.0,10.0]
+    [WARN] sub-06 run-03
+        - warn: offset: values [-28.41,-25.65] outside [-15.0,10.0]
+    [WARN] sub-06 run-04
+        - warn: offset: values [-28.49,-25.52] outside [-15.0,10.0]
+    [WARN] sub-06 run-05
+        - warn: offset: values [-28.30,-25.59] outside [-15.0,10.0]
+    [WARN] sub-06 run-06
+        - warn: offset: values [-28.27,-25.20] outside [-15.0,10.0]
+    [WARN] sub-06 run-07
+        - warn: offset: values [-28.39,-24.28] outside [-15.0,10.0]
+    [WARN] sub-07 run-02
+        - warn: offset: values [-28.05,-25.39] outside [-15.0,10.0]
+    [WARN] sub-07 run-03
+        - warn: offset: values [-28.22,-25.40] outside [-15.0,10.0]
+    [WARN] sub-07 run-04
+        - warn: offset: values [-28.68,-24.22] outside [-15.0,10.0]
+    [WARN] sub-07 run-05
+        - warn: offset: values [-28.05,-25.32] outside [-15.0,10.0]
+    [WARN] sub-07 run-06
+        - warn: offset: values [-28.49,-25.38] outside [-15.0,10.0]
+    [WARN] sub-07 run-07
+        - warn: offset: values [-28.26,-25.37] outside [-15.0,10.0]
+    [WARN] sub-08 run-02
+        - warn: offset: values [-28.26,-25.18] outside [-15.0,10.0]
+    [WARN] sub-08 run-03
+        - warn: offset: values [-28.20,-25.13] outside [-15.0,10.0]
+    [WARN] sub-08 run-04
+        - warn: offset: values [-28.23,-25.02] outside [-15.0,10.0]
+    [WARN] sub-08 run-05
+        - warn: offset: values [-28.36,-25.13] outside [-15.0,10.0]
+    [WARN] sub-08 run-06
+        - warn: offset: values [-28.28,-25.25] outside [-15.0,10.0]
+    [WARN] sub-08 run-07
+        - warn: offset: values [-28.29,-24.28] outside [-15.0,10.0]
+    [WARN] sub-09 run-02
+        - warn: offset: values [-28.39,-25.12] outside [-15.0,10.0]
+    [WARN] sub-09 run-03
+        - warn: offset: values [-28.25,-25.16] outside [-15.0,10.0]
+    [WARN] sub-09 run-04
+        - warn: offset: values [-28.44,-24.98] outside [-15.0,10.0]
+    [WARN] sub-09 run-05
+        - warn: offset: values [-27.96,-25.17] outside [-15.0,10.0]
+    [WARN] sub-09 run-06
+        - warn: offset: values [-28.29,-25.17] outside [-15.0,10.0]
+    [WARN] sub-09 run-07
+        - warn: offset: values [-28.30,-25.28] outside [-15.0,10.0]
+    [WARN] sub-10 run-02
+        - warn: offset: values [-28.48,-24.28] outside [-15.0,10.0]
+    [WARN] sub-10 run-03
+        - warn: offset: values [-28.61,-25.61] outside [-15.0,10.0]
+    [WARN] sub-10 run-04
+        - warn: offset: values [-28.33,-25.48] outside [-15.0,10.0]
+    [WARN] sub-10 run-05
+        - warn: offset: values [-28.38,-25.68] outside [-15.0,10.0]
+    [WARN] sub-10 run-06
+        - warn: offset: values [-28.55,-25.52] outside [-15.0,10.0]
+    [WARN] sub-10 run-07
+        - warn: offset: values [-28.60,-25.72] outside [-15.0,10.0]
+    [WARN] sub-11 run-02
+        - warn: offset: values [-28.76,-25.28] outside [-15.0,10.0]
+    [WARN] sub-11 run-03
+        - warn: offset: values [-28.58,-25.40] outside [-15.0,10.0]
+    [WARN] sub-11 run-04
+        - warn: offset: values [-28.54,-25.29] outside [-15.0,10.0]
+    [WARN] sub-11 run-05
+        - warn: offset: values [-28.55,-25.37] outside [-15.0,10.0]
+    [WARN] sub-11 run-06
+        - warn: offset: values [-28.18,-25.24] outside [-15.0,10.0]
+    [WARN] sub-11 run-07
+        - warn: offset: values [-28.31,-25.31] outside [-15.0,10.0]
+    [WARN] sub-12 run-02
+        - warn: offset: values [-28.43,-25.61] outside [-15.0,10.0]
+    [WARN] sub-12 run-03
+        - warn: offset: values [-28.48,-25.65] outside [-15.0,10.0]
+    [WARN] sub-12 run-04
+        - warn: offset: values [-28.40,-25.60] outside [-15.0,10.0]
+    [WARN] sub-12 run-05
+        - warn: offset: values [-28.58,-25.66] outside [-15.0,10.0]
+    [WARN] sub-12 run-06
+        - warn: offset: values [-28.43,-25.57] outside [-15.0,10.0]
+    [WARN] sub-12 run-07
+        - warn: offset: values [-28.39,-25.74] outside [-15.0,10.0]
+    [WARN] sub-13 run-02
+        - warn: offset: values [-27.68,-24.96] outside [-15.0,10.0]
+    [WARN] sub-13 run-03
+        - warn: offset: values [-27.88,-25.16] outside [-15.0,10.0]
+    [WARN] sub-13 run-04
+        - warn: offset: values [-27.67,-24.83] outside [-15.0,10.0]
+    [WARN] sub-13 run-05
+        - warn: offset: values [-27.91,-25.14] outside [-15.0,10.0]
+    [WARN] sub-13 run-06
+        - warn: offset: values [-28.02,-24.91] outside [-15.0,10.0]
+    [WARN] sub-13 run-07
+        - warn: offset: values [-28.73,-25.09] outside [-15.0,10.0]
+    [WARN] sub-14 run-02
+        - warn: offset: values [-28.07,-25.21] outside [-15.0,10.0]
+    [WARN] sub-14 run-03
+        - warn: offset: values [-28.12,-25.22] outside [-15.0,10.0]
+    [WARN] sub-14 run-04
+        - warn: offset: values [-28.12,-25.21] outside [-15.0,10.0]
+    [WARN] sub-14 run-05
+        - warn: offset: values [-28.81,-25.26] outside [-15.0,10.0]
+    [WARN] sub-14 run-06
+        - warn: offset: values [-28.04,-24.99] outside [-15.0,10.0]
+    [WARN] sub-14 run-07
+        - warn: offset: values [-28.79,-25.31] outside [-15.0,10.0]
+    [WARN] sub-15 run-02
+        - warn: offset: values [-28.37,-25.27] outside [-15.0,10.0]
+    [WARN] sub-15 run-03
+        - warn: offset: values [-28.36,-25.19] outside [-15.0,10.0]
+    [WARN] sub-15 run-04
+        - warn: offset: values [-28.22,-25.04] outside [-15.0,10.0]
+    [WARN] sub-15 run-05
+        - warn: offset: values [-28.09,-25.01] outside [-15.0,10.0]
+    [WARN] sub-15 run-06
+        - warn: offset: values [-28.28,-25.13] outside [-15.0,10.0]
+    [WARN] sub-15 run-07
+        - warn: offset: values [-28.28,-24.84] outside [-15.0,10.0]
+    [WARN] sub-17 run-02
+        - warn: offset: values [-28.71,-25.59] outside [-15.0,10.0]
+    [WARN] sub-17 run-03
+        - warn: offset: values [-28.52,-25.62] outside [-15.0,10.0]
+    [WARN] sub-17 run-04
+        - warn: offset: values [-28.46,-25.62] outside [-15.0,10.0]
+    [WARN] sub-17 run-05
+        - warn: offset: values [-28.45,-25.75] outside [-15.0,10.0]
+    [WARN] sub-17 run-06
+        - warn: offset: values [-28.60,-25.52] outside [-15.0,10.0]
+    [WARN] sub-17 run-07
+        - warn: offset: values [-28.47,-25.74] outside [-15.0,10.0]
+    [WARN] sub-18 run-02
+        - warn: offset: values [-28.02,-25.44] outside [-15.0,10.0]
+    [WARN] sub-18 run-03
+        - warn: offset: values [-27.97,-25.46] outside [-15.0,10.0]
+    [WARN] sub-18 run-04
+        - warn: offset: values [-28.00,-25.53] outside [-15.0,10.0]
+    [WARN] sub-18 run-05
+        - warn: offset: values [-27.93,-25.54] outside [-15.0,10.0]
+    [WARN] sub-18 run-06
+        - warn: offset: values [-28.01,-25.56] outside [-15.0,10.0]
+    [WARN] sub-18 run-07
+        - warn: offset: values [-28.18,-25.33] outside [-15.0,10.0]
+    [WARN] sub-19 run-02
+        - warn: offset: values [-28.18,-25.54] outside [-15.0,10.0]
+    [WARN] sub-19 run-03
+        - warn: offset: values [-28.02,-24.25] outside [-15.0,10.0]
+    [WARN] sub-19 run-04
+        - warn: offset: values [-27.86,-25.44] outside [-15.0,10.0]
+    [WARN] sub-19 run-05
+        - warn: offset: values [-27.97,-25.40] outside [-15.0,10.0]
+    [WARN] sub-19 run-06
+        - warn: offset: values [-28.11,-25.43] outside [-15.0,10.0]
+    [WARN] sub-19 run-07
+        - warn: offset: values [-27.82,-24.86] outside [-15.0,10.0]
+    [WARN] sub-20 run-02
+        - warn: offset: values [-28.68,-25.28] outside [-15.0,10.0]
+    [WARN] sub-20 run-03
+        - warn: offset: values [-28.33,-25.11] outside [-15.0,10.0]
+    [WARN] sub-20 run-04
+        - warn: offset: values [-28.38,-25.26] outside [-15.0,10.0]
+    [WARN] sub-20 run-05
+        - warn: offset: values [-28.37,-25.13] outside [-15.0,10.0]
+    [WARN] sub-20 run-06
+        - warn: offset: values [-28.33,-25.11] outside [-15.0,10.0]
+    [WARN] sub-20 run-07
+        - warn: offset: values [-28.32,-25.27] outside [-15.0,10.0]
+    [WARN] sub-21 run-02
+        - warn: offset: values [-28.51,-25.45] outside [-15.0,10.0]
+    [WARN] sub-21 run-03
+        - warn: offset: values [-28.32,-25.65] outside [-15.0,10.0]
+    [WARN] sub-21 run-04
+        - warn: offset: values [-28.30,-25.60] outside [-15.0,10.0]
+    [WARN] sub-21 run-05
+        - warn: offset: values [-28.58,-25.05] outside [-15.0,10.0]
+    [WARN] sub-21 run-06
+        - warn: offset: values [-29.02,-25.70] outside [-15.0,10.0]
+    [WARN] sub-21 run-07
+        - warn: offset: values [-28.66,-25.76] outside [-15.0,10.0]
+    [WARN] sub-22 run-02
+        - warn: offset: values [-28.28,-25.28] outside [-15.0,10.0]
+    [WARN] sub-22 run-03
+        - warn: offset: values [-28.30,-25.37] outside [-15.0,10.0]
+    [WARN] sub-22 run-04
+        - warn: offset: values [-28.31,-25.37] outside [-15.0,10.0]
+    [WARN] sub-22 run-05
+        - warn: offset: values [-28.19,-25.35] outside [-15.0,10.0]
+    [WARN] sub-22 run-06
+        - warn: offset: values [-28.31,-25.35] outside [-15.0,10.0]
+    [WARN] sub-22 run-07
+        - warn: offset: values [-28.27,-25.40] outside [-15.0,10.0]
+    [WARN] sub-23 run-02
+        - warn: offset: values [-28.31,-25.19] outside [-15.0,10.0]
+    [WARN] sub-23 run-03
+        - warn: offset: values [-28.28,-25.39] outside [-15.0,10.0]
+    [WARN] sub-23 run-04
+        - warn: offset: values [-28.25,-25.32] outside [-15.0,10.0]
+    [WARN] sub-23 run-05
+        - warn: offset: values [-28.23,-25.34] outside [-15.0,10.0]
+    [WARN] sub-23 run-06
+        - warn: offset: values [-28.34,-25.28] outside [-15.0,10.0]
+    [WARN] sub-23 run-07
+        - warn: offset: values [-28.28,-25.51] outside [-15.0,10.0]
+    [WARN] sub-24 run-02
+        - warn: offset: values [-28.43,-25.35] outside [-15.0,10.0]
+    [WARN] sub-24 run-03
+        - warn: offset: values [-28.21,-25.43] outside [-15.0,10.0]
+    [WARN] sub-24 run-04
+        - warn: offset: values [-28.51,-25.45] outside [-15.0,10.0]
+    [WARN] sub-24 run-05
+        - warn: offset: values [-28.23,-25.40] outside [-15.0,10.0]
+    [WARN] sub-24 run-06
+        - warn: offset: values [-28.33,-25.44] outside [-15.0,10.0]
+    [WARN] sub-24 run-07
+        - warn: offset: values [-28.29,-25.46] outside [-15.0,10.0]
+    [WARN] sub-26 run-02
+        - warn: offset: values [-28.05,-25.17] outside [-15.0,10.0]
+    [WARN] sub-26 run-03
+        - warn: offset: values [-28.06,-25.20] outside [-15.0,10.0]
+    [WARN] sub-26 run-04
+        - warn: offset: values [-27.96,-25.14] outside [-15.0,10.0]
+    [WARN] sub-26 run-05
+        - warn: offset: values [-28.84,-25.19] outside [-15.0,10.0]
+    [WARN] sub-26 run-06
+        - warn: offset: values [-28.10,-24.89] outside [-15.0,10.0]
+    [WARN] sub-26 run-07
+        - warn: offset: values [-28.11,-25.09] outside [-15.0,10.0]
+    [WARN] sub-28 run-02
+        - warn: offset: values [-27.89,-25.26] outside [-15.0,10.0]
+    [WARN] sub-28 run-03
+        - warn: offset: values [-27.85,-25.55] outside [-15.0,10.0]
+    [WARN] sub-28 run-04
+        - warn: offset: values [-27.76,-25.33] outside [-15.0,10.0]
+    [WARN] sub-28 run-05
+        - warn: offset: values [-27.76,-25.65] outside [-15.0,10.0]
+    [WARN] sub-28 run-06
+        - warn: offset: values [-27.81,-25.35] outside [-15.0,10.0]
+    [WARN] sub-28 run-07
+        - warn: offset: values [-27.68,-24.32] outside [-15.0,10.0]
+    [WARN] sub-29 run-02
+        - warn: offset: values [-28.05,-25.29] outside [-15.0,10.0]
+    [WARN] sub-29 run-03
+        - warn: offset: values [-27.78,-25.34] outside [-15.0,10.0]
+    [WARN] sub-29 run-04
+        - warn: offset: values [-27.80,-25.26] outside [-15.0,10.0]
+    [WARN] sub-29 run-05
+        - warn: offset: values [-27.78,-25.08] outside [-15.0,10.0]
+    [WARN] sub-29 run-06
+        - warn: offset: values [-27.79,-25.22] outside [-15.0,10.0]
+    [WARN] sub-29 run-07
+        - warn: offset: values [-27.82,-25.28] outside [-15.0,10.0]
+    [WARN] sub-30 run-02
+        - warn: offset: values [-27.95,-25.30] outside [-15.0,10.0]
+    [WARN] sub-30 run-03
+        - warn: offset: values [-27.91,-25.26] outside [-15.0,10.0]
+    [WARN] sub-30 run-04
+        - warn: offset: values [-27.80,-25.12] outside [-15.0,10.0]
+    [WARN] sub-30 run-05
+        - warn: offset: values [-27.94,-25.09] outside [-15.0,10.0]
+    [WARN] sub-30 run-06
+        - warn: offset: values [-28.17,-24.83] outside [-15.0,10.0]
+    [WARN] sub-30 run-07
+        - warn: offset: values [-28.10,-24.84] outside [-15.0,10.0]
+    [WARN] sub-31 run-02
+        - warn: offset: values [-27.77,-25.02] outside [-15.0,10.0]
+    [WARN] sub-31 run-03
+        - warn: offset: values [-27.83,-25.01] outside [-15.0,10.0]
+    [WARN] sub-31 run-04
+        - warn: offset: values [-27.76,-25.00] outside [-15.0,10.0]
+    [WARN] sub-31 run-05
+        - warn: offset: values [-27.71,-24.76] outside [-15.0,10.0]
+    [WARN] sub-31 run-06
+        - warn: offset: values [-27.70,-25.08] outside [-15.0,10.0]
+    [WARN] sub-31 run-07
+        - warn: offset: values [-27.78,-25.00] outside [-15.0,10.0]
+    [WARN] sub-32 run-02
+        - warn: offset: values [-28.29,-25.53] outside [-15.0,10.0]
+    [WARN] sub-32 run-03
+        - warn: offset: values [-28.15,-25.40] outside [-15.0,10.0]
+    [WARN] sub-32 run-04
+        - warn: offset: values [-28.00,-25.37] outside [-15.0,10.0]
+    [WARN] sub-32 run-05
+        - warn: offset: values [-27.93,-25.45] outside [-15.0,10.0]
+    [WARN] sub-32 run-06
+        - warn: offset: values [-28.12,-25.43] outside [-15.0,10.0]
+    [WARN] sub-32 run-07
+        - warn: offset: values [-28.01,-25.37] outside [-15.0,10.0]
+    [WARN] sub-33 run-02
+        - warn: offset: values [-27.87,-25.23] outside [-15.0,10.0]
+    [WARN] sub-33 run-03
+        - warn: offset: values [-27.83,-25.18] outside [-15.0,10.0]
+    [WARN] sub-33 run-04
+        - warn: offset: values [-27.97,-25.16] outside [-15.0,10.0]
+    [WARN] sub-33 run-05
+        - warn: offset: values [-27.86,-25.28] outside [-15.0,10.0]
+    [WARN] sub-33 run-06
+        - warn: offset: values [-27.90,-25.23] outside [-15.0,10.0]
+    [WARN] sub-33 run-07
+        - warn: offset: values [-27.88,-25.26] outside [-15.0,10.0]
+    [WARN] sub-34 run-02
+        - warn: offset: values [-27.89,-25.14] outside [-15.0,10.0]
+    [WARN] sub-34 run-03
+        - warn: offset: values [-27.79,-24.99] outside [-15.0,10.0]
+    [WARN] sub-34 run-04
+        - warn: offset: values [-27.96,-25.04] outside [-15.0,10.0]
+    [WARN] sub-34 run-05
+        - warn: offset: values [-27.80,-25.02] outside [-15.0,10.0]
+    [WARN] sub-34 run-06
+        - warn: offset: values [-27.83,-25.11] outside [-15.0,10.0]
+    [WARN] sub-34 run-07
+        - warn: offset: values [-27.90,-25.03] outside [-15.0,10.0]
+    [WARN] sub-35 run-02
+        - warn: offset: values [-27.66,-25.03] outside [-15.0,10.0]
+    [WARN] sub-35 run-03
+        - warn: offset: values [-27.96,-25.07] outside [-15.0,10.0]
+    [WARN] sub-35 run-04
+        - warn: offset: values [-27.81,-24.92] outside [-15.0,10.0]
+    [WARN] sub-35 run-05
+        - warn: offset: values [-28.54,-25.21] outside [-15.0,10.0]
+    [WARN] sub-35 run-06
+        - warn: offset: values [-27.63,-24.90] outside [-15.0,10.0]
+    [WARN] sub-35 run-07
+        - warn: offset: values [-27.94,-25.33] outside [-15.0,10.0]
+    [WARN] sub-36 run-02
+        - warn: offset: values [-28.41,-25.59] outside [-15.0,10.0]
+    [WARN] sub-36 run-03
+        - warn: offset: values [-28.43,-25.66] outside [-15.0,10.0]
+    [WARN] sub-36 run-04
+        - warn: offset: values [-28.44,-25.48] outside [-15.0,10.0]
+    [WARN] sub-36 run-05
+        - warn: offset: values [-28.34,-25.48] outside [-15.0,10.0]
+    [WARN] sub-36 run-06
+        - warn: offset: values [-28.55,-25.45] outside [-15.0,10.0]
+    [WARN] sub-36 run-07
+        - warn: offset: values [-28.58,-25.56] outside [-15.0,10.0]
+    [WARN] sub-37 run-02
+        - warn: offset: values [-28.44,-25.64] outside [-15.0,10.0]
+    [WARN] sub-37 run-03
+        - warn: offset: values [-28.50,-25.55] outside [-15.0,10.0]
+    [WARN] sub-37 run-04
+        - warn: offset: values [-28.57,-25.14] outside [-15.0,10.0]
+    [WARN] sub-37 run-05
+        - warn: offset: values [-29.08,-25.22] outside [-15.0,10.0]
+    [WARN] sub-37 run-06
+        - warn: offset: values [-28.86,-25.44] outside [-15.0,10.0]
+    [WARN] sub-37 run-07
+        - warn: offset: values [-28.57,-25.49] outside [-15.0,10.0]
+    [WARN] sub-38 run-02
+        - warn: offset: values [-28.58,-25.30] outside [-15.0,10.0]
+    [WARN] sub-38 run-03
+        - warn: offset: values [-28.77,-25.86] outside [-15.0,10.0]
+    [WARN] sub-38 run-04
+        - warn: offset: values [-28.41,-25.45] outside [-15.0,10.0]
+    [WARN] sub-38 run-05
+        - warn: offset: values [-28.53,-25.77] outside [-15.0,10.0]
+    [WARN] sub-38 run-06
+        - warn: offset: values [-28.37,-25.53] outside [-15.0,10.0]
+    [WARN] sub-38 run-07
+        - warn: offset: values [-28.69,-25.94] outside [-15.0,10.0]
+  health   : 0/192 files clean
+
+------------------------------------------------------------------------------
+complexity_sensor
+------------------------------------------------------------------------------
+  coverage : 192/192 files   (complete)
+  NOTE     : 'entropy_approximate' systematically empty — 100% NaN in 192/192 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'entropy_sample' systematically empty — 100% NaN in 192/192 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'fractal_dfa' systematically empty — 100% NaN in 192/192 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'fractal_higuchi' systematically empty — 100% NaN in 192/192 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'fractal_katz' systematically empty — 100% NaN in 192/192 files (unpopulated metric, not per-subject corruption)
+  NOTE     : 'entropy_permutation' ~100% exactly zero in 187/192 files — degenerate, will NaN paired t-tests (zero variance)
+  NOTE     : 'entropy_svd' ~100% exactly zero in 187/192 files — degenerate, will NaN paired t-tests (zero variance)
+  health   : 192/192 files clean
+
+------------------------------------------------------------------------------
+GROUP STATS  statistics_schaefer_400/  (all-NaN tvals = bad inputs)
+------------------------------------------------------------------------------
+  24 ok, 120 all-NaN results files (21 distinct features)
+    [FAIL] all-NaN tvals: complexity_entropy_permutation (3 file(s))
+    [FAIL] all-NaN tvals: complexity_entropy_svd (3 file(s))
+    [FAIL] all-NaN tvals: fooof_exponent (6 file(s))
+    [FAIL] all-NaN tvals: fooof_offset (6 file(s))
+    [FAIL] all-NaN tvals: fooof_r_squared (6 file(s))
+    [FAIL] all-NaN tvals: psd_alpha (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_alpha (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_delta (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_gamma1 (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_gamma2 (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_gamma3 (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_hibeta (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_lobeta (6 file(s))
+    [FAIL] all-NaN tvals: psd_corrected_theta (6 file(s))
+    [FAIL] all-NaN tvals: psd_delta (6 file(s))
+    [FAIL] all-NaN tvals: psd_gamma1 (6 file(s))
+    [FAIL] all-NaN tvals: psd_gamma2 (6 file(s))
+    [FAIL] all-NaN tvals: psd_gamma3 (6 file(s))
+    [FAIL] all-NaN tvals: psd_hibeta (6 file(s))
+    [FAIL] all-NaN tvals: psd_lobeta (6 file(s))
+    [FAIL] all-NaN tvals: psd_theta (6 file(s))
+
+------------------------------------------------------------------------------
+GROUP STATS  statistics_sensor/  (all-NaN tvals = bad inputs)
+------------------------------------------------------------------------------
+  136 ok, 6 all-NaN results files (2 distinct features)
+    [FAIL] all-NaN tvals: complexity_entropy_permutation (3 file(s))
+    [FAIL] all-NaN tvals: complexity_entropy_svd (3 file(s))
+
+==============================================================================
+SUMMARY
+==============================================================================
+  total FAIL findings: 137    WARN findings: 206
+
+  REGENERATE (force full recompute, e.g. --no-skip-existing):
+    fooof_schaefer_400: sub-17:r02,05,06; sub-18:r02,03,04,06; sub-19:r03,04; sub-20:r02,04,05,06; sub-21:r02,04,05,06; sub-22:r03,04,05,07; sub-23:r02,04,05,07; sub-24:r04,05,06,07; sub-26:all; sub-28:r02,03,07
+    welch_psds_schaefer_400: sub-17:r02,05,06; sub-18:r02,03,04,06; sub-19:r03,04; sub-20:r02,04,05,06; sub-21:r02,04,05,06; sub-22:r03,04,05,07; sub-23:r02,04,05,07; sub-24:r04,05,06,07; sub-26:all; sub-28:r02,03,07
+    welch_psds_corrected_schaefer_400: sub-17:r02,05,06; sub-18:r02,03,04,06; sub-19:r03,04; sub-20:r02,04,05,06; sub-21:r02,04,05,06; sub-22:r03,04,05,07; sub-23:r02,04,05,07; sub-24:r04,05,06,07; sub-26:all; sub-28:r02,03,07
+
+  suggested commands:
+    invoke pipeline.features.fooof --space=schaefer_400 --subject=17,18,19,20,21,22,23,24,26,28  # then re-derive downstream
+    invoke pipeline.features.psd --space=schaefer_400 --subject=17,18,19,20,21,22,23,24,26,28  # then re-derive downstream
+==============================================================================
+VERDICT: FAIL
