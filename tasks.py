@@ -515,7 +515,7 @@ def validate_inputs(c, data_root=None, verbose=False):
 
 
 @task
-def validate_all(c, space=None, families=None, subjects=None, window=8):
+def validate_all(c, space=None, families=None, subjects=None, window=8, jobs=1):
     """Validate the feature pipeline and print a copy-pasteable health report.
 
     Scans welch_psds / welch_psds_corrected / fooof / complexity across spaces,
@@ -523,14 +523,19 @@ def validate_all(c, space=None, families=None, subjects=None, window=8):
     signature), degenerate all-zero metrics, missing ch_names, and all-NaN
     group-stats outputs. Prints a plain-text report + a REGENERATE list.
 
+    --jobs loads files in parallel (e.g. --jobs 40). NOTE: welch PSD files are
+    large (~2 GB each); high --jobs on welch families can exhaust RAM
+    (jobs x ~2 GB). fooof/complexity files are small and parallelize cheaply.
+
     Examples:
         invoke validate.all
-        invoke validate.all --space schaefer_400
+        invoke validate.all --space schaefer_400 --jobs 40
         invoke validate.all --space schaefer_400 --families fooof,welch_psds
         invoke validate.all --subjects 17,18,26
     """
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.utils.validate_pipeline", "--window", str(window)]
+    cmd = [python_exe, "-m", "code.utils.validate_pipeline",
+           "--window", str(window), "--jobs", str(jobs)]
     if space:
         cmd.extend(["--space", space])
     if families:

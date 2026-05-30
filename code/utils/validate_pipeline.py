@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import yaml
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
 # --------------------------------------------------------------------------
@@ -185,7 +186,8 @@ def _fmt_combos(combos: List[Tuple[str, str]],
 # Report
 # --------------------------------------------------------------------------
 def run(config_path: str, spaces: List[str], families: List[str],
-        subjects: List[str], runs: List[str], window: int) -> int:
+        subjects: List[str], runs: List[str], window: int,
+        jobs: int = 1) -> int:
     config = _load_config(config_path)
     data_root = Path(config["paths"]["data_root"])
     features_root = data_root / config["paths"]["features"]
@@ -202,6 +204,7 @@ def run(config_path: str, spaces: List[str], families: List[str],
       f"{len(subjects)*len(runs)} expected files per family/space")
     P(f"subjects  : {','.join(subjects)}")
     P(f"spaces    : {', '.join(spaces)}    families: {', '.join(families)}")
+    P(f"jobs      : {jobs} ({'parallel' if jobs != 1 else 'serial'} file loads)")
     P("")
 
     grand_fail = 0
@@ -247,12 +250,24 @@ def run(config_path: str, spaces: List[str], families: List[str],
               + (f"   MISSING: {_fmt_combos(missing, runs)}" if missing
                  else "   (complete)"))
 
-            # ---- single pass: measure every file -------------------------
+            # ---- single pass: measure every file (optionally parallel) ---
+            items = sorted(found.items())
             measures: Dict[Tuple[str, str], dict] = {}
-            for key, path in tqdm(sorted(found.items()),
-                                  desc=f"  scan {family}_{space}",
-                                  unit="file", leave=False):
-                measures[key] = _measure_file(path, spec)
+            bar = tqdm(total=len(items), desc=f"  scan {family}_{space}",
+                       unit="file", leave=False)
+            if jobs != 1 and len(items) > 1:
+                # return_as='generator' streams results in submission order,
+                # so we can advance the bar as each file completes.
+                results = Parallel(n_jobs=jobs, return_as="generator")(
+                    delayed(_measure_file)(path, spec) for _, path in items)
+                for (key, _), res in zip(items, results):
+                    measures[key] = res
+                    bar.update(1)
+            else:
+                for key, path in items:
+                    measures[key] = _measure_file(path, spec)
+                    bar.update(1)
+            bar.close()
 
             # ---- systematic context: which metrics are dead/degenerate ---
             # in (almost) EVERY file? Those are family-wide, not per-subject.
@@ -440,6 +455,10 @@ def main() -> int:
                    help="comma-separated subjects (default: config grid)")
     p.add_argument("--window", type=int, default=8,
                    help="n_events_window baked into the desc token (default 8)")
+    p.add_argument("--jobs", type=int, default=1,
+                   help="parallel file loads (default 1=serial). NOTE: welch "
+                        "PSD files are large (~2 GB each) — high --jobs on "
+                        "welch families can exhaust RAM (jobs x ~2 GB).")
     args = p.parse_args()
 
     config = _load_config(args.config)
@@ -464,7 +483,8 @@ def main() -> int:
                     found_spaces.add(base[len(fam) + 1:])
         spaces = sorted(found_spaces) or ["sensor"]
 
-    return run(args.config, spaces, families, subjects, runs, args.window)
+    return run(args.config, spaces, families, subjects, runs, args.window,
+               jobs=args.jobs)
 
 
 if __name__ == "__main__":
