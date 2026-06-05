@@ -545,7 +545,7 @@ def _fit_fooof_single_curve(
 
 
 def load_channel_spectra(
-    channel_index: int,
+    channel_index,
     space: str,
     inout_bounds: Tuple[int, int],
     config: Dict[str, Any],
@@ -567,8 +567,12 @@ def load_channel_spectra(
     channel/region so the Figure-3 C..F panel can be reproduced.
 
     Args:
-        channel_index: index into the spatial axis of the welch PSD arrays
-            (same ordering as the saved statistics maps).
+        channel_index: index (or list/array of indices) into the spatial
+            axis of the welch PSD arrays (same ordering as the saved
+            statistics maps). When several indices are given, their PSDs
+            are pooled (mean across the selected channels, in the same
+            linear-power space as the per-epoch averaging) before the
+            single FOOOF fit — i.e. one averaged spectrum for the region set.
         space: 'sensor' or atlas name (selects the welch_psds_<space> folder).
         inout_bounds: (low_pct, high_pct) VTC percentiles for IN/OUT.
         config: loaded config dict.
@@ -592,6 +596,11 @@ def load_channel_spectra(
     welch_root = data_root / config["paths"]["features"] / f"welch_psds_{space}"
     if not welch_root.exists():
         raise FileNotFoundError(f"Welch PSD folder not found: {welch_root}")
+
+    # Accept a single index or a set of indices to pool. Pooling averages
+    # the PSDs across the selected channels (alongside the per-epoch mean)
+    # so the FOOOF fit downstream sees one combined spectrum.
+    chan_idx = np.atleast_1d(np.asarray(channel_index, dtype=int))
 
     if subjects is None:
         subjects = list(config["bids"]["subjects"])
@@ -666,7 +675,7 @@ def load_channel_spectra(
             freqs = np.asarray(loaded["freqs"], dtype=float)
             if freqs_full is None:
                 freqs_full = freqs
-            if channel_index >= psd_block.shape[1]:
+            if chan_idx.max() >= psd_block.shape[1]:
                 raise IndexError(
                     f"channel_index {channel_index} out of range "
                     f"(welch PSD has {psd_block.shape[1]} channels)"
@@ -680,13 +689,15 @@ def load_channel_spectra(
             good_mask = ~bad if drop_bad_trials else np.ones_like(bad, dtype=bool)
             in_mask = in_zone & task_mask & good_mask
             out_mask = out_zone & task_mask & good_mask
+            # psd_block[mask][:, chan_idx, :] -> (n_epochs, n_sel, n_freqs);
+            # mean over epochs AND selected channels pools the region set.
             if in_mask.any():
                 in_chan_psds.append(
-                    np.nanmean(psd_block[in_mask, channel_index, :], axis=0)
+                    np.nanmean(psd_block[in_mask][:, chan_idx, :], axis=(0, 1))
                 )
             if out_mask.any():
                 out_chan_psds.append(
-                    np.nanmean(psd_block[out_mask, channel_index, :], axis=0)
+                    np.nanmean(psd_block[out_mask][:, chan_idx, :], axis=(0, 1))
                 )
 
         if not in_chan_psds or not out_chan_psds:
@@ -722,7 +733,8 @@ def load_channel_spectra(
         "freqs": freqs_full,
         "freqs_fit": freqs_fit,
         "subjects": kept,
-        "channel_index": int(channel_index),
+        "channel_index": (int(chan_idx[0]) if chan_idx.size == 1
+                          else chan_idx.tolist()),
         "n_subjects": len(kept),
     }
     for label in ("IN", "OUT"):

@@ -1562,6 +1562,7 @@ def stats_classif_panel(c, space="sensor", trial_type="alltrials",
                         classif_correction="tmax", classif_level="epoch",
                         classif_cv=None, clf="logistic",
                         alpha=0.05, n_events_window=8,
+                        region_mode="pool",
                         output=None, config="config.yaml",
                         correction=None, cv=None):
     """Render the paper-ready stats + classification multi-panel (Fig. 3).
@@ -1590,6 +1591,10 @@ def stats_classif_panel(c, space="sensor", trial_type="alltrials",
             necessarily univariate.
         alpha: significance threshold for the mask (default 0.05).
         n_events_window: trials per welch window (welch desc suffix).
+        region_mode: spatial selection for the C-F spectra on the
+            FOOOF-exponent map. 'pool' (default) averages across ALL
+            group-significant regions; 'max' uses the single largest-|t|
+            region. Both fall back to the overall |t|-max if none survives.
         output: override output path. Default writes to
             reports/figures/stats_classif_panel_space-<space>_type-<trial>
             _stats-<lvl>-<corr>_classif-<lvl>-<corr>.png.
@@ -1600,6 +1605,7 @@ def stats_classif_panel(c, space="sensor", trial_type="alltrials",
         invoke viz.stats-classif-panel --trial-type=correct
         invoke viz.stats-classif-panel --classif-level=average      # all-average panel
         invoke viz.stats-classif-panel --correction=tmax            # tmax on both halves
+        invoke viz.stats-classif-panel --space=schaefer_400 --region-mode=max  # single peak region
     """
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.visualization.stats_classif_panel",
@@ -1612,7 +1618,8 @@ def stats_classif_panel(c, space="sensor", trial_type="alltrials",
            "--classif-level", classif_level,
            "--clf", clf,
            "--alpha", str(alpha),
-           "--n-events-window", str(n_events_window)]
+           "--n-events-window", str(n_events_window),
+           "--region-mode", region_mode]
     if classif_cv is not None:
         cmd.extend(["--classif-cv", classif_cv])
     if correction is not None:

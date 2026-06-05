@@ -24,11 +24,12 @@ uses the ``pvals_fdr_bh`` field (Benjamini-Hochberg
 over the 270 sensors of that feature). Old stats files used the key
 ``pvals_corrected_fdr`` for the same quantity; both are accepted.
 
-Selection of the spectra (panels C–F): the sensor is the one with the
-largest |group t| among group-significant sensors on the FOOOF-exponent
-map (falling back to the overall |t|-max if no sensor survives
-correction). By default (``--spectra=average``) the panels show the
-group mean ± SEM across all subjects at that sensor. With
+Selection of the spectra (panels C–F): by default (``--region-mode=pool``)
+the spectra are pooled (averaged) across ALL group-significant regions on
+the FOOOF-exponent map; with ``--region-mode=max`` only the single region
+with the largest |group t| is used. Both fall back to the overall |t|-max
+region if none survives correction. By default (``--spectra=average``) the
+panels show the group mean ± SEM across all subjects at that selection. With
 ``--spectra=topsubject``, the panels show one subject — the one whose
 individual IN-vs-OUT FOOOF-exponent difference at that sensor is
 largest — as single lines (no SEM band).
@@ -412,6 +413,14 @@ def main() -> int:
 
     parser.add_argument("--n-events-window", type=int, default=8)
     parser.add_argument(
+        "--region-mode", default="pool", choices=["pool", "max"],
+        help="Spatial selection on the FOOOF-exponent map feeding panels "
+             "C-F. 'pool' (default): average the spectra across ALL "
+             "group-significant regions. 'max': use the single region with "
+             "the largest |t|. Both fall back to the overall |t|-max region "
+             "when no region survives correction.",
+    )
+    parser.add_argument(
         "--spectra", default="average",
         choices=["topsubject", "average"],
         help="Panels C-F content. 'average' (default): group mean ± SEM "
@@ -542,19 +551,31 @@ def main() -> int:
     sig_mask_exp = (exp_p < args.alpha) if exp_p is not None else None
     if sig_mask_exp is not None and sig_mask_exp.any():
         sig_idx = np.flatnonzero(sig_mask_exp)
-        sel_idx = int(sig_idx[np.nanargmax(np.abs(exp_t[sig_idx]))])
-        sel_basis = (f"|t|-max within {len(sig_idx)} group-sig sensors "
-                     f"({args.stats_correction}, alpha={args.alpha})")
+        max_idx = int(sig_idx[np.nanargmax(np.abs(exp_t[sig_idx]))])
+        if args.region_mode == "pool":
+            sel_indices = [int(i) for i in sig_idx]
+            sel_basis = (f"pooled mean across {len(sel_indices)} group-sig "
+                         f"regions ({args.stats_correction}, alpha={args.alpha})")
+        else:
+            sel_indices = [max_idx]
+            sel_basis = (f"|t|-max within {len(sig_idx)} group-sig regions "
+                         f"({args.stats_correction}, alpha={args.alpha})")
+        sel_idx = max_idx
     else:
         sel_idx = int(np.nanargmax(np.abs(exp_t)))
-        sel_basis = ("no group-sig sensors — fallback to overall |t|-max"
+        sel_indices = [sel_idx]
+        sel_basis = ("no group-sig regions — fallback to overall |t|-max"
                      if sig_mask_exp is not None
                      else "no pvals — using overall |t|-max")
     spatial_unit_names = roi_names if is_atlas else list(info["ch_names"])
-    sel_name = (spatial_unit_names[sel_idx]
-                if sel_idx < len(spatial_unit_names) else f"unit-{sel_idx}")
-    logger.info("Selected sensor: %s (idx=%d, |t|=%.3f) — %s",
-                sel_name, sel_idx, float(np.abs(exp_t[sel_idx])), sel_basis)
+    sel_names = [spatial_unit_names[i] if i < len(spatial_unit_names)
+                 else f"unit-{i}" for i in sel_indices]
+    # Representative unit (max |t|) — used for the topsubject pick + logging.
+    sel_name = sel_names[0]
+    logger.info("Spectra spatial selection (mode=%s): %d unit(s) — %s",
+                args.region_mode, len(sel_indices), sel_basis)
+    for i, nm in zip(sel_indices, sel_names):
+        logger.info("   idx=%d |t|=%.3f %s", i, float(np.abs(exp_t[i])), nm)
 
     sfile_exp = _stats_file(stats_dir, "fooof_exponent", inout_str,
                             args.trial_type, level=args.stats_level,
@@ -569,7 +590,7 @@ def main() -> int:
         interp_thr = int(dm.get("interp_reject_threshold", interp_thr) or 0)
 
     spectra = load_channel_spectra(
-        channel_index=sel_idx,
+        channel_index=sel_indices,
         space=args.space,
         inout_bounds=tuple(inout_bounds),
         config=config,
@@ -669,31 +690,40 @@ def main() -> int:
             _plot_topomap(ax, vals, mask, info, vmin, vmax, cmap)
 
     def _draw_selection_inset(ax_d):
-        """Top-right inset on panel D: small topomap (or brain) showing the
-        selected sensor/region. The region/sensor name sits BELOW the
-        inset (drawn with inset.text, since set_xlabel renders awkwardly
-        on a spineless axes). The 7Networks_ atlas prefix is stripped
-        from the displayed name.
+        """Top-right inset on panel D marking the spatial selection feeding
+        panels C-F.
+
+        Atlas mode: a single inflated face — auto-picked as the
+        hemisphere+view (lateral/medial) that contains the most of the
+        selected regions — with every selected region highlighted. No
+        region name is drawn (the pooled set has no single label, and the
+        face itself locates it). Sensor mode: a topomap with the selected
+        sensor(s) marked. When ``--spectra=topsubject`` the chosen subject
+        id is annotated below.
         """
         if is_atlas:
-            # Wider than tall — fits a single lateral hemisphere; the
-            # label sits below so we leave a small bottom margin in y0.
-            rect = [0.60, 0.62, 0.32, 0.30]
+            rect = [0.62, 0.60, 0.32, 0.34]
         else:
             rect = [0.74, 0.62, 0.18, 0.30]
         inset = ax_d.inset_axes(rect)
         if is_atlas:
+            from collections import Counter
+
             from code.visualization.plot_surface import (
                 render_inflated_view,
                 roi_to_surface,
+                roi_view_faces,
             )
-            roi_label = roi_names[sel_idx]
-            hemi = "right" if roi_label.endswith("-rh") else "left"
+            faces = roi_view_faces(roi_names, args.space)
+            best_hemi, best_view = Counter(
+                faces[i] for i in sel_indices
+            ).most_common(1)[0][0]
             vals = np.full(len(roi_names), np.nan)
-            vals[sel_idx] = 1.0
+            for i in sel_indices:
+                vals[i] = 1.0
             lh, rh = roi_to_surface(vals, roi_names, args.space)
             img = render_inflated_view(
-                lh, rh, hemi, "lateral", fsaverage,
+                lh, rh, best_hemi, best_view, fsaverage,
                 cmap="autumn", vmin=0.0, vmax=1.0,
             )
             inset.imshow(img, interpolation="bilinear", aspect="equal")
@@ -702,7 +732,8 @@ def main() -> int:
             n_ch = len(info["ch_names"])
             vals = np.zeros(n_ch)
             mask = np.zeros(n_ch, dtype=bool)
-            mask[sel_idx] = True
+            for i in sel_indices:
+                mask[i] = True
             mask_params = dict(
                 marker="o", markerfacecolor="red", markeredgecolor="k",
                 linewidth=0.6, markersize=5,
@@ -717,12 +748,10 @@ def main() -> int:
         inset.set_yticks([])
         for spine in inset.spines.values():
             spine.set_visible(False)
-        # 7Networks_ atlas prefix bloats the label; strip it for display only.
-        display_name = sel_name.replace("7Networks_", "")
-        inset_label = (f"sub-{sel_subject} · {display_name}"
-                       if sel_subject is not None else display_name)
-        inset.text(0.5, -0.04, inset_label, transform=inset.transAxes,
-                   ha="center", va="top", fontsize=7)
+        if sel_subject is not None:
+            inset.text(0.5, -0.04, f"sub-{sel_subject}",
+                       transform=inset.transAxes,
+                       ha="center", va="top", fontsize=7)
 
     def _label_with_n_sig(label: str, mask: Optional[np.ndarray]) -> str:
         if mask is None:
@@ -936,13 +965,16 @@ def main() -> int:
         if ax is not None:
             _stamp(ax, letter)
 
+    # Non-default region selection gets its own token so pool/max renders
+    # don't overwrite each other; the default keeps the legacy filename.
+    region_tok = "" if args.region_mode == "pool" else f"_region-{args.region_mode}"
     out_path = (Path(args.output) if args.output
                 else Path("reports") / "figures"
                 / (f"stats_classif_panel_space-{args.space}"
                    f"_type-{args.trial_type}"
                    f"_stats-{args.stats_level}-{args.stats_correction}"
                    f"_classif-{args.classif_level}-"
-                   f"{args.classif_correction}.png"))
+                   f"{args.classif_correction}{region_tok}.png"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)

@@ -201,6 +201,60 @@ def roi_to_surface(
     return lh_data, rh_data
 
 
+# In-process cache: atlas_name -> (label_map, hemi-coords, hemi-midline-x).
+_ROI_FACE_CACHE: Dict[str, tuple] = {}
+
+
+def roi_view_faces(
+    roi_names: List[str],
+    atlas_name: str,
+) -> List[Tuple[str, str]]:
+    """Per-ROI ``(hemi, view)`` on the inflated fsaverage surface.
+
+    ``hemi`` is ``"left"``/``"right"`` (from the ``-lh``/``-rh`` suffix);
+    ``view`` is ``"medial"``/``"lateral"`` decided by the mean inflated-x of
+    the ROI's vertices relative to its hemisphere's midline — "medial" means
+    the vertices face the contralateral hemisphere. Used to auto-pick the
+    single brain face that best shows a set of selected regions. Unknown ROI
+    names fall back to ``("left", "lateral")``.
+    """
+    import mne
+    import nilearn.surface as ns
+
+    from code.source_reconstruction.apply_atlas import get_mne_atlas_name
+
+    if atlas_name not in _ROI_FACE_CACHE:
+        _ensure_schaefer_annot(atlas_name)
+        subjects_dir = str(_get_subjects_dir())
+        labels = mne.read_labels_from_annot(
+            "fsaverage", parc=get_mne_atlas_name(atlas_name),
+            subjects_dir=subjects_dir, verbose=False,
+        )
+        label_map = {label.name: label for label in labels}
+        fsaverage = _get_fsaverage_surfaces()
+        coords = {
+            "left": np.asarray(ns.load_surf_mesh(fsaverage["infl_left"]).coordinates),
+            "right": np.asarray(ns.load_surf_mesh(fsaverage["infl_right"]).coordinates),
+        }
+        midline = {h: float(c[:, 0].mean()) for h, c in coords.items()}
+        _ROI_FACE_CACHE[atlas_name] = (label_map, coords, midline)
+
+    label_map, coords, midline = _ROI_FACE_CACHE[atlas_name]
+    faces: List[Tuple[str, str]] = []
+    for name in roi_names:
+        label = label_map.get(name)
+        if label is None:
+            faces.append(("left", "lateral"))
+            continue
+        hemi = "right" if label.hemi == "rh" else "left"
+        mean_x = float(coords[hemi][label.vertices, 0].mean())
+        # Left hemi: medial faces +x (toward midline); right hemi: -x.
+        sign = 1.0 if hemi == "left" else -1.0
+        view = "medial" if (mean_x - midline[hemi]) * sign > 0 else "lateral"
+        faces.append((hemi, view))
+    return faces
+
+
 def render_inflated_view(
     lh_data: np.ndarray,
     rh_data: np.ndarray,
