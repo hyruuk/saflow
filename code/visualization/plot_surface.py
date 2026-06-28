@@ -319,7 +319,6 @@ def render_inflated_view(
             colorbar=False,
             axes=ax,
             engine="matplotlib",
-            darkness=None,
         )
 
         if yeo_overlay is not None:
