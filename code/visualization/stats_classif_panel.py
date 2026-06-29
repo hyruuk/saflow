@@ -72,7 +72,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
-from matplotlib.gridspec import GridSpec
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
 logging.basicConfig(
     level=logging.INFO,
@@ -331,7 +331,8 @@ def _mean_sem(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
                    arr_out: np.ndarray, show_legend: bool = False,
-                   logx: bool = True, axhline_zero: bool = False):
+                   logx: bool = True, axhline_zero: bool = False,
+                   ax_delta=None):
     # With a single subject (n_rows < 2) the SEM is undefined — just draw
     # the line. ddof=1 with n=1 would emit a RuntimeWarning and fill_between
     # would silently no-op on NaN bands.
@@ -339,19 +340,13 @@ def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
     mean_in, sem_in = _mean_sem(arr_in)
     mean_out, sem_out = _mean_sem(arr_out)
 
-    # OUT: thick solid line (primary); IN: thin dashed line (secondary).
-    ax.plot(freqs, mean_out, color=COLOR_OUT, lw=2.4, label="OUT")
-    ax.plot(freqs, mean_in,  color=COLOR_IN,  lw=1.2, ls="--", label="IN")
+    ax.plot(freqs, mean_in,  color=COLOR_IN,  lw=1.2, label="IN")
+    ax.plot(freqs, mean_out, color=COLOR_OUT, lw=1.2, label="OUT")
     if not single:
+        ax.fill_between(freqs, mean_in  - sem_in,  mean_in  + sem_in,
+                        color=COLOR_IN,  alpha=0.22, lw=0)
         ax.fill_between(freqs, mean_out - sem_out, mean_out + sem_out,
                         color=COLOR_OUT, alpha=0.22, lw=0)
-        ax.fill_between(freqs, mean_in - sem_in, mean_in + sem_in,
-                        color=COLOR_IN, alpha=0.15, lw=0)
-    # Shaded gap between the two means to highlight divergence.
-    ax.fill_between(freqs, mean_in, mean_out,
-                    where=mean_out >= mean_in, color=COLOR_OUT, alpha=0.10, lw=0)
-    ax.fill_between(freqs, mean_in, mean_out,
-                    where=mean_out < mean_in,  color=COLOR_IN,  alpha=0.10, lw=0)
     if logx:
         ax.set_xscale("log")
     if axhline_zero:
@@ -361,6 +356,20 @@ def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
     if show_legend:
         ax.legend(loc="best", fontsize=8, frameon=False,
                   handlelength=1.2, handletextpad=0.4)
+
+    if ax_delta is not None:
+        delta = mean_out - mean_in
+        ax_delta.plot(freqs, delta, color="k", lw=1.0)
+        ax_delta.fill_between(freqs, 0, delta,
+                              where=delta >= 0, color=COLOR_OUT, alpha=0.35, lw=0)
+        ax_delta.fill_between(freqs, 0, delta,
+                              where=delta <  0, color=COLOR_IN,  alpha=0.35, lw=0)
+        ax_delta.axhline(0, color="k", lw=0.5, alpha=0.5)
+        if logx:
+            ax_delta.set_xscale("log")
+        ax_delta.grid(True, which="both", alpha=0.18)
+        ax_delta.tick_params(axis="both", labelsize=6)
+        ax_delta.set_ylabel("OUT−IN", fontsize=6, labelpad=2)
 
 
 # ---------------------------------------------------------------------------
@@ -777,15 +786,27 @@ def main() -> int:
 
     def draw_middle_row(row_idx, line_panels, topo_values, vmin, vmax,
                         cmap, labels):
-        # ax_l2 shares Y with ax_l1 — the two line plots in a middle row
-        # show the same log-power scale (C+D = raw PSD vs. aperiodic;
-        # E+F = corrected vs. periodic). Sharing locks the scale and lets
-        # us drop the right-panel y-tick labels + ylabel.
-        ax_l1 = fig.add_subplot(gs[row_idx, 0:2])
-        ax_l2 = fig.add_subplot(gs[row_idx, 2:4], sharey=ax_l1)
+        # Each line-plot cell is split 70/30 into a spectrum panel (top)
+        # and a difference panel (bottom). sharey links the two spectrum
+        # panels; the two delta panels share y independently.
+        gs_l1 = GridSpecFromSubplotSpec(
+            2, 1, subplot_spec=gs[row_idx, 0:2],
+            height_ratios=[7, 3], hspace=0.05,
+        )
+        gs_l2 = GridSpecFromSubplotSpec(
+            2, 1, subplot_spec=gs[row_idx, 2:4],
+            height_ratios=[7, 3], hspace=0.05,
+        )
+        ax_l1 = fig.add_subplot(gs_l1[0])
+        ax_d1 = fig.add_subplot(gs_l1[1], sharex=ax_l1)
+        ax_l2 = fig.add_subplot(gs_l2[0], sharey=ax_l1)
+        ax_d2 = fig.add_subplot(gs_l2[1], sharex=ax_l2, sharey=ax_d1)
+        plt.setp(ax_l1.get_xticklabels(), visible=False)
+        plt.setp(ax_l2.get_xticklabels(), visible=False)
         plt.setp(ax_l2.get_yticklabels(), visible=False)
-        for ax, panel in zip([ax_l1, ax_l2], line_panels):
-            panel(ax)
+        plt.setp(ax_d2.get_yticklabels(), visible=False)
+        for ax, ax_d, panel in zip([ax_l1, ax_l2], [ax_d1, ax_d2], line_panels):
+            panel(ax, ax_d)
         for j in range(3):
             ax = fig.add_subplot(gs[row_idx, 4 + j])
             vals, pvals = topo_values[j]
@@ -804,42 +825,50 @@ def main() -> int:
     # vs. periodic component) — both are residual/periodic log power.
     # The ylabel sits on the left panel only; the right panel inherits the
     # scale via sharey and hides its tick labels (see draw_middle_row).
-    def panel_C(ax):
+    def panel_C(ax, ax_delta=None):
         _plot_spectrum(
             ax, f_full,
             spectra["IN"]["raw"][:, full_mask],
             spectra["OUT"]["raw"][:, full_mask],
             show_legend=True,
+            ax_delta=ax_delta,
         )
-        ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
         ax.set_ylabel("PSD (log$_{10}$)", fontsize=8.5)
+        (ax_delta if ax_delta is not None else ax).set_xlabel(
+            "Frequency (Hz)", fontsize=8.5)
 
-    def panel_D(ax):
+    def panel_D(ax, ax_delta=None):
         _plot_spectrum(
             ax, f_full,
             spectra["IN"]["aperiodic"][:, full_mask],
             spectra["OUT"]["aperiodic"][:, full_mask],
+            ax_delta=ax_delta,
         )
-        ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
+        (ax_delta if ax_delta is not None else ax).set_xlabel(
+            "Frequency (Hz)", fontsize=8.5)
 
-    def panel_E(ax):
+    def panel_E(ax, ax_delta=None):
         _plot_spectrum(
             ax, f_full,
             spectra["IN"]["corrected"][:, full_mask],
             spectra["OUT"]["corrected"][:, full_mask],
             axhline_zero=True,
+            ax_delta=ax_delta,
         )
-        ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
         ax.set_ylabel("PSD (log$_{10}$)", fontsize=8.5)
+        (ax_delta if ax_delta is not None else ax).set_xlabel(
+            "Frequency (Hz)", fontsize=8.5)
 
-    def panel_F(ax):
+    def panel_F(ax, ax_delta=None):
         _plot_spectrum(
             ax, freqs_fit,
             spectra["IN"]["periodic"],
             spectra["OUT"]["periodic"],
             axhline_zero=True,
+            ax_delta=ax_delta,
         )
-        ax.set_xlabel("Frequency (Hz)", fontsize=8.5)
+        (ax_delta if ax_delta is not None else ax).set_xlabel(
+            "Frequency (Hz)", fontsize=8.5)
 
     cax_G, axes_CD = draw_middle_row(
         2, [panel_C, panel_D],
