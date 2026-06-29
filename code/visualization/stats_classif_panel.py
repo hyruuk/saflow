@@ -336,15 +336,22 @@ def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
     # the line. ddof=1 with n=1 would emit a RuntimeWarning and fill_between
     # would silently no-op on NaN bands.
     single = min(arr_in.shape[0], arr_out.shape[0]) < 2
-    for arr, color, label in (
-        (arr_in, COLOR_IN, "IN"),
-        (arr_out, COLOR_OUT, "OUT"),
-    ):
-        mean, sem = _mean_sem(arr)
-        ax.plot(freqs, mean, color=color, lw=1.6, label=label)
-        if not single:
-            ax.fill_between(freqs, mean - sem, mean + sem,
-                            color=color, alpha=0.22, lw=0)
+    mean_in, sem_in = _mean_sem(arr_in)
+    mean_out, sem_out = _mean_sem(arr_out)
+
+    # OUT: thick solid line (primary); IN: thin dashed line (secondary).
+    ax.plot(freqs, mean_out, color=COLOR_OUT, lw=2.4, label="OUT")
+    ax.plot(freqs, mean_in,  color=COLOR_IN,  lw=1.2, ls="--", label="IN")
+    if not single:
+        ax.fill_between(freqs, mean_out - sem_out, mean_out + sem_out,
+                        color=COLOR_OUT, alpha=0.22, lw=0)
+        ax.fill_between(freqs, mean_in - sem_in, mean_in + sem_in,
+                        color=COLOR_IN, alpha=0.15, lw=0)
+    # Shaded gap between the two means to highlight divergence.
+    ax.fill_between(freqs, mean_in, mean_out,
+                    where=mean_out >= mean_in, color=COLOR_OUT, alpha=0.10, lw=0)
+    ax.fill_between(freqs, mean_in, mean_out,
+                    where=mean_out < mean_in,  color=COLOR_IN,  alpha=0.10, lw=0)
     if logx:
         ax.set_xscale("log")
     if axhline_zero:
