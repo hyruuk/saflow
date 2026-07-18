@@ -33,7 +33,11 @@ SLURM Support:
 """
 
 import os
+import shlex
+import subprocess
+import sys
 from pathlib import Path
+from typing import List, Tuple
 
 from invoke import Collection, task
 
@@ -48,12 +52,32 @@ TESTS_DIR = PROJECT_ROOT / "tests"
 DOCS_DIR = PROJECT_ROOT / "docs"
 
 
-def get_python_executable():
-    """Get the Python executable, preferring venv if it exists."""
-    venv_python = PROJECT_ROOT / "env" / "bin" / "python"
-    if venv_python.exists():
-        return str(venv_python)
-    return "python"
+def get_python_executable(config_path="config.yaml"):
+    """Resolve config.paths.venv and require the supported Python range."""
+    venv_path = None
+    path = PROJECT_ROOT / config_path
+    if path.exists():
+        import yaml
+
+        configured = yaml.safe_load(path.read_text()).get("paths", {}).get("venv")
+        if configured:
+            venv_path = Path(configured).expanduser()
+            if not venv_path.is_absolute():
+                venv_path = PROJECT_ROOT / venv_path
+    candidate = (venv_path / "bin" / "python") if venv_path else Path(sys.executable)
+    if not candidate.exists():
+        raise RuntimeError(
+            f"Configured Python does not exist: {candidate}. Run ./setup.sh first."
+        )
+    version = subprocess.run(
+        [str(candidate), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if version not in {"3.11", "3.12"}:
+        raise RuntimeError(
+            f"Saflow requires Python 3.11-3.12; {candidate} is Python {version}."
+        )
+    return str(candidate)
 
 
 def get_env_with_pythonpath():
@@ -2664,7 +2688,7 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
             agg_scripts, "classify_aggregate_array", agg_resources,
             script_dir, timestamp, max_concurrent=max_concurrent,
             dependencies=[classify_array_id] if classify_array_id else None,
-            dep_type="afterok", dry_run=dry_run,
+            dep_type="afterany", dry_run=dry_run,
         )
 
     manifest_path = log_dir / f"classification_manifest_{timestamp}.json"
@@ -2876,7 +2900,7 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
             f"mfclassify_agg_array_{actual_label}", agg_resources,
             script_dir, timestamp, max_concurrent=max_concurrent,
             dependencies=[classify_array_id] if classify_array_id else None,
-            dep_type="afterok", dry_run=dry_run,
+            dep_type="afterany", dry_run=dry_run,
         )
 
     manifest_path = log_dir / f"mfclassify_manifest_{timestamp}.json"
@@ -3098,6 +3122,75 @@ def classify_multifeature_aggregate(c, label, space, clf="logistic", cv="logo",
         cmd.extend(["--output-dir", output_dir])
     print(f"Running: {' '.join(cmd)}")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def multifeature_preflight(c, features="all", space="sensor",
+                           trial_type="alltrials", n_events_window=8,
+                           subjects=None, analysis_id=None, output_root=None,
+                           config="config.yaml"):
+    """Validate corrected multifeature inputs before any HPC submission."""
+    cmd = [
+        get_python_executable(config), "-m",
+        "code.classification.multifeature_workflow", "preflight",
+        "--features", features, "--space", space,
+        "--trial-type", trial_type,
+        "--n-events-window", str(n_events_window), "--config", config,
+    ]
+    if subjects:
+        cmd.extend(["--subjects", *subjects.split()])
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
+    if output_root:
+        cmd.extend(["--output-root", output_root])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def multifeature_export(c, analysis_id, analysis_root, destination=None):
+    """Export compact results and plotting metadata without subject features."""
+    source = Path(analysis_root) / analysis_id
+    target = Path(destination) if destination else Path("reports/exports") / analysis_id
+    cmd = [
+        get_python_executable(), "-m",
+        "code.classification.multifeature_workflow", "export",
+        "--analysis-dir", str(source), "--destination", str(target),
+    ]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def multifeature_legacy_inventory(c, source, manifest="reports/legacy/combined-24.json"):
+    """Inventory legacy combined-24 files; never move or delete them."""
+    cmd = [
+        get_python_executable(), "-m",
+        "code.classification.multifeature_workflow", "legacy-inventory",
+        "--source", source, "--manifest", manifest,
+    ]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def multifeature_run(c, analysis_id, analysis_root, features="all",
+                     space="sensor", trial_type="alltrials",
+                     n_events_window=8, n_permutations=1000,
+                     inner_splits=5, seed=42, subjects=None,
+                     config="config.yaml"):
+    """Run all corrected primary endpoints after a passing preflight."""
+    cmd = [
+        get_python_executable(config), "-m",
+        "code.classification.run_corrected_multifeature",
+        "--analysis-id", analysis_id, "--analysis-root", analysis_root,
+        "--features", features, "--space", space,
+        "--trial-type", trial_type,
+        "--n-events-window", str(n_events_window),
+        "--n-permutations", str(n_permutations),
+        "--inner-splits", str(inner_splits), "--seed", str(seed),
+        "--config", config,
+    ]
+    if subjects:
+        cmd.extend(["--subjects", *subjects.split()])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
@@ -3757,6 +3850,11 @@ analysis.add_task(classify_aggregate, name="classify-aggregate")
 analysis.add_task(classify_multifeature, name="classify-multifeature")
 analysis.add_task(classify_multifeature_aggregate,
                   name="classify-multifeature-aggregate")
+analysis.add_task(multifeature_preflight, name="multifeature-preflight")
+analysis.add_task(multifeature_export, name="multifeature-export")
+analysis.add_task(multifeature_run, name="multifeature-run")
+analysis.add_task(multifeature_legacy_inventory,
+                  name="multifeature-legacy-inventory")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection

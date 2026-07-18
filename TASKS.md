@@ -556,7 +556,9 @@ invoke analysis.classify --features=psds --slurm --n-chunks=8
 
 ### `invoke analysis.classify-multifeature`
 
-Multi-feature classification (IN vs OUT) along one or all axes of the (trials × spatial × features) tensor.
+Legacy/sensitivity multi-feature diagnostics along axes of the tensor. These
+outputs use the historical preprocessing and are not confirmatory incremental
+attribution. Use the corrected workflow below for publication inference.
 
 Loads all selected features as a single stacked tensor and runs decoding along one or more axes:
 
@@ -617,6 +619,26 @@ invoke analysis.classify-multifeature --axis=joint --features=all
 invoke analysis.classify-multifeature --axis=per-cell --space=schaefer_400 \
     --n-chunks=8 --slurm
 ```
+
+---
+
+### Corrected multifeature workflow
+
+The corrected workflow uses an immutable `mf-<UTC>-g<git>-c<config>` analysis
+ID, strict trial/spatial alignment, nested subject-grouped ridge logistic
+regression, training-only scaling, and within-subject permutations.
+
+```bash
+invoke analysis.multifeature-preflight --features=all --space=sensor
+invoke analysis.multifeature-run --analysis-id=mf-... \
+  --analysis-root=/path/to/processed/multifeature --space=sensor
+invoke analysis.multifeature-export --analysis-id=mf-... \
+  --analysis-root=/path/to/processed/multifeature
+invoke analysis.multifeature-legacy-inventory --source=/path/to/old/results
+```
+
+Existing `combined-24` files are never moved, deleted, or reused. Feature and
+region attribution are corrected as separate max-statistic families.
 
 ---
 

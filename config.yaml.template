@@ -18,7 +18,7 @@ paths:
   # Project-specific paths (in saflow/ project directory)
   reports: ./reports
   logs: ./logs
-  venv: ./env
+  venv: ./.venv  # Python 3.11-3.12 environment used by every task and SLURM job
 
   # HPC-specific paths
   slurm_output: ./logs/slurm
@@ -250,6 +250,15 @@ analysis:
   # + feature-extraction pass.
   bad_trial_rule: ar2          # ar2 | ar1 | union
   interp_reject_threshold: 0   # 0 = off
+
+  # Confirmatory multifeature model. The outer fold always leaves one subject
+  # out; these values are tuned only with subject-grouped folds in its training set.
+  multifeature:
+    c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+    inner_splits: 5
+    seed: 42
+    n_permutations: 1000
+    primary_metric: roc_auc
 
   # Epoch timing relative to stimulus event marker (t=0 = 0% intensity, stimulus onset)
   # In gradCPT, stimuli gradually fade in (0%→100%) then fade out (100%→0%) over ~800ms each.

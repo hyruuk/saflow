@@ -1,0 +1,16 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# Corrected nested-LOSO multifeature analysis. Preflight must already pass.
+python -m code.classification.run_corrected_multifeature \
+    --analysis-id {{ analysis_id }} \
+    --analysis-root {{ analysis_root }} \
+    --config {{ config_path }} \
+    --features {{ features }} \
+    --space {{ space }} \
+    --trial-type {{ trial_type }} \
+    --n-events-window {{ n_events_window }} \
+    --n-permutations {{ n_permutations }} \
+    --inner-splits {{ inner_splits }} \
+    --seed {{ seed }}
+{% endblock %}

@@ -383,6 +383,22 @@ invoke viz.stats-classif-panel
 invoke viz.networks.panel --space=schaefer_400
 ```
 
+The command above is retained for legacy axis diagnostics. Confirmatory
+multifeature inference uses the immutable corrected workflow:
+
+```bash
+invoke analysis.multifeature-preflight --features=all --space=sensor
+invoke analysis.multifeature-run --analysis-id=mf-... \
+  --analysis-root=/path/to/processed/multifeature --space=sensor
+invoke analysis.multifeature-export --analysis-id=mf-... \
+  --analysis-root=/path/to/processed/multifeature
+```
+
+It uses nested ridge logistic regression with outer LOSO, subject-grouped inner
+tuning, training-only preprocessing, synchronized within-subject permutations,
+and separate feature/region max-statistic correction. Compact exports omit all
+subject-level feature arrays.
+
 ### HPC Workflow
 
 For cluster computing (SLURM):

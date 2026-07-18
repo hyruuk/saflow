@@ -2,14 +2,14 @@
 
 {% block job_commands %}
 # =============================================================================
-# Multifeature classification — per-cell chunk aggregation
-#   {{ label }} on {{ space }}, trial-type={{ trial_type }}, axis=per-cell
+# Multifeature classification — axis chunk aggregation
+#   {{ label }} on {{ space }}, trial-type={{ trial_type }}, axis={{ axis }}
 # =============================================================================
 
 echo "Multifeature aggregation configuration:"
 echo "  Label:        {{ label }}"
 echo "  Space:        {{ space }}"
-echo "  Axis:         per-cell"
+echo "  Axis:         {{ axis }}"
 echo "  Trial-type:   {{ trial_type }}"
 echo "  Classifier:   {{ clf }}"
 echo "  CV strategy:  {{ cv }}"
@@ -23,7 +23,7 @@ python -m code.classification.aggregate_multifeature \
     --importance {{ importance }} \
     --trial-type {{ trial_type }} \
     --analysis-level {{ analysis_level }} \
-    --axes per-cell
+    --axes {{ axis }}
 
 EXIT=$?
 if [ $EXIT -eq 0 ]; then

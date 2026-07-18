@@ -9,7 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Corrected multifeature inference with nested LOSO ridge logistic regression,
+  training-only preprocessing, within-subject permutations, standalone feature
+  decoding, and held-out grouped feature/region contribution.
+- Stable window alignment keys, strict preflight, immutable analysis IDs,
+  reproducibility snapshots, strong result validation, compact export, and a
+  read-only `combined-24` legacy inventory.
+- Deterministic synthetic multifeature integration tests and Invoke tasks for
+  preflight, corrected execution, export, and legacy inventory.
+
 ### Changed
+- Configured virtual environments are authoritative and must use Python
+  3.11-3.12. Multifeature aggregation now honors its requested axis and uses
+  `afterany` so missing chunks can be reported.
 - Added explicit configurable `paths.bids` expansion, canonicalized epoch
   derivatives to `*_proc-ica_epo.fif`, and made Welch windowed PSD extraction
   require an explicit `window{N}` profile.

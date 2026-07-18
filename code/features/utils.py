@@ -199,6 +199,10 @@ def segment_spatial_temporal_data(
         window_bounds.append((start_sample, end_sample))
 
         row = dict(trial)  # anchor trial's events row
+        row["anchor_epoch_index"] = int(i)
+        row["included_epoch_indices"] = np.arange(
+            i - n_events_window + 1, i + 1, dtype=int
+        )
         row["window_start"] = start_sample / sfreq
         row["window_end"] = end_sample / sfreq
         if n_events_window > 1:

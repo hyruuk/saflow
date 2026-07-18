@@ -238,6 +238,7 @@ def load_classification_data(
     trial_type: str = "alltrials",
     n_events_window: int = 1,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
+    strict_alignment: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load per-epoch feature data, split into IN/OUT using VTC quartiles.
 
@@ -299,6 +300,7 @@ def load_classification_data(
     n_bad_excluded = 0
     per_subject: Dict[str, Dict[str, int]] = {}
     bad_metadata_present = False
+    all_alignment_keys: List[str] = []
 
     for subj_idx, subject in enumerate(tqdm(subjects, desc="Loading", unit="subj", disable=None)):
         subj_dir = feature_root / f"sub-{subject}"
@@ -310,6 +312,7 @@ def load_classification_data(
         subj_inc_task: List[List[np.ndarray]] = []  # length-N per-epoch task arrays
         subj_bad: List[np.ndarray] = []
         subj_run_idx: List[np.ndarray] = []  # per-epoch run index
+        subj_alignment: List[np.ndarray] = []
         run_metas: List[RunMeta] = []
 
         for run_pos, run in enumerate(runs):
@@ -343,6 +346,16 @@ def load_classification_data(
                     pass
 
             meta = npz["trial_metadata"].item()
+
+            required_alignment = {
+                "window_start", "included_epoch_indices", "bad_ar2"
+            }
+            missing_alignment = sorted(required_alignment - set(meta))
+            if strict_alignment and missing_alignment:
+                raise ValueError(
+                    f"{file_path}: missing corrected-analysis metadata "
+                    f"{missing_alignment}; recompute this feature artifact"
+                )
 
             if is_psd:
                 if "psds" not in npz:
@@ -382,6 +395,15 @@ def load_classification_data(
                 compute_run_bad_mask(meta, run_n, bad_trial_rule, interp_reject_threshold)
             )
             subj_run_idx.append(np.full(run_n, run_pos, dtype=int))
+            if not missing_alignment:
+                keys = [
+                    f"sub-{subject}|run-{run}|onset-{float(onset):.9f}|epochs-"
+                    + ",".join(str(int(index)) for index in np.asarray(indices))
+                    for onset, indices in zip(
+                        meta["window_start"], meta["included_epoch_indices"]
+                    )
+                ]
+                subj_alignment.append(np.asarray(keys, dtype=str))
 
         if not subj_data:
             continue
@@ -391,6 +413,9 @@ def load_classification_data(
         subj_inc_task_flat = [arr for run_list in subj_inc_task for arr in run_list]
         subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.array([], dtype=bool)
         subj_run_idx_arr = np.concatenate(subj_run_idx) if subj_run_idx else np.array([], dtype=int)
+        subj_alignment_arr = (
+            np.concatenate(subj_alignment) if subj_alignment else np.array([], dtype=str)
+        )
         if subj_bad_arr.any():
             bad_metadata_present = True
 
@@ -446,6 +471,9 @@ def load_classification_data(
         all_X.append(subj_data[out_mask])
         all_y.extend([0] * n_in + [1] * n_out)
         all_groups.extend([subj_idx] * (n_in + n_out))
+        if subj_alignment_arr.size:
+            all_alignment_keys.extend(subj_alignment_arr[in_mask].tolist())
+            all_alignment_keys.extend(subj_alignment_arr[out_mask].tolist())
         n_in_total += n_in
         n_out_total += n_out
         n_bad_excluded += n_bad_in + n_bad_out
@@ -485,6 +513,8 @@ def load_classification_data(
     }
     if spatial_names is not None:
         metadata["spatial_names"] = spatial_names
+    if all_alignment_keys:
+        metadata["alignment_keys"] = all_alignment_keys
 
     logger.info(
         f"Loaded {len(y)} trials from {metadata['n_subjects']} subjects "
@@ -503,6 +533,7 @@ def load_combined_features(
     trial_type: str = "alltrials",
     n_events_window: int = 1,
     inout_selection: str = DEFAULT_INOUT_STRATEGY,
+    strict_alignment: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     """Load multiple features and stack along a new feature axis.
 
@@ -531,6 +562,7 @@ def load_combined_features(
             trial_type=trial_type,
             n_events_window=n_events_window,
             inout_selection=inout_selection,
+            strict_alignment=strict_alignment,
         )
         if y_ref is None:
             y_ref = y_f
@@ -550,6 +582,16 @@ def load_combined_features(
         per_feature[feat] = {k: v for k, v in meta_f.items() if k != "spatial_names"}
         if spatial_names is None:
             spatial_names = meta_f.get("spatial_names")
+        elif strict_alignment and meta_f.get("spatial_names") != spatial_names:
+            raise ValueError(
+                f"Feature '{feat}' has nonmatching spatial names or ordering"
+            )
+        if strict_alignment:
+            reference_meta = per_feature[features[0]]
+            if meta_f.get("alignment_keys") != reference_meta.get("alignment_keys"):
+                raise ValueError(
+                    f"Feature '{feat}' has nonmatching stable alignment keys"
+                )
 
     X = np.stack(Xs, axis=2)  # (n_trials, n_spatial, n_features)
 
