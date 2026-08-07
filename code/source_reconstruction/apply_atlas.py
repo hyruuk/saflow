@@ -46,6 +46,11 @@ DEFAULT_ATLASES = [
     "schaefer_200",
     "schaefer_400",
 ]
+SCHAEFER_EXPECTED_COUNTS = {
+    "schaefer_100": 100,
+    "schaefer_200": 200,
+    "schaefer_400": 400,
+}
 
 # Mapping from short names to full MNE/FreeSurfer atlas names
 ATLAS_ALIASES = {
@@ -221,6 +226,19 @@ def apply_atlas_to_stc(
     labels = mne.read_labels_from_annot(
         "fsaverage", parc=mne_atlas_name, subjects_dir=subjects_dir, verbose=False
     )
+    if atlas in SCHAEFER_EXPECTED_COUNTS:
+        labels = [
+            label
+            for label in labels
+            if "unknown" not in label.name.lower()
+            and "medial_wall" not in label.name.lower()
+        ]
+        expected_count = SCHAEFER_EXPECTED_COUNTS[atlas]
+        if len(labels) != expected_count:
+            raise ValueError(
+                f"{atlas} must contain exactly {expected_count} ordered parcels "
+                f"after excluding medial-wall labels; found {len(labels)}"
+            )
     logger.info(f"Loaded {len(labels)} labels from atlas '{atlas}'")
 
     # mean_flip needs cortical surface normals → load the fsaverage source space
@@ -332,10 +350,10 @@ def process_single_run(
         logger.error(f"Failed to apply atlas '{atlas}': {e}", exc_info=True)
         return False
 
-    # Convert to arrays - sort by region name for consistency
-    sorted_regions = sorted(region_averages.keys())
-    region_data = np.array([region_averages[r] for r in sorted_regions])
-    region_names = sorted_regions
+    # Preserve the annotation's canonical parcel order. Lexical sorting would
+    # place parcel 10 before parcel 2 and silently invalidate map alignment.
+    region_names = list(region_averages)
+    region_data = np.array([region_averages[name] for name in region_names])
 
     logger.info(f"  [{atlas}] {len(region_names)} ROIs × {region_data.shape[1]} timepoints")
 

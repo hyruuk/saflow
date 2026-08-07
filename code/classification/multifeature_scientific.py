@@ -74,8 +74,8 @@ def _make_estimator(c_value: float, seed: int) -> Pipeline:
                 LogisticRegression(
                     C=c_value,
                     class_weight="balanced",
+                    l1_ratio=0.0,
                     max_iter=5_000,
-                    penalty="l2",
                     random_state=seed,
                     solver="liblinear",
                 ),

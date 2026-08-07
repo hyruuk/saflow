@@ -1,8 +1,55 @@
 # Saflow Pipeline Task Reference
 
+## Corrected Figure 3 workflow
+
+Figure 3 uses immutable `fig3-<UTC>-g<git>-c<config>` directories and distinct
+tasks, leaving all legacy commands unchanged:
+
+```bash
+invoke analysis.figure3-preflight [--analysis-id=fig3-...] [--analysis-root=PATH]
+  [--subjects="04 05"] [--runs="02 03"]
+invoke analysis.figure3-dag --analysis-id=fig3-... [--subjects="04 05"] \
+  [--runs="02 03"] [--spaces="sensor schaefer_400"] \
+  [--no-include-exploratory]
+invoke analysis.figure3-run --analysis-id=fig3-... [--analysis-root=PATH] \
+  [--n-permutations=1000] [--minimum-circular-offset=24] [--seed=42]
+invoke analysis.figure3-export --analysis-id=fig3-... --analysis-root=PATH
+invoke viz.figure3 --analysis-id=fig3-... [--analysis-root=reports/exports]
+```
+
+`alltrials` is Panel 1 confirmatory; broad `correct` and `lapse` selectors are
+exploratory. Panel 1 includes raw PSD, FOOOF, and corrected PSD. Panels 2 and 3
+exclude raw PSD. All corrected paper PSD families use the canonical seven bands
+from Theta through Gamma 3; Delta is excluded. Complexity is an exploratory
+sidekick. Compact exports omit subject-level features and resumable chunks.
+
+`analysis.figure3-dag` writes `manifests/dag.json` and does not submit jobs.
+Its subject-major array mapping is shared by every `aftercorr` edge. Validators
+and aggregators use `afterany` to inspect failures; scientific consumers use
+`afterok`. The Phase A schema catalog is documented in
+`docs/figure3_output_schemas.md`.
+
+`pipeline.bids` accepts `--runs`, `--skip-valid/--no-skip-valid`, and
+`--slurm`. SLURM mode creates one subject/run array cell. Skip-valid requires
+the corrected `gaussian_reflect` filter version and FWHM to match, preventing
+legacy zero-padded events from being accepted.
+
 This document describes the invoke tasks for running the saflow MEG analysis pipeline.
 
 **Quick reference**: Run `invoke --list` to see all available tasks.
+
+Environment setup supports local machines and Compute Canada:
+
+```bash
+./setup.sh
+./setup.sh --python python3.12 --force
+./setup.sh --non-interactive --data-root /project/def-ACCOUNT/USER/data \
+  --slurm-account def-ACCOUNT --skip-fsaverage
+```
+
+The default installer is `auto`: use `uv` when present, otherwise pip from the
+active Python module or site wheelhouse. The environment is always `env/`,
+matching `config.yaml.template` and generated SLURM jobs.
 
 ---
 
@@ -140,6 +187,7 @@ Run MEG preprocessing (Stage 1 of pipeline).
 | `--log-level` | choice | INFO | DEBUG, INFO, WARNING, ERROR |
 | `--skip-existing` | flag | true | Skip if output files exist (default) |
 | `--crop` | float | none | Crop to first N seconds (for testing) |
+| `--skip-report` | flag | false | Skip aggregate QC reports during a local smoke run |
 | `--slurm` | flag | false | Submit jobs to SLURM cluster |
 | `--dry-run` | flag | false | Generate SLURM scripts without submitting |
 
@@ -150,7 +198,7 @@ Run MEG preprocessing (Stage 1 of pipeline).
 # Local execution
 invoke pipeline.preprocess --subject=04
 invoke pipeline.preprocess --subject=04 --runs="02 03"
-invoke pipeline.preprocess --subject=04 --crop=50  # Quick test
+invoke pipeline.preprocess --subject=04 --runs="02" --crop=60 --skip-report
 
 # SLURM execution
 invoke pipeline.preprocess --slurm              # All subjects
@@ -181,6 +229,76 @@ The per-run preprocessing task already generates a subject-level report at the e
 invoke pipeline.preprocess-report --subject=04
 invoke pipeline.preprocess-report --dataset
 ```
+
+### `invoke analysis.figure3-phase-c-synthetic`
+
+Run all three observed scientific workers and create deterministic immutable
+permutation chunks from small schema-compatible synthetic data.
+
+```bash
+invoke analysis.figure3-phase-c-synthetic \
+  --output-dir=/tmp/saflow-figure3-phase-c --seed=17
+```
+
+This checks inference I/O and resumability only; it is not publishable analysis.
+
+### `invoke pipeline.full`
+
+Create the immutable raw-to-final-panels DAG and submit it to SLURM. The
+endpoint is `audit` by default; `--stop-after=features` retains the former
+practical boundary. Pass `--dry-run` to render every command, cell spec, array
+manifest, and dependency without calling `sbatch`.
+
+```bash
+invoke pipeline.full --dry-run
+invoke pipeline.full --subjects="04 05" --runs="02 03" --dry-run
+invoke pipeline.full --start-at=features --stop-after=render --dry-run
+invoke pipeline.full --stop-after=features --dry-run
+```
+
+Key options are `--analysis-id`, `--start-at`, `--stop-after`, `--skip`,
+`--subjects`, `--runs`, `--spaces`, `--[no-]include-exploratory`, and
+`--dry-run`. The generated manifest records every array cell, dependency type,
+expected status artifact, exclusion, and provenance. Its `submission_plan`
+also records per-node resources, array sizes, and stable dry-run job
+identifiers, and validates every `aftercorr` index mapping.
+
+Normal execution records returned SLURM job IDs in `manifests/dag.json`.
+Validators run with `afterany` so they can report incomplete upstream arrays;
+scientific consumers use `afterok` on those barriers.
+
+### `invoke pipeline.resume`
+
+Audit an immutable DAG and select only missing, failed, corrupt, or
+provenance-incompatible cells. Completed chunks are never deleted. A partial
+recovery whose `aftercorr` subsets differ is split into safe waves; rerun
+`pipeline.resume` after the current wave finishes to submit the deferred
+downstream cells.
+
+```bash
+invoke pipeline.resume --analysis-id=fig3-... --dry-run
+invoke pipeline.resume --analysis-id=fig3-...
+```
+
+### `invoke viz.paper`
+
+Render one or all panels from complete real bundles, otherwise use protected
+watermarked synthetic data.
+
+```bash
+invoke viz.paper --panel=all
+invoke viz.paper --panel=panel2 --analysis-id=fig3-...
+```
+
+Paper composites are written at 600 DPI under `reports/figures/paper/`.
+Standalone white-background 2560×1440 PNG and editable SVG components are
+written under `reports/figures/slides/`. Every artifact has a JSON sidecar.
+Synthetic rendering cannot overwrite real output.
+
+### `invoke analysis.figure3-audit`
+
+Fail unless all three real bundles and matching real paper sidecars are
+complete and belong to the requested immutable analysis ID.
 
 ---
 

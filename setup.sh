@@ -10,15 +10,21 @@
 #
 # Options:
 #   --python      Specify Python executable (default: auto-detect best 3.11-3.12)
-#   --installer   Dependency installer: uv or pip (default: uv)
+#   --installer   Dependency installer: auto, uv, or pip (default: auto)
 #   --offline     Pass --offline to uv sync
 #   --force       Force reinstall if venv already exists
+#   --non-interactive  Never prompt; leave unresolved config values unchanged
+#   --data-root   Set paths.data_root when creating config.yaml
+#   --slurm-account  Set the Compute Canada/SLURM allocation account
+#   --skip-fsaverage  Do not download fsaverage during setup
 #   --help        Show this help message
 #
 # Examples:
 #   ./setup.sh                      # Standard installation (auto-detects Python)
 #   ./setup.sh --python python3.11  # Use specific Python version
-#   ./setup.sh --installer pip      # Legacy pip install path
+#   ./setup.sh --installer pip      # Rorqual fallback when uv is unavailable
+#   ./setup.sh --non-interactive --data-root /project/def-.../data \
+#       --slurm-account def-...
 #   ./setup.sh --force              # Force reinstall
 #
 # Interactive Configuration:
@@ -28,7 +34,10 @@
 #   You can skip prompts and edit config.yaml manually later.
 # ==============================================================================
 
-set -e  # Exit on error
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
 
 # No colors for output
 
@@ -36,8 +45,12 @@ set -e  # Exit on error
 PYTHON_CMD=""  # Will be auto-detected if not specified
 FORCE_REINSTALL=false
 VENV_DIR="env"
-INSTALLER="uv"
+INSTALLER="auto"
 UV_OFFLINE=false
+NON_INTERACTIVE=false
+DATA_ROOT_ARG=""
+SLURM_ACCOUNT_ARG=""
+SKIP_FSAVERAGE=false
 
 # ==============================================================================
 # Helper Functions
@@ -86,6 +99,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --offline)
             UV_OFFLINE=true
+            shift
+            ;;
+        --non-interactive)
+            NON_INTERACTIVE=true
+            shift
+            ;;
+        --data-root)
+            DATA_ROOT_ARG="$2"
+            shift 2
+            ;;
+        --slurm-account)
+            SLURM_ACCOUNT_ARG="$2"
+            shift 2
+            ;;
+        --skip-fsaverage)
+            SKIP_FSAVERAGE=true
             shift
             ;;
         --force)
@@ -169,8 +198,17 @@ fi
 
 print_success "Found Python $PYTHON_VERSION"
 
+if [[ "$INSTALLER" == "auto" ]]; then
+    if command -v uv &> /dev/null; then
+        INSTALLER="uv"
+    else
+        INSTALLER="pip"
+        print_info "uv not found; using Python/pip (suitable for Compute Canada wheelhouses)"
+    fi
+fi
+
 if [[ "$INSTALLER" != "uv" && "$INSTALLER" != "pip" ]]; then
-    print_error "Invalid installer: $INSTALLER (expected 'uv' or 'pip')"
+    print_error "Invalid installer: $INSTALLER (expected 'auto', 'uv', or 'pip')"
     exit 1
 fi
 
@@ -195,9 +233,12 @@ if [[ -d "$VENV_DIR" ]]; then
         rm -rf "$VENV_DIR"
     else
         print_warning "Virtual environment already exists at: $VENV_DIR"
-        read -p "Remove and recreate? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if [[ "$NON_INTERACTIVE" == true ]]; then
+            print_error "Environment exists; pass --force in non-interactive mode"
+            exit 1
+        fi
+        read -r -p "Remove and recreate? (y/N): " REPLY
+        if [[ "$REPLY" =~ ^[Yy]$ ]]; then
             rm -rf "$VENV_DIR"
         else
             print_info "Using existing virtual environment"
@@ -274,7 +315,10 @@ if [[ ! -f "config.yaml" ]]; then
         # Prompt for data root path
         echo "Data root directory:"
         echo "  This is where your data lives (sourcedata/, derivatives/, etc.)"
-        read -p "  Enter full path (or press Enter to configure manually later): " DATA_ROOT
+        DATA_ROOT="$DATA_ROOT_ARG"
+        if [[ -z "$DATA_ROOT" && "$NON_INTERACTIVE" == false ]]; then
+            read -r -p "  Enter full path (or press Enter to configure manually later): " DATA_ROOT
+        fi
         echo ""
 
         if [[ -n "$DATA_ROOT" ]]; then
@@ -290,9 +334,11 @@ if [[ ! -f "config.yaml" ]]; then
                 print_success "Data root set to: $DATA_ROOT"
             else
                 print_warning "Directory does not exist: $DATA_ROOT"
-                read -p "  Create it now? (y/N): " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                REPLY=""
+                if [[ "$NON_INTERACTIVE" == false ]]; then
+                    read -r -p "  Create it now? (y/N): " REPLY
+                fi
+                if [[ "$REPLY" =~ ^[Yy]$ ]]; then
                     mkdir -p "$DATA_ROOT"
                     print_success "Created directory: $DATA_ROOT"
                     DATA_ROOT_ESCAPED=$(echo "$DATA_ROOT" | sed 's/[\/&]/\\&/g')
@@ -311,7 +357,10 @@ if [[ ! -f "config.yaml" ]]; then
         # Prompt for SLURM account (optional)
         echo "SLURM account (for HPC job submissions):"
         echo "  Leave empty if you don't use HPC/SLURM"
-        read -p "  Enter your SLURM account (or press Enter to skip): " SLURM_ACCOUNT
+        SLURM_ACCOUNT="$SLURM_ACCOUNT_ARG"
+        if [[ -z "$SLURM_ACCOUNT" && "$NON_INTERACTIVE" == false ]]; then
+            read -r -p "  Enter your SLURM account (or press Enter to skip): " SLURM_ACCOUNT
+        fi
         echo ""
 
         if [[ -n "$SLURM_ACCOUNT" ]]; then
@@ -381,7 +430,9 @@ fi
 print_header "fsaverage template"
 
 # Only attempt download if config.yaml has a resolvable data_root
-if python -c "from code.utils.config import load_config; load_config()" 2>/dev/null; then
+if [[ "$SKIP_FSAVERAGE" == true ]]; then
+    print_info "Skipping fsaverage download (--skip-fsaverage)"
+elif python -c "from code.utils.config import load_config; load_config()" 2>/dev/null; then
     print_info "Downloading fsaverage if missing (required for source reconstruction)"
     if bash "$(dirname "$0")/scripts/download_fsaverage.sh"; then
         print_success "fsaverage ready"

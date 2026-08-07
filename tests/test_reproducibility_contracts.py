@@ -8,7 +8,12 @@ import yaml
 from code.features.utils import segment_spatial_temporal_data
 from code.statistics.effect_sizes import compute_cohens_d, compute_paired_cohens_d
 from code.statistics.run_group_statistics import apply_corrections
-from code.utils.config import ConfigurationError, expand_paths, validate_config
+from code.utils.config import (
+    ConfigurationError,
+    expand_paths,
+    find_config_file,
+    validate_config,
+)
 
 
 def load_template_config(tmp_path: Path) -> dict:
@@ -34,6 +39,23 @@ def test_config_rejects_knee_mode(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="Only 'fixed' is supported"):
         validate_config(config)
+
+
+def test_figure3_config_requires_exact_divisible_chunks(tmp_path: Path) -> None:
+    config = load_template_config(tmp_path)
+    config["figure3"]["decoding_chunk_size"] = 33
+
+    with pytest.raises(ConfigurationError, match="must divide"):
+        validate_config(config)
+
+
+def test_frozen_slurm_config_overrides_mutable_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frozen = tmp_path / "resolved_config.yaml"
+    frozen.write_text("frozen: true\n")
+    monkeypatch.setenv("SAFLOW_CONFIG", str(frozen))
+    assert find_config_file("config.yaml") == frozen
 
 
 def test_preprocessing_epoch_path_uses_canonical_epo_suffix(tmp_path: Path) -> None:

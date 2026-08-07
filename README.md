@@ -1,10 +1,62 @@
 # Saflow: MEG Analysis Pipeline for GradCPT Task
 
+## Corrected paper-panel pipeline
+
+The publication workflow is separate and immutable. It rebuilds strict
+eight-trial labels from reflected-boundary filtered VTC and generates three
+paper panels from compact exports. The authoritative frequency policy contains
+Theta through Gamma 3; Delta and complexity are excluded from the paper branch.
+
+```bash
+invoke pipeline.full --dry-run
+invoke pipeline.full
+invoke pipeline.resume --analysis-id=fig3-...
+invoke viz.paper --panel=all --analysis-id=fig3-...
+```
+
+`pipeline.full` creates an immutable analysis, renders every cell script, and
+submits the complete dependency graph to SLURM. `--dry-run` performs the same
+planning and script generation without calling `sbatch`.
+`--stop-after=features` retains the former raw-to-feature endpoint. See
+[the output contracts](docs/figure3_output_schemas.md).
+The statistical definitions are summarized in
+[the corrected methods notes](docs/figure3_methods.md).
+
+Corrected BIDS enrichment is run-wise and provenance-aware:
+
+```bash
+invoke pipeline.bids --subjects "04 05" --runs "02 03" --slurm
+invoke analysis.figure3-preflight --subjects "04 05" --runs "02 03"
+```
+
+Gaussian VTC smoothing uses reflected boundaries with FWHM 9 trials. Existing
+events are skipped only when their method, version, and FWHM match. Preflight
+is blinded to effect direction and reports exact alignment, any-AR2-bad window
+rejection, matched anchor outcomes, four-cell counts, and 5/10-window
+modulation/coupling eligibility.
+
+Legacy Figure 3 files are not changed. Create their hash inventory with
+`invoke analysis.figure3-legacy-inventory`.
+
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 
 **Version**: 0.2.0
 **Status**: Active Development
 **Python**: 3.11-3.12
+
+Local and Compute Canada setup use the same script. On Rorqual, first load a
+supported Python module, then run:
+
+```bash
+module load python/3.12
+./setup.sh --data-root /project/def-ACCOUNT/USER/data \
+  --slurm-account def-ACCOUNT
+```
+
+The script uses `uv` when available and otherwise falls back to the active
+Python module’s pip/wheelhouse. It prompts for missing configuration values;
+batch setup can use `--non-interactive`, and compute nodes should use the
+shared-filesystem `env/` created on a login node.
 
 ---
 
@@ -356,6 +408,34 @@ invoke pipeline.bids
 
 # 3. Preprocess one subject locally (testing)
 invoke pipeline.preprocess --subject=04 --runs="02"
+
+# Bounded I/O smoke test (not suitable for inference)
+invoke pipeline.preprocess --subject=04 --runs="02" --crop=60 --skip-report
+
+# Exercise all three scientific workers and resumable chunks locally
+invoke analysis.figure3-phase-c-synthetic \
+  --output-dir=/tmp/saflow-figure3-phase-c
+
+# Inspect the complete raw-to-paper graph without submitting
+invoke pipeline.full --dry-run
+
+# Submit the authoritative graph on Rorqual (the user launches this)
+invoke pipeline.full
+
+# Render protected synthetic prototypes or complete real bundles
+invoke viz.paper --panel=all
+
+# Preview or submit only invalid cells in an immutable analysis
+invoke pipeline.resume --analysis-id=fig3-... --dry-run
+invoke pipeline.resume --analysis-id=fig3-...
+
+# Monitor and repeat resume until no invalid cells remain
+invoke slurm.jobs --pattern=f3_
+invoke pipeline.resume --analysis-id=fig3-... --dry-run
+
+# dag.json includes commands, resources, job IDs, arrays, and dependencies.
+# Real Panel 1 rendering requires the complete A-J render-array contract;
+# incomplete map-only bundles fail instead of receiving synthetic filler.
 
 # 4. Preprocess all subjects on HPC (SLURM array job)
 invoke pipeline.preprocess --slurm

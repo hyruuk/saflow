@@ -1,0 +1,17 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+echo "BIDSification: sub-{{ subject }} run-{{ run }}"
+
+python -m code.bids.generate_bids \
+    --subjects {{ subject }} \
+    --runs {{ run }} \
+    --log-level {{ log_level }} \
+    {% if skip_valid %}--skip-valid{% else %}--no-skip-valid{% endif %}
+
+BIDS_EXIT=$?
+if [ $BIDS_EXIT -ne 0 ]; then
+    echo "BIDSification failed with exit code $BIDS_EXIT"
+    exit $BIDS_EXIT
+fi
+{% endblock %}

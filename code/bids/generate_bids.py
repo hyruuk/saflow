@@ -46,7 +46,11 @@ from code.bids.utils import (
     load_meg_recording,
     parse_info_from_name,
 )
-from code.utils.behavioral import get_VTC_from_file
+from code.utils.behavioral import (
+    VTC_FILTER_METHOD,
+    VTC_FILTER_VERSION,
+    get_VTC_from_file,
+)
 from code.utils.config import load_config
 from code.utils.logging_config import setup_logging
 
@@ -91,6 +95,12 @@ def save_provenance(output_dir: Path, config: dict, subjects_processed: List[str
             "subjects": config["bids"]["subjects"],
             "task_runs": config["bids"]["task_runs"],
             "rest_runs": config["bids"]["rest_runs"],
+            "vtc_filter": {
+                "method": VTC_FILTER_METHOD,
+                "version": VTC_FILTER_VERSION,
+                "fwhm_trials": config["behavioral"]["vtc"]["filter"]["gaussian_fwhm"],
+                "boundary": "reflect",
+            },
         },
     }
 
@@ -258,9 +268,55 @@ def enrich_gradcpt_events(
         performance_dict
     )
 
+    events_df["VTC_filter_method"] = VTC_FILTER_METHOD
+    events_df["VTC_filter_version"] = VTC_FILTER_VERSION
+    events_df["VTC_filter_fwhm_trials"] = float(filter_config["gaussian_fwhm"])
+
     # Save enriched events
     events_df.to_csv(events_path, sep="\t", index=False)
-    logger.info(f"Saved enriched events with VTC_raw, VTC_filtered, RT, task to {events_path}")
+    _write_events_sidecar(events_path, float(filter_config["gaussian_fwhm"]))
+    logger.info("Saved reflected-boundary VTC enrichment to %s", events_path)
+
+
+def _write_events_sidecar(events_path: Path, fwhm: float) -> None:
+    """Write BIDS event-column metadata for corrected VTC provenance."""
+    path = Path(events_path.fpath) if hasattr(events_path, "fpath") else Path(events_path)
+    sidecar = path.with_suffix(".json")
+    metadata = json.loads(sidecar.read_text()) if sidecar.exists() else {}
+    metadata.update({
+        "VTC_filtered": {
+            "Description": "Run-wise Gaussian-smoothed variability time course",
+            "FilterMethod": VTC_FILTER_METHOD,
+            "FilterVersion": VTC_FILTER_VERSION,
+            "BoundaryMode": "reflect",
+            "FWHMTrials": fwhm,
+        },
+        "VTC_filter_method": {"Description": "VTC filtering implementation"},
+        "VTC_filter_version": {"Description": "VTC filter contract version"},
+        "VTC_filter_fwhm_trials": {"Description": "Gaussian FWHM in trials"},
+    })
+    sidecar.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+
+
+def events_have_current_vtc(events_path: Path, fwhm: float) -> bool:
+    """Return whether an events file has compatible corrected VTC provenance."""
+    if not events_path.exists():
+        return False
+    try:
+        events = pd.read_csv(events_path, sep="\t")
+    except (OSError, pd.errors.ParserError):
+        return False
+    required = {
+        "VTC_filtered", "VTC_filter_method", "VTC_filter_version",
+        "VTC_filter_fwhm_trials",
+    }
+    if not required.issubset(events.columns):
+        return False
+    return (
+        set(events["VTC_filter_method"].dropna().astype(str)) == {VTC_FILTER_METHOD}
+        and set(events["VTC_filter_version"].dropna().astype(str)) == {VTC_FILTER_VERSION}
+        and set(events["VTC_filter_fwhm_trials"].dropna().astype(float)) == {float(fwhm)}
+    )
 
 
 def process_subject_recording(
@@ -268,7 +324,10 @@ def process_subject_recording(
     bids_root: Path,
     behav_dir: Path,
     subject_list: List[str],
-):
+    run_list: List[str],
+    config: dict,
+    skip_valid: bool,
+) -> bool:
     """Convert subject MEG recording to BIDS.
 
     Args:
@@ -276,6 +335,12 @@ def process_subject_recording(
         bids_root: BIDS dataset root directory.
         behav_dir: Directory containing behavioral logfiles.
         subject_list: List of subjects to process.
+        run_list: List of run IDs to process.
+        config: Validated project configuration.
+        skip_valid: Skip a cell only when corrected provenance matches.
+
+    Returns:
+        Whether the selected recording completed successfully.
     """
     fname = ds_path.name
 
@@ -284,11 +349,20 @@ def process_subject_recording(
         subject_id = parse_info_from_name(fname)[0]
     except Exception as e:
         logger.warning(f"Could not parse filename {fname}: {e}")
-        return
+        return False
 
-    if subject_id not in subject_list:
-        logger.debug(f"Skipping subject {subject_id} (not in subject list)")
-        return
+    _, run_id, task = parse_info_from_name(fname)
+    if subject_id not in subject_list or run_id not in run_list:
+        logger.debug("Skipping sub-%s run-%s (not selected)", subject_id, run_id)
+        return True
+    expected_events = (
+        bids_root / f"sub-{subject_id}" / "meg"
+        / f"sub-{subject_id}_task-gradCPT_run-{run_id}_events.tsv"
+    )
+    fwhm = config["behavioral"]["vtc"]["filter"]["gaussian_fwhm"]
+    if task == "gradCPT" and skip_valid and events_have_current_vtc(expected_events, fwhm):
+        logger.info("Skipping provenance-compatible sub-%s run-%s", subject_id, run_id)
+        return True
 
     logger.info(f"Processing: {fname}")
 
@@ -319,10 +393,6 @@ def process_subject_recording(
             events_path = bidspath.copy().update(suffix="events", extension=".tsv")
             behav_files = [f.name for f in behav_dir.iterdir() if f.is_file()]
 
-            # Load config for behavioral parameters
-            from code.utils.config import load_config
-            config = load_config()
-
             enrich_gradcpt_events(
                 events_path,
                 bidspath.subject,
@@ -345,9 +415,11 @@ def process_subject_recording(
                     overwrite=True,
                     verbose=False,
                 )
+        return True
 
     except Exception as e:
         logger.error(f"Failed to process {fname}: {e}", exc_info=True)
+        return False
 
 
 def main():
@@ -375,6 +447,18 @@ def main():
         nargs="+",
         default=None,
         help="Process specific subjects only (e.g., --subjects 04 05)",
+    )
+    parser.add_argument(
+        "--runs",
+        nargs="+",
+        default=None,
+        help="Process specific run IDs only (e.g., --runs 02 03)",
+    )
+    parser.add_argument(
+        "--skip-valid",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip recordings with compatible corrected VTC provenance",
     )
     parser.add_argument(
         "--log-level",
@@ -430,6 +514,7 @@ def main():
     else:
         subject_list = config["bids"]["subjects"]
         logger.info(f"Processing subjects from config: {len(subject_list)} subjects")
+    run_list = args.runs or [*config["bids"]["task_runs"], *config["bids"]["rest_runs"]]
 
     # Validate paths
     if not raw_dir.exists():
@@ -501,6 +586,7 @@ def main():
     # Track subjects and their recording dates
     subjects_processed = []
     subject_dates = {}  # subject_id -> recording_date
+    failed_recordings = []
 
     with Progress(
         SpinnerColumn(),
@@ -519,9 +605,12 @@ def main():
                     pass
                 elif "SA" in fname and "procedure" not in fname:
                     # Subject recording
-                    process_subject_recording(
-                        ds_path, bids_root, behav_dir, subject_list
+                    succeeded = process_subject_recording(
+                        ds_path, bids_root, behav_dir, subject_list, run_list,
+                        config, args.skip_valid,
                     )
+                    if not succeeded:
+                        failed_recordings.append(fname)
 
                     # Track subjects and their recording dates
                     try:
@@ -556,6 +645,9 @@ def main():
     console.print(f"  Logs: {log_dir}")
 
     logger.info("BIDS conversion complete")
+    if failed_recordings:
+        logger.error("Failed recordings: %s", failed_recordings)
+        return 1
     return 0
 
 

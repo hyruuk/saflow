@@ -42,6 +42,12 @@ def find_config_file(config_path: Optional[str] = None) -> Path:
     Raises:
         ConfigurationError: If config file not found.
     """
+    frozen_config = os.environ.get("SAFLOW_CONFIG")
+    if frozen_config and config_path in (None, "config.yaml"):
+        path = Path(frozen_config)
+        if not path.exists():
+            raise ConfigurationError(f"SAFLOW_CONFIG not found: {path}")
+        return path
     if config_path:
         path = Path(config_path)
         if not path.exists():
@@ -142,12 +148,54 @@ def validate_config(config: Dict[str, Any]) -> None:
                 "Only 'fixed' is supported."
             )
 
+    vtc_filter = config.get("behavioral", {}).get("vtc", {}).get("filter", {})
+    if vtc_filter.get("type") == "gaussian":
+        if vtc_filter.get("gaussian_boundary", "reflect") != "reflect":
+            raise ConfigurationError(
+                "behavioral.vtc.filter.gaussian_boundary must be 'reflect'"
+            )
+
     # Validate BIDS configuration
     if not config["bids"]["subjects"]:
         raise ConfigurationError("No subjects specified in bids.subjects")
 
     if not config["bids"]["task_runs"]:
         raise ConfigurationError("No task runs specified in bids.task_runs")
+
+    _validate_figure3_config(config.get("figure3", {}))
+
+
+def _validate_figure3_config(config: Dict[str, Any]) -> None:
+    """Validate corrected paper-panel parameters when configured."""
+    if not config:
+        return
+    bounds = config.get("inout_percentiles")
+    if bounds != [25, 75]:
+        raise ConfigurationError("figure3.inout_percentiles must be [25, 75]")
+    if config.get("strict_window_size") != 8:
+        raise ConfigurationError("figure3.strict_window_size must be 8")
+    if config.get("gaussian_fwhm") != 9.0:
+        raise ConfigurationError("figure3.gaussian_fwhm must be 9 trials")
+    positive = (
+        "map_permutations",
+        "decoding_permutations",
+        "map_chunk_size",
+        "decoding_chunk_size",
+        "minimum_modulation_windows",
+        "minimum_coupling_windows",
+        "inner_splits",
+    )
+    invalid = [key for key in positive if int(config.get(key, 0)) <= 0]
+    if invalid:
+        raise ConfigurationError(
+            f"Figure 3 parameters must be positive: {', '.join(invalid)}"
+        )
+    if config["map_permutations"] % config["map_chunk_size"]:
+        raise ConfigurationError("figure3.map_chunk_size must divide map_permutations")
+    if config["decoding_permutations"] % config["decoding_chunk_size"]:
+        raise ConfigurationError(
+            "figure3.decoding_chunk_size must divide decoding_permutations"
+        )
 
 
 def expand_paths(config: Dict[str, Any]) -> Dict[str, Any]:

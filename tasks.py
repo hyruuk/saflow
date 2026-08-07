@@ -416,7 +416,7 @@ def docs_mermaid(c, check=False, target=None):
 # ==============================================================================
 
 @task
-def setup(c, mode="basic", python="python3.9", force=False):
+def setup(c, mode="basic", python=None, force=False):
     """Run the setup script to create development environment.
 
     Examples:
@@ -427,7 +427,7 @@ def setup(c, mode="basic", python="python3.9", force=False):
     cmd = ["./setup.sh"]
     if mode != "basic":
         cmd.append(f"--{mode}")
-    if python != "python3.9":
+    if python:
         cmd.extend(["--python", python])
     if force:
         cmd.append("--force")
@@ -570,17 +570,24 @@ def validate_all(c, space=None, families=None, subjects=None, window=8, jobs=1):
 
 
 @task
-def bids(c, input_dir=None, output_dir=None, subjects=None, log_level="INFO", dry_run=False):
+def bids(c, input_dir=None, output_dir=None, subjects=None, runs=None,
+         log_level="INFO", skip_valid=True, slurm=False, dry_run=False):
     """Run BIDS conversion (Stage 0).
 
     Examples:
         invoke pipeline.bids
         invoke pipeline.bids --subjects "04 05 06"
+        invoke pipeline.bids --subjects "04 05" --runs "02 03" --slurm
         invoke pipeline.bids --dry-run
     """
     print("=" * 80)
     print("BIDS Conversion - Stage 0")
     print("=" * 80)
+
+    if slurm:
+        if input_dir or output_dir:
+            raise ValueError("SLURM BIDSification uses config paths; omit path overrides")
+        return _bids_slurm(c, subjects, runs, log_level, skip_valid, dry_run)
 
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.bids.generate_bids"]
@@ -591,6 +598,9 @@ def bids(c, input_dir=None, output_dir=None, subjects=None, log_level="INFO", dr
         cmd.extend(["--output", str(output_dir)])
     if subjects:
         cmd.extend(["--subjects"] + subjects.split())
+    if runs:
+        cmd.extend(["--runs"] + runs.split())
+    cmd.append("--skip-valid" if skip_valid else "--no-skip-valid")
     cmd.extend(["--log-level", log_level])
     if dry_run:
         cmd.append("--dry-run")
@@ -601,7 +611,8 @@ def bids(c, input_dir=None, output_dir=None, subjects=None, log_level="INFO", dr
 
 @task
 def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
-               skip_existing=True, crop=None, slurm=False, dry_run=False):
+               skip_existing=True, crop=None, skip_report=False, slurm=False,
+               dry_run=False):
     """Run MEG preprocessing (Stage 1).
 
     Pipeline: Filter -> Epoch (Freq+Rare only) -> AR1 -> ICA -> AR2 (fit+transform)
@@ -630,7 +641,10 @@ def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
             print(f"\n{'='*40}")
             print(f"Subject: {subj}")
             print(f"{'='*40}")
-            _preprocess_local(c, subj, runs, bids_root, log_level, skip_existing, crop)
+            _preprocess_local(
+                c, subj, runs, bids_root, log_level, skip_existing, crop,
+                skip_report,
+            )
 
 
 @task
@@ -656,7 +670,7 @@ def preprocess_report(c, subject=None, dataset=False):
     for subj in subjects:
         cmd = [python_exe, "-m", "code.preprocessing.aggregate_reports", "-s", subj]
         print(f"\nRunning: {' '.join(cmd)}\n")
-        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=True)
+        c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
     if dataset:
         cmd = [python_exe, "-m", "code.preprocessing.aggregate_reports", "--dataset"]
@@ -757,7 +771,7 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
 
 
 @task
-def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
+def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="INFO",
          skip_existing=True, atlases=None, space="sensor schaefer_400",
          feature_type="all", n_events_window=8, skip=None, dry_run=False):
     """Submit the full per-run pipeline as a chained SLURM job graph.
@@ -968,6 +982,72 @@ def full(c, subject=None, runs=None, bids_root=None, log_level="INFO",
               f"atlas={atlas_id}, features={feature_array_ids}")
         print(f"  manifest: {manifest_path}")
     print("=" * 80)
+
+
+@task
+def full(
+    c,
+    analysis_id=None,
+    start_at=None,
+    stop_after=None,
+    skip=None,
+    subjects=None,
+    runs=None,
+    spaces="sensor schaefer_400",
+    include_exploratory=True,
+    dry_run=False,
+    analysis_root=None,
+    config="config.yaml",
+):
+    """Submit the immutable raw-to-final-panels DAG, or render it with dry-run."""
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.figure3.workflow",
+        "full",
+        "--config",
+        config,
+        "--spaces",
+        spaces,
+    ]
+    for flag, value in (
+        ("--analysis-id", analysis_id),
+        ("--analysis-root", analysis_root),
+        ("--start-at", start_at),
+        ("--stop-after", stop_after),
+        ("--skip", skip),
+        ("--subjects", subjects),
+        ("--runs", runs),
+    ):
+        if value:
+            cmd.extend([flag, value])
+    if not include_exploratory:
+        cmd.append("--no-include-exploratory")
+    if dry_run:
+        cmd.append("--dry-run")
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def resume(
+    c, analysis_id, analysis_root=None, dry_run=False, config="config.yaml"
+):
+    """Submit a dependency-safe wave containing only missing or invalid cells."""
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.figure3.workflow",
+        "resume",
+        "--analysis-id",
+        analysis_id,
+        "--config",
+        config,
+    ]
+    if analysis_root:
+        cmd.extend(["--analysis-root", analysis_root])
+    if dry_run:
+        cmd.append("--dry-run")
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 # ==============================================================================
@@ -1854,7 +1934,10 @@ def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
 # Helper Functions (Private)
 # ==============================================================================
 
-def _preprocess_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True, crop=None):
+def _preprocess_local(
+    c, subject, runs=None, bids_root=None, log_level="INFO",
+    skip_existing=True, crop=None, skip_report=False,
+):
     """Run preprocessing locally."""
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.preprocessing.run_preprocessing"]
@@ -1865,13 +1948,74 @@ def _preprocess_local(c, subject, runs=None, bids_root=None, log_level="INFO", s
     if bids_root:
         cmd.extend(["--bids-root", str(bids_root)])
     cmd.extend(["--log-level", log_level])
-    if skip_existing:
-        cmd.append("--skip-existing")
+    cmd.append("--skip-existing" if skip_existing else "--no-skip-existing")
     if crop:
         cmd.extend(["--crop", str(crop)])
+    if skip_report:
+        cmd.append("--skip-report")
 
     print(f"\nRunning: {' '.join(cmd)}\n")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+def _bids_slurm(c, subjects=None, runs=None, log_level="INFO",
+                skip_valid=True, dry_run=False):
+    """Submit one corrected BIDSification array cell per subject/run."""
+    from datetime import datetime
+
+    from code.utils.config import load_config
+    from code.utils.slurm import render_slurm_script, submit_job_array
+
+    config = load_config()
+    subject_list = subjects.split() if subjects else config["bids"]["subjects"]
+    run_list = runs.split() if runs else config["bids"]["task_runs"]
+    slurm_config = config["computing"]["slurm"]
+    resources = slurm_config.get(
+        "bids", {"cpus": 2, "mem": "8G", "time": "02:00:00"}
+    )
+    log_dir = Path(config["paths"]["logs"]) / "slurm" / "bids"
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "bids"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    script_dir.mkdir(parents=True, exist_ok=True)
+    base = {
+        "account": slurm_config["account"],
+        "partition": slurm_config.get("partition", ""),
+        "cpus": resources["cpus"],
+        "mem": resources["mem"],
+        "time": resources["time"],
+        "log_dir": str(log_dir),
+        "venv_path": config["paths"]["venv"],
+        "project_root": str(PROJECT_ROOT),
+    }
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    scripts = []
+    for subject in subject_list:
+        for run in run_list:
+            name = f"bids_sub-{subject}_run-{run}"
+            path = script_dir / f"{name}_{timestamp}.sh"
+            render_slurm_script(
+                "bids.sh.j2",
+                {
+                    **base,
+                    "job_name": name,
+                    "timestamp": timestamp,
+                    "subject": subject,
+                    "run": run,
+                    "log_level": log_level,
+                    "skip_valid": skip_valid,
+                },
+                output_path=path,
+            )
+            scripts.append(path)
+    return submit_job_array(
+        scripts,
+        "bids_reflected_vtc_array",
+        base,
+        script_dir,
+        timestamp,
+        max_concurrent=slurm_config.get("array_throttle", 0),
+        dry_run=dry_run,
+    )
 
 
 def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
@@ -3194,6 +3338,161 @@ def multifeature_run(c, analysis_id, analysis_root, features="all",
 
 
 @task
+def figure3_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
+                      runs=None, config="config.yaml"):
+    """Create and validate a new immutable corrected Figure 3 analysis."""
+    cmd = [get_python_executable(config), "-m", "code.figure3.workflow", "preflight",
+           "--config", config]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
+    if analysis_root:
+        cmd.extend(["--analysis-root", analysis_root])
+    if subjects:
+        cmd.extend(["--subjects", subjects])
+    if runs:
+        cmd.extend(["--runs", runs])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def figure3_run(c, analysis_id, analysis_root=None, n_permutations=1000,
+                minimum_circular_offset=24, seed=42, config="config.yaml"):
+    """Configure corrected sensor and Schaefer-400 fitting/permutation inference."""
+    cmd = [get_python_executable(config), "-m", "code.figure3.workflow", "run",
+           "--analysis-id", analysis_id, "--config", config,
+           "--n-permutations", str(n_permutations),
+           "--minimum-circular-offset", str(minimum_circular_offset), "--seed", str(seed)]
+    if analysis_root:
+        cmd.extend(["--analysis-root", analysis_root])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def figure3_phase_c_synthetic(
+    c, output_dir="reports/synthetic/figure3-phase-c", seed=42
+):
+    """Run all three scientific workers with small schema-compatible data."""
+    cmd = [
+        get_python_executable(),
+        "-m",
+        "code.figure3.synthetic_phase_c",
+        "--output-dir",
+        output_dir,
+        "--seed",
+        str(seed),
+    ]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def figure3_dag(c, analysis_id, analysis_root=None, subjects=None, runs=None,
+                spaces="sensor schaefer_400", include_exploratory=True,
+                config="config.yaml"):
+    """Write the complete raw-to-panels DAG manifest without submission."""
+    cmd = [get_python_executable(config), "-m", "code.figure3.workflow", "dag",
+           "--analysis-id", analysis_id, "--config", config, "--spaces", spaces]
+    for flag, value in (
+        ("--analysis-root", analysis_root),
+        ("--subjects", subjects),
+        ("--runs", runs),
+    ):
+        if value:
+            cmd.extend([flag, value])
+    if not include_exploratory:
+        cmd.append("--no-include-exploratory")
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def figure3_export(c, analysis_id, analysis_root, destination=None):
+    """Export Figure 3 bundles that render without subject-level features."""
+    target = destination or str(Path("reports/exports") / analysis_id)
+    cmd = [get_python_executable(), "-m", "code.figure3.workflow", "export",
+           "--analysis-id", analysis_id, "--analysis-root", analysis_root,
+           "--destination", target]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def figure3_audit(
+    c, analysis_id, analysis_root=None, reports_root="reports",
+    config="config.yaml",
+):
+    """Require complete real bundles and matching rendered paper provenance."""
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.figure3.workflow",
+        "audit",
+        "--analysis-id",
+        analysis_id,
+        "--reports-root",
+        reports_root,
+        "--config",
+        config,
+    ]
+    if analysis_root:
+        cmd.extend(["--analysis-root", analysis_root])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def figure3_legacy_inventory(c, source, manifest="reports/legacy/figure3.json"):
+    """Write a read-only hash inventory of existing Figure 3 outputs."""
+    cmd = [get_python_executable(), "-m", "code.figure3.workflow", "legacy-inventory",
+           "--source", source, "--manifest", manifest]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def viz_figure3(c, analysis_id, analysis_root="reports/exports"):
+    """Compatibility entry point routing to the shared paper renderer."""
+    cmd = [
+        get_python_executable(),
+        "-m",
+        "code.figure3.render",
+        "--panel",
+        "all",
+        "--analysis-id",
+        analysis_id,
+        "--analysis-root",
+        analysis_root,
+    ]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def viz_paper(
+    c, panel="all", analysis_id=None, analysis_root=None,
+    reports_root="reports", config="config.yaml",
+):
+    """Render real paper bundles or protected watermarked synthetic fallbacks."""
+    if analysis_root is None:
+        from code.utils.config import load_config
+
+        loaded = load_config(config)
+        analysis_root = str(
+            Path(loaded["paths"]["data_root"])
+            / "processed"
+            / loaded.get("figure3", {}).get("processed_directory", "figure3")
+        )
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.figure3.render",
+        "--panel",
+        panel,
+        "--analysis-root",
+        analysis_root,
+        "--reports-root",
+        reports_root,
+    ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def classify_aggregate(c, feature, space, clf="lda", cv="logo",
                        mode="univariate", combined=False,
                        delete_chunks=False, trial_type="alltrials",
@@ -3712,6 +4011,8 @@ pipeline.add_task(preprocess_report, name="preprocess-report")
 pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
 pipeline.add_task(full)
+pipeline.add_task(resume)
+pipeline.add_task(full_features_legacy, name="full-features-legacy")
 pipeline.add_collection(features)  # Nested: pipeline.features.*
 
 
@@ -3855,6 +4156,13 @@ analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")
 analysis.add_task(multifeature_legacy_inventory,
                   name="multifeature-legacy-inventory")
+analysis.add_task(figure3_preflight, name="figure3-preflight")
+analysis.add_task(figure3_run, name="figure3-run")
+analysis.add_task(figure3_phase_c_synthetic, name="figure3-phase-c-synthetic")
+analysis.add_task(figure3_dag, name="figure3-dag")
+analysis.add_task(figure3_export, name="figure3-export")
+analysis.add_task(figure3_audit, name="figure3-audit")
+analysis.add_task(figure3_legacy_inventory, name="figure3-legacy-inventory")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection
@@ -3869,6 +4177,8 @@ viz.add_task(viz_auto, name="auto")
 viz.add_task(spectra)
 viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
+viz.add_task(viz_figure3, name="figure3")
+viz.add_task(viz_paper, name="paper")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

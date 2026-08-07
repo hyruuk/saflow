@@ -1,0 +1,6 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+export SAFLOW_CONFIG={{ config_path }}
+python -m code.figure3.cell_status --spec {{ spec_path }}
+{% endblock %}

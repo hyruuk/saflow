@@ -18,7 +18,7 @@ paths:
   # Project-specific paths (in saflow/ project directory)
   reports: ./reports
   logs: ./logs
-  venv: ./.venv  # Python 3.11-3.12 environment used by every task and SLURM job
+  venv: ./env  # Python 3.11-3.12 environment used by every task and SLURM job
 
   # HPC-specific paths
   slurm_output: ./logs/slurm
@@ -26,6 +26,31 @@ paths:
 
   # FreeSurfer subjects directory (in data_root)
   freesurfer_subjects_dir: fs_subjects/  # Will be resolved relative to data_root
+
+# Corrected Figure 3 values are resolved into every immutable analysis folder.
+figure3:
+  schema_version: "1.0.0"        # Result/manifest contract version
+  processed_directory: figure3   # Under paths.data_root/processed/
+  gaussian_fwhm: 9.0             # Reflected Gaussian width, trials
+  strict_window_size: 8          # Every constituent shares the IN/OUT label
+  inout_percentiles: [25, 75]    # Run-specific VTC percentile bounds
+  minimum_circular_offset: 24    # Exclude shifts within 24 trials of zero
+  map_permutations: 10000        # Synchronized map permutations
+  decoding_permutations: 1000    # Synchronized nested-decoding permutations
+  map_chunk_size: 250            # Immutable permutations per map chunk
+  decoding_chunk_size: 25        # Tune after the HPC subset benchmark
+  cluster_forming_threshold: 2.0 # Absolute paired-t threshold
+  random_seed: 42                # Shared deterministic seed
+  c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0] # Inner grouped ridge tuning
+  inner_splits: 5                # Subject-grouped inner folds, training only
+  minimum_modulation_windows: 5  # Required in every state × outcome cell
+  minimum_coupling_windows: 10   # Required in every coupling cell
+  spaces: [sensor, schaefer_400] # Sensor QC plus paper-primary parcel space
+  include_exploratory: true      # Complexity and legacy-selection sidekicks
+  resources:
+    maps: {time: "08:00:00", memory_gb: 16, cpus: 4} # SLURM request per map cell
+    decoding: {time: "12:00:00", memory_gb: 24, cpus: 4} # Per decoding chunk
+    rendering: {time: "01:00:00", memory_gb: 8, cpus: 2} # Export and panels
 
 # =============================================================================
 # BIDS Configuration
@@ -193,6 +218,8 @@ behavioral:
     filter:
       type: "gaussian"  # "gaussian" or "butterworth"
       gaussian_fwhm: 9  # Full width at half maximum (for Gaussian)
+      gaussian_boundary: "reflect"  # Corrected paper workflow; never zero-pad
+      version: "1.0.0"  # Invalidates stale enriched BIDS events
       butterworth_order: 3  # Filter order (for Butterworth)
       butterworth_cutoff: 0.05  # Normalized cutoff frequency (for Butterworth)
 
@@ -398,6 +425,11 @@ computing:
     partition: ""  # Leave empty to use cluster default, or specify partition name
 
     # Resource allocations per pipeline stage
+    bids:
+      cpus: 2
+      mem: 8G
+      time: "02:00:00"
+
     preprocessing:
       cpus: 12
       mem: 64G

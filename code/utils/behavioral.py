@@ -17,10 +17,14 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy import signal
+from scipy.ndimage import gaussian_filter1d
 from scipy.io import loadmat
 from scipy.stats import norm
 
 logger = logging.getLogger(__name__)
+
+VTC_FILTER_METHOD = "gaussian_reflect"
+VTC_FILTER_VERSION = "1.0.0"
 
 
 def interpolate_RT(RT_raw: np.ndarray) -> np.ndarray:
@@ -103,6 +107,24 @@ def fwhm2sigma(fwhm: float) -> float:
         >>> sigma = fwhm2sigma(9.0)
     """
     return fwhm / np.sqrt(8 * np.log(2))
+
+
+def filter_vtc_gaussian_reflect(vtc: np.ndarray, fwhm: float = 9.0) -> np.ndarray:
+    """Smooth one run with a reflected-boundary Gaussian kernel.
+
+    Args:
+        vtc: Finite one-dimensional VTC values from exactly one run.
+        fwhm: Gaussian full width at half maximum in trials.
+
+    Returns:
+        Smoothed values with the same shape as ``vtc``.
+    """
+    values = np.asarray(vtc, dtype=float)
+    if values.ndim != 1 or values.size == 0:
+        raise ValueError("vtc must be a non-empty one-dimensional run")
+    if not np.isfinite(values).all() or fwhm <= 0:
+        raise ValueError("vtc must be finite and fwhm must be positive")
+    return gaussian_filter1d(values, sigma=fwhm2sigma(fwhm), mode="reflect")
 
 
 def clean_comerr(
@@ -330,14 +352,8 @@ def get_VTC_from_file(
     # Apply filter using config parameters
     if filt_type == "gaussian":
         fwhm = filt_config.get("gaussian_fwhm", 9)
-        logger.debug(f"Applying Gaussian filter with FWHM={fwhm}")
-        # scipy >= 1.10: gaussian moved to signal.windows
-        try:
-            filt = signal.windows.gaussian(len(VTC_interpolated), fwhm2sigma(fwhm))
-        except AttributeError:
-            # scipy < 1.10: use signal.gaussian
-            filt = signal.gaussian(len(VTC_interpolated), fwhm2sigma(fwhm))
-        VTC_filtered = np.convolve(VTC_interpolated, filt, "same") / sum(filt)
+        logger.debug("Applying reflected Gaussian filter with FWHM=%s", fwhm)
+        VTC_filtered = filter_vtc_gaussian_reflect(VTC_interpolated, fwhm)
     elif filt_type == "butterworth":
         order = filt_config.get("butterworth_order", 3)
         cutoff = filt_config.get("butterworth_cutoff", 0.05)
@@ -346,12 +362,11 @@ def get_VTC_from_file(
         VTC_filtered = signal.filtfilt(b, a, VTC_interpolated)
     else:
         logger.warning(f"Unknown filter type: {filt_type}, using Gaussian with FWHM=9")
-        filt = signal.gaussian(len(VTC_interpolated), fwhm2sigma(9))
-        VTC_filtered = np.convolve(VTC_interpolated, filt, "same") / sum(filt)
+        VTC_filtered = filter_vtc_gaussian_reflect(VTC_interpolated, 9)
 
     logger.info(
         f"Subject {subject}, run {run}: Computed VTC_raw and VTC_filtered "
-        f"(filter: {filt_type})"
+        f"(filter: {VTC_FILTER_METHOD if filt_type == 'gaussian' else filt_type})"
     )
 
     # Return empty arrays for deprecated IN/OUT outputs (for backward compatibility)

@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Production SLURM execution for the immutable 29-node paper DAG: concrete
+  per-cell commands, status wrappers, stage-specific resources, real job IDs,
+  dependency-safe arrays, and selective multi-wave resume without deleting
+  valid chunks.
+- Real Schaefer-400 input assembly with exact cross-family keys, corrected
+  strict labels, canonical ten-/seventeen-feature tensors, Yeo-7 validation,
+  and memory-bounded Panel 1 spectral summaries.
+- Deterministic Panel 1 t-max and Panel 2 synchronized permutation workers,
+  strict panel aggregators/validators, secondary mixed-effects models, and
+  exploratory all-Yeo-pair coupling exports.
+- Render-ready Panel 1 contracts that preserve the established A/B raw-PSD,
+  C–F spectral, G/H FOOOF, and I/J corrected-PSD narrative and reject
+  incomplete real bundles rather than synthesizing missing real subplots.
+- Inspectable per-node submission plans with configured resource classes,
+  stable dry-run job identifiers, array sizes, typed dependencies, and
+  validation that `aftercorr` arrays share an identical index mapping.
+- Protected three-panel rendering with 600-DPI paper composites, exact
+  2560×1440 standalone PNGs, editable SVGs, per-artifact JSON provenance, and
+  subplot-level synthetic watermarks.
+- Bounded immutable `pipeline.full` DAG manifests, expected cell artifacts,
+  selective `pipeline.resume` audits, compact hashed exports/tables, and a
+  real-output final analysis audit.
+- Phase C workers for Panel 1 paired/FDR maps, three-model nested Panel 2
+  decoding with held-out grouped reliance, Panel 3 factorial Yeo modulation,
+  weighted DMN–DAN coupling, and secondary all-available mixed effects.
+- Immutable deterministic permutation chunks, strict gap/overlap/provenance
+  aggregation, synchronized decoding families, and a three-panel synthetic
+  Phase C integration task.
+- Versioned contracts for labels, maps, decoding, factorial networks, coupling,
+  compact exports, figures, and immutable DAG manifests.
+- Canonical seven-band paper policy, three named panel layout contracts, and an
+  inspectable raw-to-panels DAG with aligned arrays and validator barriers.
+- `analysis.figure3-dag` for writing a complete manifest without submission.
+- Immutable corrected Figure 3 workflow with reflected-boundary VTC filtering,
+  strict eight-trial labels, exact alignment, Schaefer-400 validation, circular
+  nulls, nested LOSO, and synchronized family-wise map/decoding corrections.
+- Figure 3 preflight, run, compact export, legacy inventory, and local render
+  tasks that preserve existing commands and artifacts.
 - Corrected multifeature inference with nested LOSO ridge logistic regression,
   training-only preprocessing, within-subject permutations, standalone feature
   decoding, and held-out grouped feature/region contribution.
@@ -20,6 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preflight, corrected execution, export, and legacy inventory.
 
 ### Changed
+- Schaefer atlas extraction now excludes the two medial-wall labels, validates
+  the requested parcel count, and preserves canonical annotation order; atlas
+  and preprocessing tasks now propagate per-recording failures to the shell.
+- Local preprocessing exposes `--skip-report` for bounded smoke runs, and epoch
+  derivatives are saved directly without passing non-BIDS paths to `mne-bids`.
+- Made `setup.sh` location-independent and suitable for interactive or batch
+  setup on Compute Canada: automatic uv/pip selection, explicit data-root and
+  SLURM-account flags, optional fsaverage deferral, and one canonical `env/`.
+- Reconciled environment setup with `requires-python`: automatic setup and task
+  execution now require Python 3.11 or 3.12 instead of defaulting to Python 3.9.
+- Excluded Delta from every corrected paper manifest and kept complexity in a
+  separately labeled exploratory branch.
 - Configured virtual environments are authoritative and must use Python
   3.11-3.12. Multifeature aggregation now honors its requested axis and uses
   `afterany` so missing chunks can be reported.
@@ -34,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fitting parameters, task names, output filenames, and `fooof_*` feature keys.
 
 ### Fixed
+- Replaced same-mode Gaussian VTC convolution with run-wise reflected-boundary
+  smoothing at FWHM 9 trials and stamped method/version/FWHM into BIDS events.
+- Added strict matched-anchor outcomes, any-constituent AR2 rejection, exact
+  eight-index alignment checks, four-cell blinded QC, and 5/10-window
+  eligibility reporting.
 - Fixed BY FDR adjusted p-values to include the Benjamini-Yekutieli harmonic
   correction factor.
 - Removed the deprecated FOOOF import path at the compatibility boundary

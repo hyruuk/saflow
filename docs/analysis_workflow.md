@@ -1,5 +1,106 @@
 # Analysis workflow
 
+## Corrected Figure 3 branch
+
+Figure 3 is regenerated under a new immutable analysis ID. Raw VTC is filtered
+per run with reflected Gaussian boundaries, then every neural window is aligned
+by subject, run, onset, and its eight contributing epoch indices. A primary
+window must have eight uniformly IN or uniformly OUT trials and no bad
+constituent.
+
+The Gaussian standard deviation is `FWHM / sqrt(8 ln 2)`, with FWHM fixed to
+9 trials. Filtering is applied independently to each run using reflected
+boundaries. The BIDS events table and JSON sidecar record method
+`gaussian_reflect`, version `1.0.0`, boundary mode, and FWHM. This correction
+removes the historical implicit zero padding and may slightly alter labels near
+run boundaries.
+
+Matched lapse analyses use only the anchor (eighth/final) trial outcome:
+`correct_omission` versus `commission_error`. The preceding seven trials form
+the same neural window in both classes. Broad legacy `correct` and `lapse`
+selectors remain exploratory. Any final AR2 bad flag among the eight
+constituents rejects the window.
+
+Preflight writes a blinded recording table with no effect estimates or
+significance values. It requires exact subject/run/onset/eight-index alignment,
+current VTC provenance, exactly 400 ordered Schaefer parcels, and reports all
+four state × outcome counts. Modulation eligibility requires at least five
+windows in every cell; coupling eligibility requires ten.
+
+Panel 1 paired maps use subject-level IN/OUT aggregation, paired tests, and
+Benjamini-Hochberg FDR across parcels separately within each feature, matching
+the established panel. Its epoch-level LOSO decoding retains the existing
+within-subject label permutation and maximum-across-parcel t-max behavior.
+Panel 2 decoding uses outer LOSO, inner subject-grouped ridge tuning, and
+training-only imputation and scaling. Its state null circularly shifts VTC
+within each run by more than 24 trials, rebuilds strict labels once, and shares
+them across all parcels/features. Matched lapse nulls permute outcomes within
+subject/run/state. The paper branch uses seven bands
+from Theta through Gamma 3 and excludes Delta. Panel 1 includes raw PSD, FOOOF,
+and corrected PSD; Panels 2 and 3 use only FOOOF and corrected PSD. Complexity
+is exploratory. HPC output is authoritative; compact exports reproduce local
+tables and figures. The machine-readable schemas and dry-run dependency rules
+are described in [`figure3_output_schemas.md`](figure3_output_schemas.md).
+
+### Resumable inference
+
+Permutation chunks use half-open intervals and immutable JSON sidecars. Seeds
+are SHA-256 derivations of the analysis ID, endpoint, statistical family, and
+chunk index. Aggregation rejects missing or duplicate files, interval gaps or
+overlaps, changed feature order, incompatible Git/config provenance, and
+incorrect seeds before concatenating a null distribution.
+
+Panel 2 fits the state model and two matched rare-outcome models with outer
+LOSO and subject-grouped inner tuning. Median imputation and standardization
+are fitted on training folds only. Outputs include joint and standalone AUC,
+held-out probabilities and metrics, selected regularization, and held-out
+grouped-shuffle feature and parcel reliance. Joint, feature, and parcel null
+results are separate synchronized maximum-statistic families.
+
+Panel 3 orders cells as IN-correct, IN-lapse, OUT-correct, OUT-lapse. Its
+interaction weights `[1, -1, -1, 1]` implement
+`(lapse-correct)_OUT - (lapse-correct)_IN`; all four simple effects are always
+computed. Coupling is estimated within run, Fisher-z transformed, and combined
+with `n - 3` weights. The all-available random-intercept mixed model is
+explicitly secondary.
+
+Panel 3 modulation corrections are synchronized across contrasts, networks,
+and features, with separate FOOOF and corrected-PSD families. DMN–DAN
+coupling is corrected across all ten features and prespecified contrasts.
+Every other Yeo-7 network pair is exported as exploratory Fisher-z coupling.
+
+### SLURM execution and recovery
+
+Every array cell runs through a status wrapper that records its exact command,
+analysis ID, Git/config compatibility, timestamps, return code, and SLURM IDs.
+Cells export `SAFLOW_CONFIG=<analysis>/resolved_config.yaml`, so later edits to
+the user-facing `config.yaml` cannot change an in-flight immutable analysis.
+After each successful submission, `manifests/submission_journal.json` records
+the issued job ID before any downstream node is attempted.
+Raw-to-feature arrays share an identical subject/run order and therefore use
+`aftercorr`. Feature and panel validators run after `afterany` and exit
+nonzero on incomplete inputs; scientific consumers depend on them with
+`afterok`.
+
+`pipeline.resume` audits these status records and submits only invalid cells.
+It never removes a valid chunk. If a partial recovery would make two
+`aftercorr` arrays use different index subsets, the downstream node is
+deferred to the next recovery wave rather than pairing incorrect cells.
+
+### Rendering and replacement safety
+
+`viz.paper` checks all requested compact observed bundles. If any are missing
+or are not explicitly marked `data_mode: real`, the requested render uses
+schema-compatible deterministic synthetic arrays and watermarks every subplot.
+Synthetic figures may replace only synthetic figures. A real render may
+atomically replace synthetic output, while both synthetic-over-real and
+real-over-real writes fail. Each PNG and SVG has a distinct JSON sidecar with
+analysis ID, source mode, inputs, Git commit, timestamp, and render parameters.
+
+Paper composites are 600-DPI PNGs. Every narrative component is also exported
+on a white 16:9 canvas as an exact 2560×1440 PNG and editable SVG. The final
+audit accepts only complete real bundles and matching real figure provenance.
+
 This document describes the two parallel analysis paths and the rules that
 govern epoch filtering, aggregation, and FOOOF correction. The same epoch
 filter (drop `bad_ar2 == True`) and the same per-subject IN/OUT split (VTC

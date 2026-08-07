@@ -1599,14 +1599,6 @@ def preprocess_run(
 
     # 2. Save all ICA epochs (with AR2 reject log for downstream filtering)
     logger.info(f"Saving epochs (ICA, all, n={len(epochs_preproc)})...")
-    write_raw_bids(
-        cleaned_raw,
-        paths["epoch_ica"],
-        format="FIF",
-        overwrite=True,
-        allow_preload=True,
-        verbose=False,
-    )  # Init BIDS structure
     epochs_preproc.save(paths["epoch_ica"].fpath, overwrite=True)
     logger.info(f"\u2713 Epochs (ICA, all): {paths['epoch_ica'].fpath}")
 
@@ -1857,7 +1849,7 @@ def main():
     )
     parser.add_argument(
         "--skip-existing",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Skip runs that are already preprocessed",
     )
@@ -1917,6 +1909,7 @@ def main():
         logger.info(f"Processing runs from config: {runs}")
 
     # Process each run
+    failed_runs: list[str] = []
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1939,11 +1932,14 @@ def main():
                 )
             except Exception as e:
                 logger.error(f"Failed to process run {run}: {e}", exc_info=True)
+                failed_runs.append(run)
 
             progress.advance(task)
 
-    console.print(f"\n[bold green]\u2713 Preprocessing complete for sub-{args.subject}![/bold green]")
-    console.print(f"  Processed {len(runs)} runs")
+    completed_count = len(runs) - len(failed_runs)
+    status = "complete" if not failed_runs else "finished with errors"
+    console.print(f"\n[bold]Preprocessing {status} for sub-{args.subject}[/bold]")
+    console.print(f"  Successful: {completed_count}; failed: {len(failed_runs)}")
     console.print(f"\n[bold]Output locations:[/bold]")
     console.print(f"  Continuous (ICA + BAD_AR2): {derivatives_root}/preprocessed/sub-{args.subject}/")
     console.print(f"  Epochs (ICA, all): {derivatives_root}/epochs/sub-{args.subject}/meg/*proc-ica_epo.fif")
@@ -1986,6 +1982,9 @@ def main():
         except Exception as e:
             logger.warning(f"Could not generate dataset-level report: {e}")
 
+    if failed_runs:
+        logger.error("Preprocessing failed for runs: %s", ", ".join(failed_runs))
+        return 1
     logger.info("Preprocessing complete")
     return 0
 

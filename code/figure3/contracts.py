@@ -1,0 +1,174 @@
+"""Stable scientific and artifact contracts for the paper-panel workflow."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+SCHEMA_VERSION = "1.0.0"
+
+
+@dataclass(frozen=True)
+class FrequencyBand:
+    """Describe one canonical paper frequency band."""
+
+    display_name: str
+    key: str
+    low_hz: float
+    high_hz: float
+
+
+PAPER_BANDS = (
+    FrequencyBand("Theta", "theta", 4.0, 8.0),
+    FrequencyBand("Alpha", "alpha", 8.0, 12.0),
+    FrequencyBand("Low Beta", "lobeta", 12.0, 20.0),
+    FrequencyBand("High Beta", "hibeta", 20.0, 30.0),
+    FrequencyBand("Gamma 1", "gamma1", 30.0, 60.0),
+    FrequencyBand("Gamma 2", "gamma2", 60.0, 90.0),
+    FrequencyBand("Gamma 3", "gamma3", 90.0, 120.0),
+)
+PAPER_BAND_KEYS = tuple(band.key for band in PAPER_BANDS)
+BAND_ALIASES = {
+    "low_beta": "lobeta",
+    "high_beta": "hibeta",
+    "low_gamma": "gamma1",
+    "high_gamma": "gamma2",
+}
+FOOOF_FEATURES = ("fooof_exponent", "fooof_offset", "fooof_r_squared")
+CORRECTED_PSD_FEATURES = tuple(f"psd_corrected_{key}" for key in PAPER_BAND_KEYS)
+PANEL1_FEATURES = (
+    *(f"psd_{key}" for key in PAPER_BAND_KEYS),
+    *FOOOF_FEATURES,
+    *CORRECTED_PSD_FEATURES,
+)
+PANEL23_FEATURES = (*FOOOF_FEATURES, *CORRECTED_PSD_FEATURES)
+PANEL_COMPONENTS = {
+    "panel1": (
+        "A_raw_PSD_modulation",
+        "B_raw_PSD_decoding",
+        "C_raw_spectrum",
+        "D_aperiodic_spectrum",
+        "E_corrected_spectrum",
+        "F_periodic_spectrum",
+        "G_FOOOF_modulation",
+        "H_FOOOF_decoding",
+        "I_corrected_PSD_modulation",
+        "J_corrected_PSD_decoding",
+    ),
+    "panel2": (
+        "A_model_performance",
+        "B_standalone_features",
+        "C_feature_reliance",
+        "D_state_parcels",
+        "E_lapse_in_parcels",
+        "F_lapse_out_parcels",
+    ),
+    "panel3": (
+        "A_four_cell_overview",
+        "B_interaction",
+        "C_simple_effects",
+        "D_network_summary",
+        "E_dmn_dan_coupling",
+        "F_coupling_contrasts",
+    ),
+}
+PANEL1_RENDER_ARRAYS = (
+    "raw_psd_modulation",
+    "raw_psd_auc",
+    "frequency",
+    "spectrum_in",
+    "spectrum_out",
+    "aperiodic_spectrum_in",
+    "aperiodic_spectrum_out",
+    "corrected_spectrum_in",
+    "corrected_spectrum_out",
+    "periodic_spectrum_in",
+    "periodic_spectrum_out",
+    "fooof_modulation",
+    "fooof_auc",
+    "corrected_psd_modulation",
+    "corrected_psd_auc",
+)
+
+PANEL_SPECS = {
+    "panel1": {
+        "paper_filename": "panel1_feature_modulation.png",
+        "slide_directory": "panel1_feature_modulation",
+        "layout": "A-J preserved feature-modulation and spectral narrative",
+        "features": PANEL1_FEATURES,
+    },
+    "panel2": {
+        "paper_filename": "panel2_multifeature_decoding.png",
+        "slide_directory": "panel2_multifeature_decoding",
+        "layout": "three-model performance, feature reliance, and parcel reliance",
+        "features": PANEL23_FEATURES,
+    },
+    "panel3": {
+        "paper_filename": "panel3_network_dynamics.png",
+        "slide_directory": "panel3_network_dynamics",
+        "layout": "four-cell modulation, contrasts, and DMN-DAN coupling",
+        "features": PANEL23_FEATURES,
+    },
+}
+
+RESULT_SCHEMA_NAMES = (
+    "labels",
+    "maps",
+    "decoding",
+    "factorial_networks",
+    "coupling",
+    "compact_export",
+    "figure",
+    "dag_manifest",
+)
+
+
+def canonical_band_key(key: str) -> str:
+    """Return a canonical compatibility key and reject non-paper bands."""
+    canonical = BAND_ALIASES.get(key, key)
+    if canonical not in PAPER_BAND_KEYS:
+        raise ValueError(f"{key!r} is not a canonical paper band")
+    return canonical
+
+
+def frequency_band_manifest() -> list[dict[str, Any]]:
+    """Return the serializable ordered paper-band manifest."""
+    return [asdict(band) for band in PAPER_BANDS]
+
+
+def schema_catalog() -> dict[str, dict[str, Any]]:
+    """Return minimal versioned schemas shared by real and synthetic bundles."""
+    common = {
+        "schema_version": SCHEMA_VERSION,
+        "required_provenance": [
+            "analysis_id",
+            "data_mode",
+            "git",
+            "config_hash",
+            "inputs",
+            "software",
+        ],
+    }
+    return {
+        name: {
+            **common,
+            "schema_name": name,
+            "required": _required_fields(name),
+        }
+        for name in RESULT_SCHEMA_NAMES
+    }
+
+
+def _required_fields(name: str) -> list[str]:
+    """Return required payload fields for one schema."""
+    fields = {
+        "labels": ["alignment_keys", "trial_indices", "state", "outcome", "bad_any"],
+        "maps": ["feature_order", "parcel_order", "contrasts", "statistics"],
+        "decoding": ["models", "held_out_probabilities", "metrics", "contributions"],
+        "factorial_networks": ["network_order", "cells", "contrasts", "complete_case"],
+        "coupling": ["network_pairs", "cells", "fisher_z", "contrasts"],
+        "compact_export": ["panels", "tables", "render_arrays"],
+        "figure": ["panel", "path", "dpi", "data_mode", "render_parameters"],
+        "dag_manifest": ["analysis_id", "nodes", "edges", "array_cells", "provenance"],
+    }
+    return fields[name]
