@@ -18,7 +18,8 @@ invoke viz.panels --panel=all --analysis-id=analysis-...
 
 `pipeline.all` creates an immutable panel analysis, renders every cell script,
 and executes it locally unless `--slurm` is passed explicitly. SLURM execution
-uses capacity-limited waves below the configured 1,000-job ceiling.
+counts array elements and existing queued/running jobs, and never lets the
+total exceed the 900-job Rorqual safety ceiling.
 `--dry-run` performs planning and script generation without executing cells or
 calling `sbatch`.
 `--stop-after=features` retains the former raw-to-feature endpoint. See
@@ -424,7 +425,11 @@ invoke analysis.synthetic \
 invoke pipeline.all --slurm --dry-run
 
 # Submit the first capacity-safe wave on Rorqual
-invoke pipeline.all --slurm
+invoke pipeline.all --slurm --subjects="08 09 10 11"
+
+# Save the printed immutable analysis ID. After that wave has left squeue,
+# submit the next dependency-safe wave; repeat until deferred_cell_count is 0.
+invoke pipeline.resume --slurm --analysis-id=analysis-...
 
 # Render protected synthetic prototypes or complete real bundles
 invoke viz.panels --panel=all

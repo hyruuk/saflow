@@ -11,6 +11,8 @@ from code.analysis.execution_plan import (
     build_submission_plan,
 )
 from code.analysis.workflow import (
+    SLURM_JOB_CEILING,
+    _available_submission_capacity,
     _capacity_limited_wave,
     _invalid_cell_reason,
     _resume_submission_wave,
@@ -238,6 +240,46 @@ def test_submission_wave_stays_below_rorqual_capacity():
     selected_nodes = {cell["node"] for cell in ready}
     assert "input_validation" in selected_nodes
     assert "bids_reflected_vtc" in selected_nodes
+
+
+def test_submission_capacity_counts_existing_jobs_and_never_exceeds_900(
+    monkeypatch,
+):
+    config = {
+        "computing": {
+            "slurm": {
+                "max_submitted_jobs": 900,
+                "submission_job_reserve": 25,
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "code.analysis.workflow._current_slurm_job_count",
+        lambda: 127,
+    )
+    assert SLURM_JOB_CEILING == 900
+    assert _available_submission_capacity(config, dry_run=False) == 748
+    assert _available_submission_capacity(config, dry_run=True) == 875
+
+
+def test_four_subject_pipeline_is_split_into_complete_safe_waves():
+    plan = bound_execution_plan(
+        build_execution_plan(
+            "analysis",
+            [f"{index:02d}" for index in range(1, 5)],
+            [f"{index:02d}" for index in range(2, 8)],
+        )
+    )
+    ready, deferred = _capacity_limited_wave(
+        plan, list(plan["expected_outputs"]), capacity=900
+    )
+    assert len(ready) == 900
+    assert len(deferred) > 0
+    assert not {
+        "panel1_aggregator",
+        "panel2_aggregator",
+        "panel3_aggregator",
+    }.intersection(cell["node"] for cell in ready)
 
 
 def test_all_pipeline_requires_explicit_slurm_flag():

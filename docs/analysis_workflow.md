@@ -87,8 +87,14 @@ It never removes a valid chunk. If a partial recovery would make two
 `aftercorr` arrays use different index subsets, the downstream node is
 deferred to the next recovery wave rather than pairing incorrect cells.
 SLURM is selected only with `--slurm`. Each wave counts the user's current
-queued/running jobs, stays below the configured 1,000-job ceiling, and keeps a
-100-slot reserve by default. Resume refuses to duplicate an active prior wave.
+queued/running array elements and enforces a strict 900-job total ceiling.
+Configuration may lower that ceiling or reserve additional slots. Resume
+refuses to duplicate an active prior wave.
+
+Concurrent run cells serialize the one shared empty-room BIDS write for each
+subject and reuse a complete derivative. Each SLURM element sets
+`MNE_DONTWRITE_HOME=true` and receives a job-specific Matplotlib runtime
+directory, avoiding shared home-directory lock contention.
 
 ### Rendering and replacement safety
 

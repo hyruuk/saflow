@@ -267,10 +267,19 @@ also records per-node resources, array sizes, and stable dry-run job
 identifiers, and validates every `aftercorr` index mapping.
 
 SLURM execution records returned job IDs in `manifests/execution_plan.json`.
-Submission waves respect `computing.slurm.max_submitted_jobs` and reserve
-`submission_job_reserve` slots. Run resume only after the current wave ends.
+Submission waves count every array element plus the user's existing queue and
+enforce a hard total ceiling of 900 jobs. A lower
+`computing.slurm.max_submitted_jobs` or a positive
+`submission_job_reserve` can retain additional capacity. The scheduler records
+submitted and deferred cell counts in the manifest. Run resume only after the
+current wave ends.
 Validators run with `afterany` so they can report incomplete upstream arrays;
 scientific consumers use `afterok` on those barriers.
+
+The BIDS array serializes the shared empty-room derivative per subject and
+reuses it after the first complete write. SLURM array elements also use private
+MNE and Matplotlib runtime directories, preventing contention on
+`~/.mne/mne-python.json.lock`.
 
 ### `invoke pipeline.resume`
 
@@ -284,6 +293,10 @@ downstream cells.
 invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 invoke pipeline.resume --slurm --analysis-id=analysis-...
 ```
+
+A four-subject, six-run complete plan currently contains 1,013 cells. Its first
+wave contains 900 cells and defers aggregators until the remaining permutation
+chunks are submitted in a later resume wave.
 
 ### `invoke viz.panels`
 

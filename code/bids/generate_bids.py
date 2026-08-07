@@ -24,12 +24,16 @@ Date: 2026-01-30
 """
 
 import argparse
+import fcntl
 import json
 import logging
+import os
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional
 
 import mne
 import pandas as pd
@@ -107,8 +111,16 @@ def save_provenance(output_dir: Path, config: dict, subjects_processed: List[str
     provenance_file = output_dir / "code" / "provenance_bids.json"
     provenance_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(provenance_file, "w") as f:
-        json.dump(provenance, f, indent=2)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=provenance_file.parent,
+        prefix=f".{provenance_file.name}.",
+        delete=False,
+    ) as stream:
+        json.dump(provenance, stream, indent=2)
+        stream.write("\n")
+        temporary_path = Path(stream.name)
+    os.replace(temporary_path, provenance_file)
 
     logger.info(f"Saved provenance to {provenance_file}")
 
@@ -135,13 +147,77 @@ def get_noise_recordings(meg_dir: Path) -> Dict[str, Path]:
     return noise_files
 
 
+@contextmanager
+def _subject_noise_lock(bids_root: Path, subject: str) -> Iterator[None]:
+    """Serialize empty-room writes targeting one BIDS subject.
+
+    Lock files live under ``bids/code`` so concurrent run-array cells cannot
+    overwrite the same split FIF files. The lock is advisory and is released
+    automatically when the process exits.
+    """
+    lock_dir = bids_root / "code" / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"sub-{subject}_task-noise.lock"
+    with lock_path.open("a+") as lock_stream:
+        fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
+
+
+def _noise_derivative_is_complete(bids_root: Path, subject: str) -> bool:
+    """Return whether a reusable empty-room BIDS recording is complete."""
+    meg_dir = bids_root / f"sub-{subject}" / "meg"
+    data_files = list(meg_dir.glob(f"sub-{subject}_task-noise*_meg.fif"))
+    required_sidecars = (
+        meg_dir / f"sub-{subject}_task-noise_meg.json",
+        meg_dir / f"sub-{subject}_task-noise_channels.tsv",
+    )
+    return bool(data_files) and all(path.is_file() and path.stat().st_size for path in required_sidecars)
+
+
+def _write_noise_recording(
+    subject: str,
+    recording_date: str,
+    noise_files: Dict[str, Path],
+    bids_root: Path,
+) -> None:
+    """Write the appropriate empty-room recording without locking."""
+    noise_path = noise_files[recording_date]
+    raw = mne.io.read_raw_ctf(str(noise_path), verbose=False)
+    raw.info["line_freq"] = 60
+
+    rename_map = {}
+    for old_name, new_name in (
+        ("EEG057", "vEOG"),
+        ("EEG058", "hEOG"),
+        ("EEG059", "ECG"),
+    ):
+        if old_name in raw.ch_names:
+            rename_map[old_name] = new_name
+    if rename_map:
+        mne.rename_channels(raw.info, rename_map)
+
+    from mne_bids import BIDSPath
+
+    noise_bids_path = BIDSPath(
+        subject=subject,
+        task="noise",
+        datatype="meg",
+        root=str(bids_root),
+    )
+    logger.info("Writing noise to %s", noise_bids_path.basename)
+    write_raw_bids(raw, noise_bids_path, format="FIF", overwrite=True, verbose=False)
+
+
 def copy_noise_to_subject(
     subject: str,
     recording_date: str,
     noise_files: Dict[str, Path],
     bids_root: Path,
-):
-    """Copy the appropriate noise recording to a subject's BIDS folder.
+) -> None:
+    """Copy one subject's empty-room recording using a filesystem lock.
 
     Args:
         subject: Subject ID (e.g., '04').
@@ -153,36 +229,17 @@ def copy_noise_to_subject(
         logger.warning(f"No noise recording found for date {recording_date} (sub-{subject})")
         return
 
-    noise_path = noise_files[recording_date]
-    logger.info(f"Copying noise recording for sub-{subject} (date: {recording_date})")
-
     try:
-        # Load noise recording
-        raw = mne.io.read_raw_ctf(str(noise_path), verbose=False)
-        raw.info["line_freq"] = 60
-
-        # Rename channels to match subject recordings (only if they exist)
-        # Note: Empty room recordings may not have EEG channels connected
-        rename_map = {}
-        for old_name, new_name in [("EEG057", "vEOG"), ("EEG058", "hEOG"), ("EEG059", "ECG")]:
-            if old_name in raw.ch_names:
-                rename_map[old_name] = new_name
-        if rename_map:
-            mne.rename_channels(raw.info, rename_map)
-
-        # Create BIDS path under subject folder
-        from mne_bids import BIDSPath
-
-        noise_bids_path = BIDSPath(
-            subject=subject,
-            task="noise",
-            datatype="meg",
-            root=str(bids_root),
-        )
-
-        logger.info(f"Writing noise to {noise_bids_path.basename}")
-        write_raw_bids(raw, noise_bids_path, format="FIF", overwrite=True, verbose=False)
-
+        with _subject_noise_lock(bids_root, subject):
+            if _noise_derivative_is_complete(bids_root, subject):
+                logger.info("Reusing complete noise recording for sub-%s", subject)
+                return
+            logger.info(
+                "Copying noise recording for sub-%s (date: %s)",
+                subject,
+                recording_date,
+            )
+            _write_noise_recording(subject, recording_date, noise_files, bids_root)
     except Exception as e:
         logger.error(f"Failed to copy noise recording for sub-{subject}: {e}")
 

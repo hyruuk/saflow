@@ -42,6 +42,7 @@ from code.utils.logging_config import setup_logging
 from code.utils.config import load_config
 
 LOGGER = logging.getLogger(__name__)
+SLURM_JOB_CEILING = 900
 
 
 def _load_config(path: Path) -> dict:
@@ -214,7 +215,9 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
             selected_cells=ready,
         )
         submission["capacity"] = capacity
+        submission["submitted_cell_count"] = len(ready)
         submission["deferred_cell_count"] = len(deferred)
+        submission["expected_cell_count"] = len(invalid)
     else:
         submission = execute_plan_locally(
             graph,
@@ -233,6 +236,12 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
     )
     path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
     LOGGER.info("Full pipeline manifest ready: %s", path)
+    if deferred:
+        LOGGER.info(
+            "Submitted %d cells; deferred %d to a later pipeline.resume wave",
+            len(ready),
+            len(deferred),
+        )
     return path
 
 
@@ -305,6 +314,8 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
             selected_cells=ready,
         )
     resume["scheduler"] = submission
+    resume["scheduler"]["submitted_cell_count"] = len(ready)
+    resume["scheduler"]["deferred_cell_count"] = len(deferred)
     path = analysis_dir / "manifests" / "resume.json"
     path.write_text(json.dumps(resume, indent=2, sort_keys=True) + "\n")
     return path
@@ -434,10 +445,13 @@ def _ordered_execution_nodes(plan: dict) -> list[dict]:
 
 
 def _available_submission_capacity(config: dict, *, dry_run: bool) -> int:
-    """Return safe new-cell capacity below the configured 1,000-job limit."""
+    """Return new array-element capacity below the strict 900-job ceiling."""
     slurm = config.get("computing", {}).get("slurm", {})
-    maximum = int(slurm.get("max_submitted_jobs", 1_000))
-    reserve = int(slurm.get("submission_job_reserve", 100))
+    maximum = min(
+        int(slurm.get("max_submitted_jobs", SLURM_JOB_CEILING)),
+        SLURM_JOB_CEILING,
+    )
+    reserve = int(slurm.get("submission_job_reserve", 0))
     current = 0 if dry_run else _current_slurm_job_count()
     return maximum - reserve - current
 

@@ -423,8 +423,10 @@ computing:
     enabled: true
     account: ""  # Leave empty if not using SLURM/HPC, or set to your SLURM account name
     partition: ""  # Leave empty to use cluster default, or specify partition name
-    max_submitted_jobs: 1000  # Rorqual per-user queued/running job ceiling
-    submission_job_reserve: 100  # Leave capacity for login/QC and other work
+    # The scheduler counts each array element as one submitted job. Saflow
+    # counts the user's existing queue and never lets the total exceed 900.
+    max_submitted_jobs: 900
+    submission_job_reserve: 0  # Increase to retain slots for unrelated work
 
     # Resource allocations per pipeline stage
     bids:

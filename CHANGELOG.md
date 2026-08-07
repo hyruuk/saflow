@@ -17,9 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed the complete endpoint to `pipeline.all`, made SLURM opt-in through
   `--slurm`, and replaced internal/user-facing graph terminology with
   `execution plan`.
-- Added capacity-limited Rorqual submission waves with a configurable
-  1,000-job ceiling, safety reserve, current-queue accounting, and active-wave
-  duplicate protection.
+- Enforced capacity-limited Rorqual submission waves under a strict 900-job
+  total ceiling, with current-queue accounting, optional reserve, recorded
+  submitted/deferred counts, and active-wave duplicate protection.
+- Serialized per-subject empty-room BIDS writes and isolated MNE/Matplotlib
+  runtime state per SLURM element, eliminating the sub-08 noise-file and
+  `mne-python.json.lock` races observed during the HPC smoke test.
 
 ### Added
 - Production SLURM execution for the immutable 29-node execution plan: concrete
