@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The complete four-subject and 32-subject plans now contain 269 and 773 jobs,
   respectively, so initial submission is atomic under the 900-job ceiling and
   routine resume waves are unnecessary.
+- Accepted legacy `max_submitted_jobs: 1000` user configurations while still
+  clamping effective scheduler capacity to the enforced 900-job ceiling.
 
 ### Added
 - Production SLURM execution for the immutable 29-node execution plan: concrete

@@ -221,17 +221,13 @@ def _validate_slurm_submission_limits(config: Dict[str, Any]) -> None:
     """Validate scheduler-capacity settings when explicitly configured."""
     maximum = int(config.get("max_submitted_jobs", 900))
     reserve = int(config.get("submission_job_reserve", 0))
+    effective_maximum = min(maximum, 900)
     if maximum < 1:
         raise ConfigurationError("computing.slurm.max_submitted_jobs must be positive")
-    if maximum > 900:
-        raise ConfigurationError(
-            "computing.slurm.max_submitted_jobs cannot exceed the Rorqual "
-            "900-job safety ceiling"
-        )
-    if reserve < 0 or reserve >= maximum:
+    if reserve < 0 or reserve >= effective_maximum:
         raise ConfigurationError(
             "computing.slurm.submission_job_reserve must be between 0 and "
-            "max_submitted_jobs - 1"
+            "the effective 900-job ceiling - 1"
         )
 
 

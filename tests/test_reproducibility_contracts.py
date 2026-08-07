@@ -49,14 +49,13 @@ def test_panel_analysis_config_requires_exact_divisible_chunks(tmp_path: Path) -
         validate_config(config)
 
 
-def test_config_rejects_submission_limit_above_rorqual_ceiling(
+def test_legacy_submission_limit_is_accepted_and_scheduler_clamps_it(
     tmp_path: Path,
 ) -> None:
     config = load_template_config(tmp_path)
-    config["computing"]["slurm"]["max_submitted_jobs"] = 901
+    config["computing"]["slurm"]["max_submitted_jobs"] = 1_000
 
-    with pytest.raises(ConfigurationError, match="900-job safety ceiling"):
-        validate_config(config)
+    validate_config(config)
 
 
 def test_legacy_figure3_config_key_has_actionable_error(tmp_path: Path) -> None:
