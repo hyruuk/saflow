@@ -1,4 +1,4 @@
-"""Immutable Panel analysis analysis identities and artifacts."""
+"""Immutable Saflow analysis analysis identities and artifacts."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def config_hash(config: Mapping[str, Any]) -> str:
 
 def create_analysis_id(config: Mapping[str, Any], project_root: Path,
                        timestamp: datetime | None = None) -> str:
-    """Create a Panel analysis ID from UTC time, Git commit, and configuration."""
+    """Create a Saflow analysis ID from UTC time, Git commit, and configuration."""
     moment = (timestamp or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return (f"analysis-{moment.strftime('%Y%m%dT%H%M%SZ')}-"
             f"g{git_state(project_root)['short_commit']}-c{config_hash(config)}")
@@ -33,7 +33,7 @@ def create_analysis_id(config: Mapping[str, Any], project_root: Path,
 def validate_analysis_id(analysis_id: str) -> None:
     """Reject unsafe or noncanonical analysis identifiers."""
     if not ID_PATTERN.fullmatch(analysis_id):
-        raise ValueError(f"invalid Panel analysis analysis ID: {analysis_id!r}")
+        raise ValueError(f"invalid Saflow analysis analysis ID: {analysis_id!r}")
 
 
 def initialize(root: Path, analysis_id: str, config: Mapping[str, Any],
@@ -59,9 +59,9 @@ def initialize(root: Path, analysis_id: str, config: Mapping[str, Any],
     ]
     (destination / "resolved_config.yaml").write_text(yaml.safe_dump(dict(config), sort_keys=True))
     artifacts = {
-        "dataset_description.json": {"Name": f"Saflow corrected Panel analysis {analysis_id}",
+        "dataset_description.json": {"Name": f"Saflow corrected Saflow analysis {analysis_id}",
             "BIDSVersion": "1.10.0", "DatasetType": "derivative",
-            "GeneratedBy": [{"Name": "saflow Panel analysis", "Version": state["commit"]}]},
+            "GeneratedBy": [{"Name": "saflow Saflow analysis", "Version": state["commit"]}]},
         "provenance.json": {"analysis_id": analysis_id, "config_hash": config_hash(config),
             "created_utc": datetime.now(timezone.utc).isoformat(), "git": state,
             "inputs": input_roots, "software": software},

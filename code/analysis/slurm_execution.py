@@ -1,4 +1,4 @@
-"""Render and submit immutable Panel analysis execution plan cells to SLURM."""
+"""Render and submit immutable Saflow analysis execution plan cells to SLURM."""
 
 from __future__ import annotations
 
@@ -26,29 +26,29 @@ RAW_FEATURE_NODES = {
     "schaefer_400_feature_validator",
 }
 OBSERVED_NODES = {
-    "panel1_statistics",
-    "panel2_observed_models",
-    "panel3_factorial_maps",
-    "panel3_coupling",
+    "feature_modulation_statistics",
+    "multifeature_decoding_models",
+    "network_factorial_modulation",
+    "network_coupling",
 }
 PERMUTATION_NODES = {
-    "panel1_decoding_permutations",
-    "panel2_permutation_chunks",
+    "feature_modulation_decoding_permutations",
+    "multifeature_decoding_permutations",
 }
 AGGREGATION_NODES = {
-    "panel1_aggregator",
-    "panel2_aggregator",
-    "panel3_aggregator",
+    "feature_modulation_results",
+    "multifeature_decoding_results",
+    "network_dynamics_results",
 }
 VALIDATOR_NODES = {
-    "panel1_validator",
-    "panel2_validator",
-    "panel3_validator",
+    "feature_modulation_validator",
+    "multifeature_decoding_validator",
+    "network_dynamics_validator",
 }
 FINALIZATION_NODES = {
     "exploratory_analyses",
-    "compact_export_tables_slides",
-    "figure_composites",
+    "analysis_export",
+    "panel_generation",
     "analysis_audit",
 }
 IMPLEMENTED_NODES = (
@@ -378,8 +378,8 @@ def commands_for_cell(
             spaces,
             include_exploratory,
         )
-    if node == "panel1_decoding_permutations":
-        return _panel1_permutation_commands(
+    if node == "feature_modulation_decoding_permutations":
+        return _feature_modulation_permutation_commands(
             python,
             cell,
             analysis_id,
@@ -388,8 +388,8 @@ def commands_for_cell(
             subjects,
             runs,
         )
-    if node == "panel2_permutation_chunks":
-        return _panel2_permutation_commands(
+    if node == "multifeature_decoding_permutations":
+        return _multifeature_permutation_commands(
             python,
             cell,
             analysis_id,
@@ -460,7 +460,7 @@ def command_for_cell(
             command.extend(["--runs", " ".join(runs)])
         return command
     if node in AGGREGATION_NODES:
-        panel = node.removesuffix("_aggregator")
+        analysis = node.removesuffix("_results")
         command = [
             python,
             "-m",
@@ -469,8 +469,8 @@ def command_for_cell(
             analysis_id,
             "--analysis-root",
             str(analysis_root),
-            "--panel",
-            panel,
+            "--analysis",
+            analysis,
         ]
         if subjects:
             command.extend(["--subjects", " ".join(subjects)])
@@ -481,16 +481,16 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.analysis.panel_validator",
+            "code.analysis.result_validator",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
             str(analysis_root),
-            "--panel",
+            "--analysis",
             node.removesuffix("_validator"),
         ]
     if node == "exploratory_analyses":
-        resources = config.get("panel_analysis", {}).get("resources", {}).get(
+        resources = config.get("analysis_workflow", {}).get("resources", {}).get(
             "maps", {}
         )
         return [
@@ -502,11 +502,11 @@ def command_for_cell(
             "--analysis-root",
             str(analysis_root),
             "--n-permutations",
-            str(config.get("panel_analysis", {}).get("decoding_permutations", 1_000)),
+            str(config.get("analysis_workflow", {}).get("decoding_permutations", 1_000)),
             "--jobs",
             str(resources.get("cpus", 4)),
         ]
-    if node == "compact_export_tables_slides":
+    if node == "analysis_export":
         return [
             python,
             "-m",
@@ -519,7 +519,7 @@ def command_for_cell(
             "--destination",
             str(Path(config["paths"]["reports"]) / "exports" / analysis_id),
         ]
-    if node == "figure_composites":
+    if node == "panel_generation":
         return [
             python,
             "-m",
@@ -550,7 +550,7 @@ def command_for_cell(
         python,
         "-c",
         (
-            "raise RuntimeError('Panel analysis node adapter is not implemented: "
+            "raise RuntimeError('Saflow analysis node adapter is not implemented: "
             f"{node}')"
         ),
     ]
@@ -574,7 +574,7 @@ def _feature_commands(
     return commands
 
 
-def _panel1_permutation_commands(
+def _feature_modulation_permutation_commands(
     python: str,
     cell: dict[str, Any],
     analysis_id: str,
@@ -583,9 +583,9 @@ def _panel1_permutation_commands(
     subjects: Sequence[str],
     runs: Sequence[str],
 ) -> list[list[str]]:
-    """Build one command per immutable Panel 1 chunk in a scheduler batch."""
+    """Build one command per immutable feature-modulation analysis chunk in a scheduler batch."""
     jobs = str(
-        config.get("panel_analysis", {})
+        config.get("analysis_workflow", {})
         .get("resources", {})
         .get("maps", {})
         .get("cpus", 4)
@@ -599,7 +599,7 @@ def _panel1_permutation_commands(
         command = [
             python,
             "-m",
-            "code.analysis.panel1_decoding_runner",
+            "code.analysis.feature_decoding_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -622,7 +622,7 @@ def _panel1_permutation_commands(
     return commands
 
 
-def _panel2_permutation_commands(
+def _multifeature_permutation_commands(
     python: str,
     cell: dict[str, Any],
     analysis_id: str,
@@ -630,13 +630,13 @@ def _panel2_permutation_commands(
     subjects: Sequence[str],
     runs: Sequence[str],
 ) -> list[list[str]]:
-    """Build one command per immutable Panel 2 chunk in a scheduler batch."""
+    """Build one command per immutable multifeature-decoding analysis chunk in a scheduler batch."""
     commands = []
     for chunk_index in cell["chunk_indices"]:
         command = [
             python,
             "-m",
-            "code.analysis.panel2_permutation_runner",
+            "code.analysis.multifeature_permutation_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -697,7 +697,7 @@ def _submit_node(
     resources = _base_resources(
         config,
         plan,
-        Path(config["paths"]["logs"]) / "panel_analysis",
+        Path(config["paths"]["logs"]) / "analysis_workflow",
     )
     if node["array"]:
         return submit_job_array(
@@ -726,7 +726,7 @@ def _submit_node(
 def _base_resources(
     config: dict[str, Any], plan: dict[str, Any], log_root: Path
 ) -> dict[str, Any]:
-    """Translate the Panel analysis resource contract to the shared template."""
+    """Translate the Saflow analysis resource contract to the shared template."""
     slurm = config["computing"]["slurm"]
     return {
         "account": slurm["account"],

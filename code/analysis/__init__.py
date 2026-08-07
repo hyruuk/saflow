@@ -1,4 +1,4 @@
-"""Corrected, immutable Panel analysis analysis workflow."""
+"""Corrected, immutable Saflow analysis workflow."""
 
 from code.analysis.labels import filter_vtc_reflect, reconstruct_strict_labels
 

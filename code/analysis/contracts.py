@@ -36,12 +36,12 @@ BAND_ALIASES = {
 }
 FOOOF_FEATURES = ("fooof_exponent", "fooof_offset", "fooof_r_squared")
 CORRECTED_PSD_FEATURES = tuple(f"psd_corrected_{key}" for key in CANONICAL_BAND_KEYS)
-PANEL1_FEATURES = (
+FEATURE_MODULATION_FEATURES = (
     *(f"psd_{key}" for key in CANONICAL_BAND_KEYS),
     *FOOOF_FEATURES,
     *CORRECTED_PSD_FEATURES,
 )
-PANEL23_FEATURES = (*FOOOF_FEATURES, *CORRECTED_PSD_FEATURES)
+CORRECTED_FEATURES = (*FOOOF_FEATURES, *CORRECTED_PSD_FEATURES)
 PANEL_COMPONENTS = {
     "panel1": (
         "A_raw_PSD_modulation",
@@ -72,7 +72,7 @@ PANEL_COMPONENTS = {
         "F_coupling_contrasts",
     ),
 }
-PANEL1_RENDER_ARRAYS = (
+FEATURE_MODULATION_RENDER_ARRAYS = (
     "raw_psd_modulation",
     "raw_psd_auc",
     "frequency",
@@ -95,20 +95,25 @@ PANEL_SPECS = {
         "composite_filename": "panel1_feature_modulation.png",
         "slide_directory": "panel1_feature_modulation",
         "layout": "A-J preserved feature-modulation and spectral narrative",
-        "features": PANEL1_FEATURES,
+        "features": FEATURE_MODULATION_FEATURES,
     },
     "panel2": {
         "composite_filename": "panel2_multifeature_decoding.png",
         "slide_directory": "panel2_multifeature_decoding",
         "layout": "three-model performance, feature reliance, and parcel reliance",
-        "features": PANEL23_FEATURES,
+        "features": CORRECTED_FEATURES,
     },
     "panel3": {
         "composite_filename": "panel3_network_dynamics.png",
         "slide_directory": "panel3_network_dynamics",
         "layout": "four-cell modulation, contrasts, and DMN-DAN coupling",
-        "features": PANEL23_FEATURES,
+        "features": CORRECTED_FEATURES,
     },
+}
+PANEL_ANALYSES = {
+    "panel1": "feature_modulation",
+    "panel2": "multifeature_decoding",
+    "panel3": "network_dynamics",
 }
 
 RESULT_SCHEMA_NAMES = (

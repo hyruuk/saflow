@@ -1,4 +1,4 @@
-"""Run independently schedulable observed Panel analysis scientific cells."""
+"""Run independently schedulable observed Saflow analysis scientific cells."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from typing import Any
 
 import numpy as np
 
-from code.analysis.contracts import PANEL1_FEATURES, PANEL23_FEATURES
+from code.analysis.contracts import FEATURE_MODULATION_FEATURES, CORRECTED_FEATURES
 from code.analysis.decoding import DecodingConfig
-from code.analysis.real_inputs import RealFigure3Inputs, load_real_inputs
+from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.result_io import write_result_bundle
 from code.analysis.workers import (
-    compute_panel1_statistics,
-    compute_panel2_model,
-    compute_panel3_coupling,
-    compute_panel3_modulation,
+    compute_feature_modulation_statistics,
+    compute_multifeature_model,
+    compute_network_coupling,
+    compute_network_modulation,
 )
 from code.utils.config import load_config
 from code.utils.yeo_networks import get_network_assignments
@@ -40,58 +40,58 @@ def run_observed_cell(args: argparse.Namespace) -> Path:
 def _dispatch(
     args: argparse.Namespace,
     config: dict[str, Any],
-    inputs: RealFigure3Inputs,
+    inputs: AnalysisInputs,
     analysis_dir: Path,
 ) -> tuple[dict[str, Any], Path]:
     """Dispatch a node name to its single-purpose scientific worker."""
-    panel_analysis = config.get("panel_analysis", {})
-    if args.node == "panel1_statistics":
-        feature = _require_member(args.feature, PANEL1_FEATURES, "feature")
-        result = _run_panel1_feature(inputs, feature)
-        return result, analysis_dir / "panel1" / "partials" / "statistics" / feature
-    if args.node == "panel2_observed_models":
+    analysis_workflow = config.get("analysis_workflow", {})
+    if args.node == "feature_modulation_statistics":
+        feature = _require_member(args.feature, FEATURE_MODULATION_FEATURES, "feature")
+        result = _run_feature_modulation(inputs, feature)
+        return result, analysis_dir / "feature_modulation" / "partials" / "statistics" / feature
+    if args.node == "multifeature_decoding_models":
         model = _require_member(
             args.model,
             ("state", "lapse_within_IN", "lapse_within_OUT"),
             "model",
         )
-        result = compute_panel2_model(
+        result = compute_multifeature_model(
             inputs.feature_tensor,
             inputs.states,
             inputs.outcomes,
             inputs.subjects,
             model=model,
-            config=_decoding_config(panel_analysis),
+            config=_decoding_config(analysis_workflow),
         )
         result.update(
             {
                 "model": model,
-                "feature_order": PANEL23_FEATURES,
+                "feature_order": CORRECTED_FEATURES,
                 "parcel_order": inputs.parcel_order,
             }
         )
-        return result, analysis_dir / "panel2" / "partials" / "observed" / model
-    if args.node in {"panel3_factorial_maps", "panel3_coupling"}:
-        feature = _require_member(args.feature, PANEL23_FEATURES, "feature")
-        index = PANEL23_FEATURES.index(feature)
+        return result, analysis_dir / "multifeature_decoding" / "partials" / "observed" / model
+    if args.node in {"network_factorial_modulation", "network_coupling"}:
+        feature = _require_member(args.feature, CORRECTED_FEATURES, "feature")
+        index = CORRECTED_FEATURES.index(feature)
         values = inputs.feature_tensor[:, :, index : index + 1]
         networks = _network_assignments(inputs.parcel_order)
         common = {
             "minimum_windows": int(
-                panel_analysis.get(
+                analysis_workflow.get(
                     "minimum_coupling_windows"
-                    if args.node == "panel3_coupling"
+                    if args.node == "network_coupling"
                     else "minimum_modulation_windows",
-                    10 if args.node == "panel3_coupling" else 5,
+                    10 if args.node == "network_coupling" else 5,
                 )
             ),
             # Authoritative synchronized families are recomputed only after
             # all ten feature cells pass aggregation.
             "n_permutations": 1,
-            "seed": int(panel_analysis.get("random_seed", 42)) + index,
+            "seed": int(analysis_workflow.get("random_seed", 42)) + index,
         }
-        if args.node == "panel3_coupling":
-            result = compute_panel3_coupling(
+        if args.node == "network_coupling":
+            result = compute_network_coupling(
                 values,
                 inputs.cells,
                 inputs.subjects,
@@ -101,7 +101,7 @@ def _dispatch(
             )
             branch = "coupling"
         else:
-            result = compute_panel3_modulation(
+            result = compute_network_modulation(
                 values,
                 inputs.cells,
                 inputs.subjects,
@@ -110,22 +110,22 @@ def _dispatch(
             )
             branch = "modulation"
         result["feature"] = feature
-        return result, analysis_dir / "panel3" / "partials" / branch / feature
+        return result, analysis_dir / "network_dynamics" / "partials" / branch / feature
     raise ValueError(f"unsupported observed node: {args.node}")
 
 
-def _run_panel1_feature(
-    inputs: RealFigure3Inputs, feature: str
+def _run_feature_modulation(
+    inputs: AnalysisInputs, feature: str
 ) -> dict[str, Any]:
-    """Compute one subject-level paired spatial map for Panel 1."""
-    index = PANEL1_FEATURES.index(feature)
+    """Compute one subject-level paired spatial map for feature-modulation analysis."""
+    index = FEATURE_MODULATION_FEATURES.index(feature)
     inside, outside, included = _subject_state_means(
-        inputs.panel1_tensor[:, :, index],
+        inputs.feature_modulation_tensor[:, :, index],
         inputs.states,
         inputs.subjects,
         inputs.runs,
     )
-    result = compute_panel1_statistics(
+    result = compute_feature_modulation_statistics(
         inside[:, None, :],
         outside[:, None, :],
         feature_order=(feature,),
@@ -165,7 +165,7 @@ def _subject_state_means(
             outside.append(np.nanmean(out_runs, axis=0))
             included.append(subject)
     if len(included) < 2:
-        raise ValueError("Panel 1 paired inference requires at least two subjects")
+        raise ValueError("feature-modulation analysis paired inference requires at least two subjects")
     return np.stack(inside), np.stack(outside), np.asarray(included)
 
 
@@ -186,7 +186,7 @@ def _subject_state_counts(
 
 
 def _network_assignments(parcel_order: tuple[str, ...]) -> np.ndarray:
-    """Convert canonical Schaefer tokens to the Panel 3 display contract."""
+    """Convert canonical Schaefer tokens to the network-dynamics analysis display contract."""
     short = get_network_assignments(parcel_order, n_networks=7)
     names = {
         "Vis": "Visual",
@@ -226,7 +226,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():

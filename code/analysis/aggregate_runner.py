@@ -1,4 +1,4 @@
-"""Aggregate complete immutable partials into render-ready panel bundles."""
+"""Aggregate complete immutable partials into scientific result bundles."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from typing import Any
 import numpy as np
 
 from code.analysis.chunks import derive_chunk_seed
-from code.analysis.contracts import PANEL1_FEATURES, PANEL23_FEATURES
-from code.analysis.real_inputs import RealFigure3Inputs, load_real_inputs
+from code.analysis.contracts import FEATURE_MODULATION_FEATURES, CORRECTED_FEATURES
+from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.observed_runner import _network_assignments
 from code.analysis.permutations import correct_decoding_families
 from code.analysis.networks import (
@@ -28,45 +28,45 @@ from code.analysis.result_io import read_result_bundle
 from code.utils.config import load_config
 
 
-def aggregate_panel(args: argparse.Namespace) -> Path:
-    """Aggregate one panel only when every expected partial is compatible."""
+def aggregate_analysis(args: argparse.Namespace) -> Path:
+    """Aggregate one analysis only when every expected partial is compatible."""
     config = load_config(args.config)
     analysis_dir = _analysis_directory(config, args.analysis_root, args.analysis_id)
-    if args.panel == "panel1":
-        arrays, summary = _aggregate_panel1(config, analysis_dir, args)
-    elif args.panel == "panel2":
-        arrays, summary = _aggregate_panel2(config, analysis_dir, args.analysis_id)
-    elif args.panel == "panel3":
-        arrays, summary = _aggregate_panel3(config, analysis_dir, args)
+    if args.analysis == "feature_modulation":
+        arrays, summary = _aggregate_feature_modulation(config, analysis_dir, args)
+    elif args.analysis == "multifeature_decoding":
+        arrays, summary = _aggregate_multifeature_decoding(config, analysis_dir, args.analysis_id)
+    elif args.analysis == "network_dynamics":
+        arrays, summary = _aggregate_network_dynamics(config, analysis_dir, args)
     else:
-        raise ValueError("panel must be panel1, panel2, or panel3")
-    return _write_observed(analysis_dir / args.panel, arrays, summary, analysis_dir)
+        raise ValueError(f"unknown analysis: {args.analysis}")
+    return _write_observed(analysis_dir / args.analysis, arrays, summary, analysis_dir)
 
 
-def _aggregate_panel1(
+def _aggregate_feature_modulation(
     config: dict[str, Any], analysis_dir: Path, args: argparse.Namespace
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Combine paired maps, synchronized decoding chunks, and spectra."""
     statistics_bundles = [
         read_result_bundle(
-            analysis_dir / "panel1" / "partials" / "statistics" / feature
+            analysis_dir / "feature_modulation" / "partials" / "statistics" / feature
         )
-        for feature in PANEL1_FEATURES
+        for feature in FEATURE_MODULATION_FEATURES
     ]
     _require_bundle_provenance(statistics_bundles, analysis_dir)
     statistics = [bundle["result"] for bundle in statistics_bundles]
-    panel_analysis = config.get("panel_analysis", {})
-    total = int(panel_analysis.get("map_permutations", 10_000))
-    size = int(panel_analysis.get("map_chunk_size", 250))
+    analysis_workflow = config.get("analysis_workflow", {})
+    total = int(analysis_workflow.get("map_permutations", 10_000))
+    size = int(analysis_workflow.get("map_chunk_size", 250))
     chunk_count = total // size
     observed = []
     corrected = []
     confusion = []
-    for feature in PANEL1_FEATURES:
+    for feature in FEATURE_MODULATION_FEATURES:
         chunks = [
             read_result_bundle(
                 analysis_dir
-                / "panel1"
+                / "feature_modulation"
                 / "partials"
                 / "decoding"
                 / feature
@@ -75,7 +75,7 @@ def _aggregate_panel1(
             for index in range(chunk_count)
         ]
         _require_bundle_provenance(chunks, analysis_dir)
-        _validate_panel1_chunks(chunks, args.analysis_id, feature, total, size)
+        _validate_feature_modulation_chunks(chunks, args.analysis_id, feature, total, size)
         results = [chunk["result"] for chunk in chunks]
         reference = np.asarray(results[0]["observed"])
         if any(not np.array_equal(reference, result["observed"], equal_nan=True)
@@ -187,7 +187,7 @@ def _aggregate_panel1(
         ),
     }
     summary = {
-        "feature_order": list(PANEL1_FEATURES),
+        "feature_order": list(FEATURE_MODULATION_FEATURES),
         "subject_n_by_feature": [
             int(np.nanmax(result["subject_n"])) for result in statistics
         ],
@@ -201,7 +201,7 @@ def _aggregate_panel1(
 
 
 def _subject_average_recordings(
-    values: np.ndarray, inputs: RealFigure3Inputs
+    values: np.ndarray, inputs: AnalysisInputs
 ) -> np.ndarray:
     """Average runs within subject before group-level spectral summaries."""
     recording_subjects = np.asarray(
@@ -215,14 +215,14 @@ def _subject_average_recordings(
     )
 
 
-def _validate_panel1_chunks(
+def _validate_feature_modulation_chunks(
     chunks: list[dict[str, Any]],
     analysis_id: str,
     feature: str,
     total: int,
     size: int,
 ) -> None:
-    """Reject gaps, wrong seeds, and incompatible Panel 1 chunks."""
+    """Reject gaps, wrong seeds, and incompatible feature-modulation analysis chunks."""
     intervals = []
     for index, chunk in enumerate(chunks):
         provenance = chunk["provenance"]
@@ -233,7 +233,7 @@ def _validate_panel1_chunks(
             raise ValueError(f"wrong interval for {feature} chunk {index}")
         if provenance["analysis_id"] != analysis_id or provenance["feature"] != feature:
             raise ValueError(f"incompatible provenance for {feature} chunk {index}")
-        seed = derive_chunk_seed(analysis_id, "panel1", "decoding", index)
+        seed = derive_chunk_seed(analysis_id, "feature_modulation", "decoding", index)
         if int(result["seed"]) != seed or provenance["seed"] != seed:
             raise ValueError(f"wrong seed for {feature} chunk {index}")
         intervals.append(interval)
@@ -243,7 +243,7 @@ def _validate_panel1_chunks(
         raise ValueError(f"gap or overlap in {feature} chunks")
 
 
-def _aggregate_panel2(
+def _aggregate_multifeature_decoding(
     config: dict[str, Any],
     analysis_dir: Path,
     analysis_id: str,
@@ -252,7 +252,7 @@ def _aggregate_panel2(
     model_order = ("state", "lapse_within_IN", "lapse_within_OUT")
     model_bundles = [
         read_result_bundle(
-            analysis_dir / "panel2" / "partials" / "observed" / model
+            analysis_dir / "multifeature_decoding" / "partials" / "observed" / model
         )
         for model in model_order
     ]
@@ -310,13 +310,13 @@ def _aggregate_panel2(
                 for metrics in model["joint"]["subject_metrics"]
             ]
         )
-    panel_analysis = config.get("panel_analysis", {})
-    total = int(panel_analysis.get("decoding_permutations", 1_000))
-    size = int(panel_analysis.get("decoding_chunk_size", 25))
+    analysis_workflow = config.get("analysis_workflow", {})
+    total = int(analysis_workflow.get("decoding_permutations", 1_000))
+    size = int(analysis_workflow.get("decoding_chunk_size", 25))
     chunks = [
         read_result_bundle(
             analysis_dir
-            / "panel2"
+            / "multifeature_decoding"
             / "partials"
             / "permutations"
             / f"chunk-{index:04d}"
@@ -327,15 +327,15 @@ def _aggregate_panel2(
     failures = np.concatenate(
         [np.asarray(chunk["result"]["class_failure"]) for chunk in chunks]
     )
-    null = _aggregate_panel2_null(chunks, analysis_id, total, size)
+    null = _aggregate_multifeature_null(chunks, analysis_id, total, size)
     synchronized_valid = ~np.any(failures, axis=1)
     if synchronized_valid.sum() < max(19, int(0.9 * total)):
-        raise RuntimeError("too many class-failed synchronized Panel 2 permutations")
+        raise RuntimeError("too many class-failed synchronized multifeature-decoding analysis permutations")
     valid_null = {key: value[synchronized_valid] for key, value in null.items()}
     arrays.update(correct_decoding_families(arrays, valid_null))
     return arrays, {
         "model_order": list(model_order),
-        "feature_order": list(PANEL23_FEATURES),
+        "feature_order": list(CORRECTED_FEATURES),
         "permutation_inference": "synchronized max-statistic families",
         "decoding_permutations": total,
         "effective_synchronized_permutations": int(synchronized_valid.sum()),
@@ -343,13 +343,13 @@ def _aggregate_panel2(
     }
 
 
-def _aggregate_panel2_null(
+def _aggregate_multifeature_null(
     chunks: list[dict[str, Any]],
     analysis_id: str,
     total: int,
     size: int,
 ) -> dict[str, np.ndarray]:
-    """Validate and concatenate synchronized Panel 2 null intervals."""
+    """Validate and concatenate synchronized multifeature-decoding analysis null intervals."""
     keys = (
         "joint_auc",
         "standalone_feature_auc",
@@ -361,40 +361,40 @@ def _aggregate_panel2_null(
         provenance = chunk["provenance"]
         expected = [index * size, min((index + 1) * size, total)]
         if np.asarray(result["permutation_interval"]).tolist() != expected:
-            raise ValueError(f"wrong Panel 2 interval for chunk {index}")
+            raise ValueError(f"wrong multifeature-decoding analysis interval for chunk {index}")
         seed = derive_chunk_seed(
-            analysis_id, "panel2", "decoding_families", index
+            analysis_id, "multifeature_decoding", "decoding_families", index
         )
         if int(result["seed"]) != seed or provenance["seed"] != seed:
-            raise ValueError(f"wrong Panel 2 seed for chunk {index}")
+            raise ValueError(f"wrong multifeature-decoding analysis seed for chunk {index}")
         if provenance["analysis_id"] != analysis_id:
-            raise ValueError(f"wrong Panel 2 analysis ID for chunk {index}")
+            raise ValueError(f"wrong multifeature-decoding analysis analysis ID for chunk {index}")
     return {
         key: np.concatenate([np.asarray(chunk["result"][key]) for chunk in chunks])
         for key in keys
     }
 
 
-def _aggregate_panel3(
+def _aggregate_network_dynamics(
     config: dict[str, Any],
     analysis_dir: Path,
     args: argparse.Namespace,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Combine ten feature-wise modulation and coupling results."""
-    panel_analysis = config.get("panel_analysis", {})
-    permutations = int(panel_analysis.get("map_permutations", 10_000))
-    base_seed = int(panel_analysis.get("random_seed", 42))
+    analysis_workflow = config.get("analysis_workflow", {})
+    permutations = int(analysis_workflow.get("map_permutations", 10_000))
+    base_seed = int(analysis_workflow.get("random_seed", 42))
     modulation_bundles = [
         read_result_bundle(
-            analysis_dir / "panel3" / "partials" / "modulation" / feature
+            analysis_dir / "network_dynamics" / "partials" / "modulation" / feature
         )
-        for feature in PANEL23_FEATURES
+        for feature in CORRECTED_FEATURES
     ]
     coupling_bundles = [
         read_result_bundle(
-            analysis_dir / "panel3" / "partials" / "coupling" / feature
+            analysis_dir / "network_dynamics" / "partials" / "coupling" / feature
         )
-        for feature in PANEL23_FEATURES
+        for feature in CORRECTED_FEATURES
     ]
     _require_bundle_provenance(modulation_bundles + coupling_bundles, analysis_dir)
     modulation = [bundle["result"] for bundle in modulation_bundles]
@@ -417,19 +417,19 @@ def _aggregate_panel3(
     coupling_contrasts = compute_factorial_contrasts(
         coupling_cells[coupling_complete]
     )
-    fooof_inference = _panel3_family_inference(
+    fooof_inference = _network_family_inference(
         modulation_contrasts,
         slice(0, 3),
         permutations=permutations,
         seed=base_seed,
     )
-    corrected_inference = _panel3_family_inference(
+    corrected_inference = _network_family_inference(
         modulation_contrasts,
         slice(3, 10),
         permutations=permutations,
         seed=base_seed + 1,
     )
-    coupling_inference = _panel3_family_inference(
+    coupling_inference = _network_family_inference(
         coupling_contrasts,
         slice(0, 10),
         permutations=permutations,
@@ -472,7 +472,7 @@ def _aggregate_panel3(
         "all_network_pair_counts": all_pair_coupling["cell_counts"],
     }
     return arrays, {
-        "feature_order": list(PANEL23_FEATURES),
+        "feature_order": list(CORRECTED_FEATURES),
         "primary": "state-by-outcome interaction",
         "simple_effects_always_reported": True,
         "contrast_order": list(CONTRAST_WEIGHTS),
@@ -489,14 +489,14 @@ def _aggregate_panel3(
     }
 
 
-def _panel3_family_inference(
+def _network_family_inference(
     contrasts: dict[str, np.ndarray],
     feature_slice: slice,
     *,
     permutations: int,
     seed: int,
 ) -> dict[str, Any]:
-    """Correct one prespecified Panel 3 feature family synchronously."""
+    """Correct one prespecified network-dynamics analysis feature family synchronously."""
     flattened = {
         name: np.asarray(values)[..., feature_slice].reshape(len(values), -1)
         for name, values in contrasts.items()
@@ -507,7 +507,7 @@ def _panel3_family_inference(
 
 
 def _mixed_effects_arrays(
-    inputs: RealFigure3Inputs,
+    inputs: AnalysisInputs,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fit secondary all-available models by Yeo network and feature."""
     assignments = _network_assignments(inputs.parcel_order)
@@ -521,9 +521,9 @@ def _mixed_effects_arrays(
         "Default Mode",
     )
     terms = ("Intercept", "state", "lapse", "state:lapse")
-    coefficients = np.full((7, len(PANEL23_FEATURES), len(terms)), np.nan)
+    coefficients = np.full((7, len(CORRECTED_FEATURES), len(terms)), np.nan)
     p_values = np.full_like(coefficients, np.nan)
-    converged = np.zeros((7, len(PANEL23_FEATURES)), dtype=bool)
+    converged = np.zeros((7, len(CORRECTED_FEATURES)), dtype=bool)
     for network_index, network in enumerate(networks):
         values = np.nanmean(
             inputs.feature_tensor[:, assignments == network], axis=1
@@ -533,11 +533,11 @@ def _mixed_effects_arrays(
                 values,
                 inputs.cells,
                 inputs.subjects,
-                feature_order=PANEL23_FEATURES,
+                feature_order=CORRECTED_FEATURES,
             )
         except (ValueError, np.linalg.LinAlgError):
             continue
-        for feature_index, feature in enumerate(PANEL23_FEATURES):
+        for feature_index, feature in enumerate(CORRECTED_FEATURES):
             fitted = result["features"][feature]
             coefficients[network_index, feature_index] = [
                 fitted["coefficients"][term] for term in terms
@@ -626,7 +626,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
     directory = root / analysis_id
     if not directory.exists():
@@ -635,15 +635,19 @@ def _analysis_directory(
 
 
 def main() -> None:
-    """Aggregate one panel from scheduler arguments."""
+    """Aggregate one scientific analysis from scheduler arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--analysis-id", required=True)
     parser.add_argument("--analysis-root")
-    parser.add_argument("--panel", required=True)
+    parser.add_argument(
+        "--analysis",
+        required=True,
+        choices=("feature_modulation", "multifeature_decoding", "network_dynamics"),
+    )
     parser.add_argument("--subjects")
     parser.add_argument("--runs")
-    aggregate_panel(parser.parse_args())
+    aggregate_analysis(parser.parse_args())
 
 
 if __name__ == "__main__":

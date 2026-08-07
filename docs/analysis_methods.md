@@ -1,4 +1,4 @@
-# Corrected panel-analysis methods notes
+# Corrected analysis methods notes
 
 ## Behavioral labeling
 
@@ -19,13 +19,13 @@ legacy correct/lapse selectors are exploratory.
 
 The paper bands are Theta (4–8 Hz), Alpha (8–12 Hz), Low Beta (12–20 Hz),
 High Beta (20–30 Hz), Gamma 1 (30–60 Hz), Gamma 2 (60–90 Hz), and Gamma 3
-(90–120 Hz). Delta is excluded. Panel 1 uses raw PSD, FOOOF exponent/offset/R²,
-and corrected PSD. Panels 2–3 omit raw PSD. Complexity is exploratory.
+(90–120 Hz). Delta is excluded. The feature-modulation analysis uses raw PSD, FOOOF exponent/offset/R²,
+and corrected PSD. The multifeature-decoding and network-dynamics analyses omit raw PSD. Complexity is exploratory.
 
 All paper maps use 400 ordered cortical parcels from
 Schaefer-400/7Networks after excluding medial-wall labels.
 
-## Panel 1
+## Feature modulation analysis
 
 IN and OUT windows are aggregated within run and then within subject.
 Spatial inference uses paired tests and Benjamini–Hochberg FDR separately
@@ -38,7 +38,7 @@ secondary. Within-subject label permutations are synchronized across parcels;
 the maximum parcel AUC controls family-wise error within each feature,
 preserving the established t-max behavior.
 
-## Panel 2
+## Multifeature decoding analysis
 
 The three prespecified models are state, matched lapse within IN, and matched
 lapse within OUT. Ridge logistic regression is class-balanced. Median
@@ -51,7 +51,7 @@ matched outcomes within subject/run/state. Joint models, all standalone and
 grouped feature tests, and all parcel-reliance tests form three separate
 synchronized maximum-statistic families. Reliance is predictive, not causal.
 
-## Panel 3
+## Network dynamics analysis
 
 The four cells are IN-correct omission, IN-commission error,
 OUT-correct omission, and OUT-commission error. The primary contrast is

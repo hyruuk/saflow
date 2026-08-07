@@ -3344,7 +3344,7 @@ def multifeature_run(c, analysis_id, analysis_root, features="all",
 
 
 @task
-def panel_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
+def analysis_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
                     runs=None, config="config.yaml"):
     """Create and validate a new immutable final analysis."""
     cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "preflight",
@@ -3361,7 +3361,7 @@ def panel_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
 
 
 @task
-def panel_run(c, analysis_id, analysis_root=None, n_permutations=1000,
+def analysis_run(c, analysis_id, analysis_root=None, n_permutations=1000,
                 minimum_circular_offset=24, seed=42, config="config.yaml"):
     """Configure corrected sensor and Schaefer-400 fitting/permutation inference."""
     cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "run",
@@ -3374,7 +3374,7 @@ def panel_run(c, analysis_id, analysis_root=None, n_permutations=1000,
 
 
 @task
-def panel_synthetic(c, output_dir="reports/synthetic/panel-analysis", seed=42):
+def analysis_synthetic(c, output_dir="reports/synthetic/analysis", seed=42):
     """Run all three scientific workers with small schema-compatible data."""
     cmd = [
         get_python_executable(),
@@ -3389,7 +3389,7 @@ def panel_synthetic(c, output_dir="reports/synthetic/panel-analysis", seed=42):
 
 
 @task
-def panel_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
+def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
                          spaces="sensor schaefer_400",
                          include_exploratory=True, config="config.yaml"):
     """Write the complete raw-to-panels execution plan without submission."""
@@ -3418,7 +3418,7 @@ def panel_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs
 
 
 @task
-def panel_export(c, analysis_id, analysis_root, destination=None):
+def analysis_export(c, analysis_id, analysis_root, destination=None):
     """Export analysis bundles without subject-level feature matrices."""
     target = destination or str(Path("reports/exports") / analysis_id)
     cmd = [get_python_executable(), "-m", "code.analysis.workflow", "export",
@@ -3428,7 +3428,7 @@ def panel_export(c, analysis_id, analysis_root, destination=None):
 
 
 @task
-def panel_audit(
+def analysis_audit(
     c, analysis_id, analysis_root=None, reports_root="reports",
     config="config.yaml",
 ):
@@ -3451,7 +3451,7 @@ def panel_audit(
 
 
 @task
-def panel_legacy_inventory(c, source, manifest="reports/legacy/panel-analysis.json"):
+def analysis_legacy_inventory(c, source, manifest="reports/legacy/analysis.json"):
     """Write a read-only hash inventory of existing analysis outputs."""
     cmd = [get_python_executable(), "-m", "code.analysis.workflow", "legacy-inventory",
            "--source", source, "--manifest", manifest]
@@ -3471,7 +3471,7 @@ def viz_panels(
         analysis_root = str(
             Path(loaded["paths"]["data_root"])
             / "processed"
-            / loaded.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+            / loaded.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
         )
     cmd = [
         get_python_executable(config),
@@ -4152,13 +4152,13 @@ analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")
 analysis.add_task(multifeature_legacy_inventory,
                   name="multifeature-legacy-inventory")
-analysis.add_task(panel_preflight, name="preflight")
-analysis.add_task(panel_run, name="run")
-analysis.add_task(panel_synthetic, name="synthetic")
-analysis.add_task(panel_execution_plan, name="execution-plan")
-analysis.add_task(panel_export, name="export")
-analysis.add_task(panel_audit, name="audit")
-analysis.add_task(panel_legacy_inventory, name="legacy-inventory")
+analysis.add_task(analysis_preflight, name="preflight")
+analysis.add_task(analysis_run, name="run")
+analysis.add_task(analysis_synthetic, name="synthetic")
+analysis.add_task(analysis_execution_plan, name="execution-plan")
+analysis.add_task(analysis_export, name="export")
+analysis.add_task(analysis_audit, name="audit")
+analysis.add_task(analysis_legacy_inventory, name="legacy-inventory")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection

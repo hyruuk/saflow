@@ -1,6 +1,6 @@
 # Analysis workflow
 
-## Corrected panel-analysis branch
+## Corrected analysis branch
 
 The paper panels are regenerated under a new immutable analysis ID. Raw VTC is filtered
 per run with reflected Gaussian boundaries, then every neural window is aligned
@@ -27,16 +27,16 @@ current VTC provenance, exactly 400 ordered Schaefer parcels, and reports all
 four state × outcome counts. Modulation eligibility requires at least five
 windows in every cell; coupling eligibility requires ten.
 
-Panel 1 paired maps use subject-level IN/OUT aggregation, paired tests, and
+Feature-modulation paired maps use subject-level IN/OUT aggregation, paired tests, and
 Benjamini-Hochberg FDR across parcels separately within each feature, matching
 the established panel. Its epoch-level LOSO decoding retains the existing
 within-subject label permutation and maximum-across-parcel t-max behavior.
-Panel 2 decoding uses outer LOSO, inner subject-grouped ridge tuning, and
+Multifeature decoding uses outer LOSO, inner subject-grouped ridge tuning, and
 training-only imputation and scaling. Its state null circularly shifts VTC
 within each run by more than 24 trials, rebuilds strict labels once, and shares
 them across all parcels/features. Matched lapse nulls permute outcomes within
 subject/run/state. The paper branch uses seven bands
-from Theta through Gamma 3 and excludes Delta. Panel 1 includes raw PSD, FOOOF,
+from Theta through Gamma 3 and excludes Delta. The feature-modulation analysis includes raw PSD, FOOOF,
 and corrected PSD; Panels 2 and 3 use only FOOOF and corrected PSD. Complexity
 is exploratory. HPC output is authoritative; compact exports reproduce local
 tables and figures. The machine-readable schemas and dry-run dependency rules
@@ -50,21 +50,21 @@ chunk index. Aggregation rejects missing or duplicate files, interval gaps or
 overlaps, changed feature order, incompatible Git/config provenance, and
 incorrect seeds before concatenating a null distribution.
 
-Panel 2 fits the state model and two matched rare-outcome models with outer
+Multifeature decoding fits the state model and two matched rare-outcome models with outer
 LOSO and subject-grouped inner tuning. Median imputation and standardization
 are fitted on training folds only. Outputs include joint and standalone AUC,
 held-out probabilities and metrics, selected regularization, and held-out
 grouped-shuffle feature and parcel reliance. Joint, feature, and parcel null
 results are separate synchronized maximum-statistic families.
 
-Panel 3 orders cells as IN-correct, IN-lapse, OUT-correct, OUT-lapse. Its
+Network dynamics orders cells as IN-correct, IN-lapse, OUT-correct, OUT-lapse. Its
 interaction weights `[1, -1, -1, 1]` implement
 `(lapse-correct)_OUT - (lapse-correct)_IN`; all four simple effects are always
 computed. Coupling is estimated within run, Fisher-z transformed, and combined
 with `n - 3` weights. The all-available random-intercept mixed model is
 explicitly secondary.
 
-Panel 3 modulation corrections are synchronized across contrasts, networks,
+Network-dynamics modulation corrections are synchronized across contrasts, networks,
 and features, with separate FOOOF and corrected-PSD families. DMN–DAN
 coupling is corrected across all ten features and prespecified contrasts.
 Every other Yeo-7 network pair is exported as exploratory Fisher-z coupling.
@@ -95,7 +95,7 @@ reserve additional slots. Resume refuses to duplicate an active prior wave.
 Run-level work is grouped into three arrays with identical subject/run
 indices: BIDS plus preprocessing; source reconstruction plus atlas extraction;
 and all requested feature families. Sequential step outcomes are retained in
-the run-cell status JSON. Panel 1 and Panel 2 permutation array elements each
+the run-cell status JSON. Feature-modulation and multifeature-decoding permutation array elements each
 process five original immutable chunks, reducing scheduler pressure without
 changing intervals, seeds, or aggregation checks.
 

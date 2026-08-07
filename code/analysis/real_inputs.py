@@ -15,7 +15,7 @@ from code.analysis.alignment import (
     require_exact_alignment,
     validate_schaefer_400,
 )
-from code.analysis.contracts import CANONICAL_BANDS, PANEL23_FEATURES
+from code.analysis.contracts import CANONICAL_BANDS, CORRECTED_FEATURES
 from code.analysis.labels import (
     LABEL_IN,
     LABEL_OUT,
@@ -31,11 +31,11 @@ from code.analysis.preflight import (
 
 
 @dataclass(frozen=True)
-class RealFigure3Inputs:
-    """Memory-bounded aligned inputs for all three panel analysis."""
+class AnalysisInputs:
+    """Memory-bounded aligned inputs for all three analysis."""
 
     feature_tensor: np.ndarray
-    panel1_tensor: np.ndarray
+    feature_modulation_tensor: np.ndarray
     states: np.ndarray
     outcomes: np.ndarray
     cells: np.ndarray
@@ -74,7 +74,7 @@ def load_real_inputs(
     runs: Sequence[str],
     *,
     include_spectra: bool = False,
-) -> RealFigure3Inputs:
+) -> AnalysisInputs:
     """Load, align, validate, and concatenate corrected real recordings."""
     recordings = [
         _load_recording(
@@ -111,12 +111,12 @@ def load_real_inputs(
             )
         )
         offset += count
-    return RealFigure3Inputs(
+    return AnalysisInputs(
         feature_tensor=np.concatenate(
             [recording["feature_tensor"] for recording in recordings]
         ),
-        panel1_tensor=np.concatenate(
-            [recording["panel1_tensor"] for recording in recordings]
+        feature_modulation_tensor=np.concatenate(
+            [recording["feature_modulation_tensor"] for recording in recordings]
         ),
         states=np.concatenate([recording["states"] for recording in recordings]),
         outcomes=np.concatenate([recording["outcomes"] for recording in recordings]),
@@ -127,7 +127,7 @@ def load_real_inputs(
             [recording["alignment_keys"] for recording in recordings]
         ),
         parcel_order=parcel_order,
-        feature_order=PANEL23_FEATURES,
+        feature_order=CORRECTED_FEATURES,
         frequencies=frequencies,
         raw_spectrum_in=np.stack(
             [recording["raw_spectrum_in"] for recording in recordings]
@@ -163,10 +163,10 @@ def _load_recording(
     *,
     include_spectra: bool,
 ) -> dict[str, Any]:
-    """Load one subject/run and derive strict labels and panel-analysis features."""
+    """Load one subject/run and derive strict labels and analysis features."""
     paths = _feature_paths(config, subject, run)
     if any(path is None for path in paths.values()):
-        raise FileNotFoundError(f"missing Panel analysis features for sub-{subject} run-{run}")
+        raise FileNotFoundError(f"missing Saflow analysis features for sub-{subject} run-{run}")
     events = pd.read_csv(_events_path(config, subject, run), sep="\t")
     _validate_event_provenance(events)
     raw, frequencies, metadata, parcels = _load_psd(paths["welch"])
@@ -194,7 +194,7 @@ def _load_recording(
     raw_bands = np.log10(np.maximum(_band_reduce(raw, frequencies), np.finfo(float).tiny))
     return {
         "feature_tensor": feature_tensor,
-        "panel1_tensor": np.concatenate([raw_bands, feature_tensor], axis=2),
+        "feature_modulation_tensor": np.concatenate([raw_bands, feature_tensor], axis=2),
         "states": _state_names(labels["state"]),
         "outcomes": _outcome_names(labels["outcome"]),
         "cells": labels["cell"],
@@ -370,7 +370,7 @@ def _state_spectrum(
 def _optional_state_spectrum(
     psd: np.ndarray, states: np.ndarray, target: int, include: bool
 ) -> np.ndarray:
-    """Retain large parcel spectra only for Panel 1 aggregation."""
+    """Retain large parcel spectra only for feature-modulation analysis aggregation."""
     return _state_spectrum(psd, states, target) if include else np.empty((0, 0))
 
 
@@ -389,7 +389,7 @@ def _state_spatial_features(
 def _optional_state_features(
     values: np.ndarray, states: np.ndarray, target: int, include: bool
 ) -> np.ndarray:
-    """Retain state-level FOOOF fits only for Panel 1 spectral rendering."""
+    """Retain state-level FOOOF fits only for feature-modulation analysis spectral rendering."""
     return (
         _state_spatial_features(values, states, target)
         if include

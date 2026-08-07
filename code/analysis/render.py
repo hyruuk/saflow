@@ -17,8 +17,9 @@ import numpy as np
 from code.analysis.contracts import (
     CANONICAL_BANDS,
     PANEL_COMPONENTS,
-    PANEL1_RENDER_ARRAYS,
+    FEATURE_MODULATION_RENDER_ARRAYS,
     PANEL_SPECS,
+    PANEL_ANALYSES,
     SCHEMA_VERSION,
 )
 
@@ -79,8 +80,9 @@ def _resolve_data_mode(analysis_dir: Path | None, panels: tuple[str, ...]) -> st
     if analysis_dir is None:
         return "synthetic"
     for panel in panels:
-        sidecar = analysis_dir / panel / "observed.json"
-        archive = analysis_dir / panel / "observed.npz"
+        result_directory = analysis_dir / PANEL_ANALYSES[panel]
+        sidecar = result_directory / "observed.json"
+        archive = result_directory / "observed.npz"
         if not sidecar.exists() or not archive.exists():
             return "synthetic"
         metadata = json.loads(sidecar.read_text())
@@ -96,7 +98,10 @@ def _load_or_synthesize(
     """Load compact real arrays or create deterministic schema-compatible data."""
     if context.data_mode == "real" and context.analysis_dir is not None:
         with np.load(
-            context.analysis_dir / panel / "observed.npz", allow_pickle=False
+            context.analysis_dir
+            / PANEL_ANALYSES[panel]
+            / "observed.npz",
+            allow_pickle=False,
         ) as archive:
             arrays = {
                 name: np.asarray(archive[name])
@@ -118,7 +123,7 @@ def _validate_render_arrays(
     panel: str, arrays: dict[str, np.ndarray]
 ) -> None:
     """Reject real bundles that are complete scientifically but not render-ready."""
-    required = PANEL1_RENDER_ARRAYS if panel == "panel1" else ()
+    required = FEATURE_MODULATION_RENDER_ARRAYS if panel == "panel1" else ()
     missing = sorted(set(required) - arrays.keys())
     if missing:
         raise ValueError(f"real {panel} bundle lacks render-ready arrays: {missing}")
@@ -600,8 +605,16 @@ def _save_figure(
         "analysis_id": context.analysis_id,
         "inputs": (
             [
-                str(context.analysis_dir / panel / "observed.npz"),
-                str(context.analysis_dir / panel / "observed.json"),
+                str(
+                    context.analysis_dir
+                    / PANEL_ANALYSES[panel]
+                    / "observed.npz"
+                ),
+                str(
+                    context.analysis_dir
+                    / PANEL_ANALYSES[panel]
+                    / "observed.json"
+                ),
             ]
             if context.analysis_dir
             else []

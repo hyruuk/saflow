@@ -1,4 +1,4 @@
-"""Run one synchronized three-model Panel 2 permutation chunk."""
+"""Run one synchronized three-model multifeature-decoding analysis permutation chunk."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from code.classification.multifeature_scientific import (
     run_primary_analysis,
 )
 from code.analysis.chunks import derive_chunk_seed
-from code.analysis.contracts import PANEL23_FEATURES
+from code.analysis.contracts import CORRECTED_FEATURES
 from code.analysis.labels import (
     LABEL_IN,
     LABEL_OUT,
@@ -24,7 +24,7 @@ from code.analysis.labels import (
     shift_and_rebuild_labels,
     valid_circular_offsets,
 )
-from code.analysis.real_inputs import RealFigure3Inputs, load_real_inputs
+from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.result_io import write_result_bundle
 from code.utils.config import load_config
 
@@ -42,9 +42,9 @@ def run_chunk(args: argparse.Namespace) -> Path:
         args.chunk_index,
     ):
         return directory
-    panel_analysis = config.get("panel_analysis", {})
-    total = int(panel_analysis.get("decoding_permutations", 1_000))
-    size = int(panel_analysis.get("decoding_chunk_size", 25))
+    analysis_workflow = config.get("analysis_workflow", {})
+    total = int(analysis_workflow.get("decoding_permutations", 1_000))
+    size = int(analysis_workflow.get("decoding_chunk_size", 25))
     start = args.chunk_index * size
     stop = min(start + size, total)
     if start >= total:
@@ -53,19 +53,19 @@ def run_chunk(args: argparse.Namespace) -> Path:
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     inputs = load_real_inputs(config, subjects, runs)
     seed = derive_chunk_seed(
-        args.analysis_id, "panel2", "decoding_families", args.chunk_index
+        args.analysis_id, "multifeature_decoding", "decoding_families", args.chunk_index
     )
     result = _run_permutations(
         inputs,
         stop - start,
         seed,
-        int(panel_analysis.get("minimum_circular_offset", 24)),
-        _nested_config(panel_analysis),
+        int(analysis_workflow.get("minimum_circular_offset", 24)),
+        _nested_config(analysis_workflow),
     )
     result.update(
         {
             "model_order": MODEL_ORDER,
-            "feature_order": PANEL23_FEATURES,
+            "feature_order": CORRECTED_FEATURES,
             "parcel_order": inputs.parcel_order,
             "permutation_interval": np.asarray([start, stop]),
             "chunk_index": args.chunk_index,
@@ -76,7 +76,7 @@ def run_chunk(args: argparse.Namespace) -> Path:
     provenance = {
         "analysis_id": args.analysis_id,
         "data_mode": "real",
-        "node": "panel2_permutation_chunks",
+        "node": "multifeature_decoding_permutations",
         "cell_index": args.cell_index,
         "git": analysis["git"],
         "config_hash": analysis["config_hash"],
@@ -91,10 +91,10 @@ def run_chunk(args: argparse.Namespace) -> Path:
 
 
 def _chunk_directory(analysis_dir: Path, chunk_index: int) -> Path:
-    """Return one immutable Panel 2 permutation chunk directory."""
+    """Return one immutable multifeature-decoding analysis permutation chunk directory."""
     return (
         analysis_dir
-        / "panel2"
+        / "multifeature_decoding"
         / "partials"
         / "permutations"
         / f"chunk-{chunk_index:04d}"
@@ -124,7 +124,7 @@ def _compatible_chunk_exists(
 
 
 def _run_permutations(
-    inputs: RealFigure3Inputs,
+    inputs: AnalysisInputs,
     count: int,
     seed: int,
     minimum_offset: int,
@@ -132,7 +132,7 @@ def _run_permutations(
 ) -> dict[str, np.ndarray]:
     """Fit all three null models with synchronized permutation indices."""
     joint = np.full((count, 3), np.nan)
-    standalone = np.full((count, 3, len(PANEL23_FEATURES)), np.nan)
+    standalone = np.full((count, 3, len(CORRECTED_FEATURES)), np.nan)
     feature = np.full_like(standalone, np.nan)
     parcel = np.full((count, 3, len(inputs.parcel_order)), np.nan)
     failures = np.zeros((count, 3), dtype=bool)
@@ -187,7 +187,7 @@ def _run_permutations(
 
 
 def _shift_all_runs(
-    inputs: RealFigure3Inputs,
+    inputs: AnalysisInputs,
     minimum_offset: int,
     generator: np.random.Generator,
 ) -> np.ndarray:
@@ -207,7 +207,7 @@ def _shift_all_runs(
 
 
 def _fit_null_model(
-    inputs: RealFigure3Inputs,
+    inputs: AnalysisInputs,
     states: np.ndarray,
     outcomes: np.ndarray,
     model: str,
@@ -258,7 +258,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():
@@ -267,7 +267,7 @@ def _analysis_directory(
 
 
 def main() -> None:
-    """Run one synchronized Panel 2 permutation chunk."""
+    """Run one synchronized multifeature-decoding analysis permutation chunk."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--analysis-id", required=True)

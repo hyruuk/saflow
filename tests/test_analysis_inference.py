@@ -22,10 +22,10 @@ from code.analysis.networks import (
 from code.analysis.labels import permute_outcomes_within_run_state
 from code.analysis.decoding import DecodingConfig
 from code.analysis.workers import (
-    compute_panel1_statistics,
-    compute_panel2_models,
-    compute_panel3_modulation,
-    compute_panel3_coupling,
+    compute_feature_modulation_statistics,
+    compute_multifeature_models,
+    compute_network_modulation,
+    compute_network_coupling,
     compute_mixed_effects_sensitivity,
 )
 from code.analysis.synthetic_phase_c import run_synthetic_phase_c
@@ -40,7 +40,7 @@ from code.classification.multifeature_scientific import NestedRidgeConfig
 def _specs():
     return build_chunk_specs(
         analysis_id="analysis-20260102T030405Z-gabc-c123456789abc",
-        endpoint="panel2",
+        endpoint="multifeature_decoding",
         family="features",
         n_permutations=9,
         chunk_size=4,
@@ -56,7 +56,7 @@ def test_chunk_seeds_and_intervals_are_deterministic():
     assert first == second
     assert [(item.start, item.stop) for item in first] == [(0, 4), (4, 8), (8, 9)]
     assert first[0].seed == derive_chunk_seed(
-        first[0].analysis_id, "panel2", "features", 0
+        first[0].analysis_id, "multifeature_decoding", "features", 0
     )
 
 
@@ -125,7 +125,7 @@ def test_panel1_uses_subject_paired_out_minus_in_and_per_feature_fdr():
     inside = np.zeros((6, 2, 4))
     outside = inside.copy()
     outside[:, 0, 0] = np.arange(1, 7)
-    result = compute_panel1_statistics(
+    result = compute_feature_modulation_statistics(
         inside, outside, feature_order=("raw_theta", "exponent")
     )
     assert result["contrast"] == "OUT_minus_IN"
@@ -149,7 +149,7 @@ def _decoding_fixture():
 
 def test_panel2_fits_three_prespecified_models_without_leakage():
     tensor, states, outcomes, subjects = _decoding_fixture()
-    result = compute_panel2_models(
+    result = compute_multifeature_models(
         tensor,
         states,
         outcomes,
@@ -183,7 +183,7 @@ def test_panel3_aggregates_complete_subjects_and_all_contrasts():
     )
     values = generator.normal(size=(len(subjects), 7, 2))
     values[cells == "OUT_commission_error"] += 1.0
-    result = compute_panel3_modulation(
+    result = compute_network_modulation(
         values,
         cells,
         subjects,
@@ -202,7 +202,7 @@ def test_panel3_aggregates_complete_subjects_and_all_contrasts():
     )
 
 
-def test_panel3_coupling_is_within_run_fisher_z_and_complete_case():
+def test_network_coupling_is_within_run_fisher_z_and_complete_case():
     generator = np.random.default_rng(18)
     subjects = np.repeat(np.arange(3), 4 * 12)
     cells = np.tile(np.repeat(CELL_ORDER, 12), 3)
@@ -212,7 +212,7 @@ def test_panel3_coupling_is_within_run_fisher_z_and_complete_case():
     )
     values = generator.normal(size=(len(subjects), 4, 2))
     values[:, 2:] = values[:, :2] + generator.normal(0, 0.1, size=values[:, 2:].shape)
-    result = compute_panel3_coupling(
+    result = compute_network_coupling(
         values,
         cells,
         subjects,
@@ -261,10 +261,10 @@ def test_synthetic_phase_c_runs_all_panels_and_writes_immutable_chunks(
 ):
     manifest = run_synthetic_phase_c(tmp_path / "analysis", seed=13)
     assert '"status": "complete"' in manifest.read_text()
-    for panel in ("panel1", "panel2", "panel3"):
+    for panel in ("feature_modulation", "multifeature_decoding", "network_dynamics"):
         assert (tmp_path / "analysis" / panel / "observed.npz").exists()
         assert (tmp_path / "analysis" / panel / "observed.json").exists()
-    assert len(list((tmp_path / "analysis" / "panel2" / "chunks").glob("*.npz"))) == 3
+    assert len(list((tmp_path / "analysis" / "multifeature_decoding" / "chunks").glob("*.npz"))) == 3
 
 
 def test_synchronized_decoding_chunk_and_three_family_correction():

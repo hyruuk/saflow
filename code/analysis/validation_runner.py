@@ -1,4 +1,4 @@
-"""Validate complete sensor or Schaefer feature barriers for Panel analysis."""
+"""Validate complete sensor or Schaefer feature barriers for Saflow analysis."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def validate_feature_barrier(
 def _validate_sensor_recording(
     config: dict, subject: str, run: str
 ) -> None:
-    """Validate all three panel-analysis sensor feature bundles for one recording."""
+    """Validate all three scientific sensor feature bundles for one recording."""
     root = Path(config["paths"]["features"])
     directories = (
         ("welch_psds_sensor", {"psds", "freqs", "trial_metadata", "ch_names"}),

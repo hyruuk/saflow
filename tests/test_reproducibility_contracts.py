@@ -41,9 +41,9 @@ def test_config_rejects_knee_mode(tmp_path: Path) -> None:
         validate_config(config)
 
 
-def test_panel_analysis_config_requires_exact_divisible_chunks(tmp_path: Path) -> None:
+def test_analysis_workflow_config_requires_exact_divisible_chunks(tmp_path: Path) -> None:
     config = load_template_config(tmp_path)
-    config["panel_analysis"]["decoding_chunk_size"] = 33
+    config["analysis_workflow"]["decoding_chunk_size"] = 33
 
     with pytest.raises(ConfigurationError, match="must divide"):
         validate_config(config)
@@ -60,9 +60,9 @@ def test_legacy_submission_limit_is_accepted_and_scheduler_clamps_it(
 
 def test_legacy_figure3_config_key_has_actionable_error(tmp_path: Path) -> None:
     config = load_template_config(tmp_path)
-    config["figure3"] = config.pop("panel_analysis")
+    config["figure3"] = config.pop("analysis_workflow")
 
-    with pytest.raises(ConfigurationError, match="renamed to 'panel_analysis'"):
+    with pytest.raises(ConfigurationError, match="renamed to 'analysis_workflow'"):
         validate_config(config)
 
 

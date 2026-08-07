@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Reserved `panel1`/`panel2`/`panel3` naming for final publication rendering.
+  Scientific workers, scheduler nodes, result directories, exports, validation,
+  provenance, and configuration now use `feature_modulation`,
+  `multifeature_decoding`, and `network_dynamics`.
+- Renamed the shared configuration section to `analysis_workflow`; existing
+  local `panel_analysis` sections are migrated in memory for compatibility.
+
 All notable changes to saflow will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -11,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Replaced the misleading `figure3`/`paper_panels` infrastructure with the
-  neutral `code.analysis` package and `panel_analysis` configuration scope,
+  neutral `code.analysis` package and `analysis_workflow` configuration scope,
   including IDs, tasks, logs, SLURM jobs, templates, processed roots, tests,
   schemas, and methods documentation.
 - Renamed the complete endpoint to `pipeline.all`, made SLURM opt-in through

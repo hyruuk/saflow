@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from code.analysis.contracts import PANEL1_FEATURES
+from code.analysis.contracts import FEATURE_MODULATION_FEATURES
 from code.utils.config import load_config
 
 
@@ -15,7 +15,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
     """Run sensor diagnostics, correct/lapse variants, and complexity sidekicks."""
     config = load_config(args.config)
     invoke = str(Path(config["paths"]["venv"]) / "bin" / "invoke")
-    feature_value = " ".join(PANEL1_FEATURES) + " complexity"
+    feature_value = " ".join(FEATURE_MODULATION_FEATURES) + " complexity"
     commands = []
     for space, trial_types in (
         ("sensor", ("alltrials", "correct", "lapse")),
@@ -74,7 +74,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
         if args.analysis_root
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
     output = root / args.analysis_id / "exploratory" / "sidekick_manifest.json"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +85,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
                 "status": "complete",
                 "classification": "exploratory only",
                 "primary_masks_replaced": False,
-                "features": [*PANEL1_FEATURES, "complexity shortcut"],
+                "features": [*FEATURE_MODULATION_FEATURES, "complexity shortcut"],
                 "spaces": ["sensor", "schaefer_400"],
                 "trial_types": ["alltrials sensor diagnostic", "correct", "lapse"],
                 "network_restricted_decoding": "exploratory only",

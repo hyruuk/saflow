@@ -58,7 +58,7 @@ def test_synthetic_cannot_overwrite_real_but_real_can_replace_synthetic(
 
 def test_real_mode_requires_complete_real_bundle(tmp_path: Path):
     analysis_root = tmp_path / "analyses"
-    bundle = analysis_root / "analysis-1" / "panel1"
+    bundle = analysis_root / "analysis-1" / "feature_modulation"
     bundle.mkdir(parents=True)
     frequency = np.linspace(2, 120, 24)
     np.savez_compressed(

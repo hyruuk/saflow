@@ -1,4 +1,4 @@
-"""Blinded input validation and cell-count reporting for panel analysis."""
+"""Blinded input validation and cell-count reporting for analysis."""
 
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ def _validate_feature_alignment(
     reference_names: list[str] | None = None
     for path in paths.values():
         if path is None:
-            raise ValueError("panel-analysis feature family is missing")
+            raise ValueError("analysis feature family is missing")
         metadata, names = _load_feature_metadata(path)
         indices = np.asarray(list(metadata["included_epoch_indices"]), dtype=int)
         keys = build_alignment_keys(

@@ -33,12 +33,12 @@ the resource class, array size, stable dry-run job identifier, and typed
 dependencies for every retained node. `aftercorr` edges are rejected unless
 both arrays have the same subject/run index mapping.
 
-Scientific node cells use their actual dimensions: Panel 1 features and
-feature×chunk intervals, Panel 2 models and synchronized decoding chunks, and
-Panel 3 features. They never reuse the subject/run array mapping. Scheduler
+Scientific node cells use their actual dimensions: feature-modulation features and
+feature×chunk intervals, multifeature-decoding models and synchronized decoding chunks, and
+network-dynamics features. They never reuse the subject/run array mapping. Scheduler
 cell status JSON records are stored under `manifests/cells/<node>/`.
 
-Panel 1 render bundles must provide raw-PSD modulation and decoding arrays,
+Final feature-modulation panel render bundles must provide raw-PSD modulation and decoding arrays,
 IN/OUT raw, aperiodic, corrected, and periodic spectra, FOOOF modulation and
 decoding arrays, and corrected-PSD modulation and decoding arrays. This
 preserves the established narrative:

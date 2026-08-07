@@ -1,8 +1,8 @@
 # Saflow Pipeline Task Reference
 
-## Corrected panel-analysis workflow
+## Corrected analysis workflow
 
-Panel analyses use immutable `analysis-<UTC>-g<git>-c<config>` directories and distinct
+Scientific analyses use immutable `analysis-<UTC>-g<git>-c<config>` directories and distinct
 tasks, leaving all legacy commands unchanged:
 
 ```bash
@@ -17,9 +17,10 @@ invoke analysis.export --analysis-id=analysis-... --analysis-root=PATH
 invoke viz.panels --analysis-id=analysis-... [--analysis-root=reports/exports]
 ```
 
-`alltrials` is Panel 1 confirmatory; broad `correct` and `lapse` selectors are
-exploratory. Panel 1 includes raw PSD, FOOOF, and corrected PSD. Panels 2 and 3
-exclude raw PSD. All corrected PSD families use the canonical seven bands
+`alltrials` is feature-modulation confirmatory; broad `correct` and `lapse` selectors are
+exploratory. The feature-modulation analysis includes raw PSD, FOOOF, and
+corrected PSD. Multifeature decoding and network dynamics exclude raw PSD.
+All corrected PSD families use the canonical seven bands
 from Theta through Gamma 3; Delta is excluded. Complexity is an exploratory
 sidekick. Compact exports omit subject-level features and resumable chunks.
 
@@ -238,7 +239,7 @@ permutation chunks from small schema-compatible synthetic data.
 
 ```bash
 invoke analysis.synthetic \
-  --output-dir=/tmp/saflow-panel-analysis --seed=17
+  --output-dir=/tmp/saflow-analysis --seed=17
 ```
 
 This checks inference I/O and resumability only; it is not publishable analysis.
@@ -274,7 +275,7 @@ executes the requested PSD, FOOOF/corrected-PSD, and exploratory complexity
 commands sequentially. Each status sidecar records every internal step and
 stops at the first failure.
 
-Panel 1 and Panel 2 scheduler cells each execute five deterministic immutable
+Feature-modulation and multifeature-decoding scheduler cells each execute five deterministic immutable
 permutation chunks. Individual chunks retain their original intervals, seeds,
 and result bundles; retries reuse compatible completed chunks.
 

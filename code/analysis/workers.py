@@ -1,4 +1,4 @@
-"""Observed scientific workers for the three panel analysis."""
+"""Observed scientific workers for the three analysis."""
 
 from __future__ import annotations
 
@@ -27,23 +27,23 @@ from code.analysis.networks import (
     synchronized_sign_flip_test,
 )
 
-PANEL2_MODELS = ("state", "lapse_within_IN", "lapse_within_OUT")
+MULTIFEATURE_MODELS = ("state", "lapse_within_IN", "lapse_within_OUT")
 
 
-def compute_panel1_statistics(
+def compute_feature_modulation_statistics(
     in_values: np.ndarray,
     out_values: np.ndarray,
     *,
     feature_order: Sequence[str],
     alpha: float = 0.05,
 ) -> dict[str, object]:
-    """Compute subject-paired Panel 1 maps with per-feature BH correction."""
+    """Compute subject-paired feature-modulation analysis maps with per-feature BH correction."""
     inside = np.asarray(in_values, dtype=float)
     outside = np.asarray(out_values, dtype=float)
     if inside.shape != outside.shape or inside.ndim != 3:
-        raise ValueError("Panel 1 values must align as subjects x features x parcels")
+        raise ValueError("feature-modulation analysis values must align as subjects x features x parcels")
     if inside.shape[1] != len(feature_order):
-        raise ValueError("feature order does not match Panel 1 tensor")
+        raise ValueError("feature order does not match feature-modulation analysis tensor")
     differences = outside - inside
     tests = ttest_1samp(differences, 0.0, axis=0, nan_policy="omit")
     corrected = np.ones_like(tests.pvalue)
@@ -76,7 +76,7 @@ def compute_panel1_statistics(
     }
 
 
-def compute_panel2_models(
+def compute_multifeature_models(
     feature_tensor: np.ndarray,
     states: np.ndarray,
     outcomes: np.ndarray,
@@ -86,7 +86,7 @@ def compute_panel2_models(
     parcel_order: Sequence[str],
     config: DecodingConfig,
 ) -> dict[str, object]:
-    """Fit the three prespecified nested Panel 2 models."""
+    """Fit the three prespecified nested multifeature-decoding analysis models."""
     tensor = np.asarray(feature_tensor, dtype=float)
     if tensor.ndim != 3:
         raise ValueError("feature tensor must be windows x parcels x features")
@@ -96,7 +96,7 @@ def compute_panel2_models(
     outcome_values = np.asarray(outcomes)
     subject_values = np.asarray(subjects)
     models = {
-        name: compute_panel2_model(
+        name: compute_multifeature_model(
             tensor,
             state_values,
             outcome_values,
@@ -104,18 +104,18 @@ def compute_panel2_models(
             model=name,
             config=config,
         )
-        for name in PANEL2_MODELS
+        for name in MULTIFEATURE_MODELS
     }
     return {
         "models": models,
-        "model_order": PANEL2_MODELS,
+        "model_order": MULTIFEATURE_MODELS,
         "feature_order": tuple(feature_order),
         "parcel_order": tuple(parcel_order),
         "decoding_config": asdict(config),
     }
 
 
-def compute_panel2_model(
+def compute_multifeature_model(
     feature_tensor: np.ndarray,
     states: np.ndarray,
     outcomes: np.ndarray,
@@ -124,9 +124,9 @@ def compute_panel2_model(
     model: str,
     config: DecodingConfig,
 ) -> dict[str, object]:
-    """Fit one prespecified Panel 2 model for independent array execution."""
-    if model not in PANEL2_MODELS:
-        raise ValueError(f"unknown Panel 2 model: {model}")
+    """Fit one prespecified multifeature-decoding analysis model for independent array execution."""
+    if model not in MULTIFEATURE_MODELS:
+        raise ValueError(f"unknown multifeature-decoding analysis model: {model}")
     tensor = np.asarray(feature_tensor, dtype=float)
     state_values = np.asarray(states)
     outcome_values = np.asarray(outcomes)
@@ -137,8 +137,8 @@ def compute_panel2_model(
         == len(outcome_values)
         == len(subject_values)
     ):
-        raise ValueError("Panel 2 model inputs must align")
-    selector = _panel2_selector(model, state_values, outcome_values)
+        raise ValueError("multifeature-decoding analysis model inputs must align")
+    selector = _multifeature_selector(model, state_values, outcome_values)
     labels = (
         (state_values[selector] == "OUT").astype(int)
         if model == "state"
@@ -164,7 +164,7 @@ def compute_panel2_model(
     }
 
 
-def _panel2_selector(
+def _multifeature_selector(
     model: str, states: np.ndarray, outcomes: np.ndarray
 ) -> np.ndarray:
     """Return the prespecified observation selector for one decoding model."""
@@ -176,7 +176,7 @@ def _panel2_selector(
     return (states == "OUT") & rare
 
 
-def compute_panel3_modulation(
+def compute_network_modulation(
     parcel_values: np.ndarray,
     cell_labels: np.ndarray,
     subjects: np.ndarray,
@@ -211,7 +211,7 @@ def compute_panel3_modulation(
                 )
     complete, report = require_complete_cells(counts, minimum_windows)
     if complete.sum() < 2:
-        raise ValueError("Panel 3 primary modulation requires at least two complete subjects")
+        raise ValueError("network-dynamics analysis primary modulation requires at least two complete subjects")
     contrasts = compute_factorial_contrasts(network_cells[complete])
     flattened = {
         name: contrast.reshape(complete.sum(), -1)
@@ -231,7 +231,7 @@ def compute_panel3_modulation(
     }
 
 
-def compute_panel3_coupling(
+def compute_network_coupling(
     parcel_values: np.ndarray,
     cell_labels: np.ndarray,
     subjects: np.ndarray,
@@ -294,7 +294,7 @@ def compute_panel3_coupling(
         if not included and report[index]["reason"] is None:
             report[index]["reason"] = "non-estimable within-run DMN-DAN association"
     if complete.sum() < 2:
-        raise ValueError("Panel 3 coupling requires at least two complete subjects")
+        raise ValueError("network-dynamics analysis coupling requires at least two complete subjects")
     contrasts = compute_factorial_contrasts(coupling[complete])
     inference = synchronized_sign_flip_test(
         contrasts, n_permutations=n_permutations, seed=seed

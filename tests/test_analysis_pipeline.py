@@ -35,7 +35,7 @@ def test_full_plan_bounds_features_and_keeps_dependency_barriers():
     bounded = bound_execution_plan(raw, stop_after="features")
     names = {node["name"] for node in bounded["nodes"]}
     assert "schaefer_400_feature_validator" in names
-    assert "panel1_statistics" not in names
+    assert "feature_modulation_statistics" not in names
     assert {edge["dependency"] for edge in bounded["edges"]} == {
         "afterok",
         "aftercorr",
@@ -64,10 +64,10 @@ def test_panel_branches_are_concurrent_after_validated_schaefer_inputs():
     # branches have no artificial edges between one another.
     assert not workers
     names = {node["name"] for node in plan["nodes"]}
-    assert {"panel1_statistics", "panel2_observed_models", "panel3_coupling"} <= names
+    assert {"feature_modulation_statistics", "multifeature_decoding_models", "network_coupling"} <= names
     assert not any(
-        edge["upstream"].startswith("panel1")
-        and edge["downstream"].startswith(("panel2", "panel3"))
+        edge["upstream"].startswith("feature_modulation")
+        and edge["downstream"].startswith(("multifeature_decoding", "network_dynamics"))
         for edge in plan["edges"]
     )
 
@@ -107,22 +107,22 @@ def test_scientific_arrays_use_feature_model_and_chunk_cells():
         stop_after="analyses",
     )
     cells = plan["node_cells"]
-    assert len(cells["panel1_statistics"]) == 17
-    assert len(cells["panel1_decoding_permutations"]) == 17
-    assert cells["panel1_decoding_permutations"][0]["chunk_indices"] == [0, 1]
-    assert [cell["model"] for cell in cells["panel2_observed_models"]] == [
+    assert len(cells["feature_modulation_statistics"]) == 17
+    assert len(cells["feature_modulation_decoding_permutations"]) == 17
+    assert cells["feature_modulation_decoding_permutations"][0]["chunk_indices"] == [0, 1]
+    assert [cell["model"] for cell in cells["multifeature_decoding_models"]] == [
         "state",
         "lapse_within_IN",
         "lapse_within_OUT",
     ]
-    assert len(cells["panel2_permutation_chunks"]) == 1
-    assert cells["panel2_permutation_chunks"][0]["chunk_indices"] == [0, 1, 2]
-    assert len(cells["panel3_factorial_maps"]) == 10
-    assert all("subject" not in cell for cell in cells["panel3_coupling"])
+    assert len(cells["multifeature_decoding_permutations"]) == 1
+    assert cells["multifeature_decoding_permutations"][0]["chunk_indices"] == [0, 1, 2]
+    assert len(cells["network_factorial_modulation"]) == 10
+    assert all("subject" not in cell for cell in cells["network_coupling"])
 
 
 def test_resume_reason_selects_only_invalid_cells(tmp_path: Path):
-    expected = {"node": "panel2_permutation_chunks", "cell_index": 3}
+    expected = {"node": "multifeature_decoding_permutations", "cell_index": 3}
     provenance = {
         "analysis_id": "analysis",
         "config_hash": "config",
@@ -153,12 +153,12 @@ def test_resume_reason_selects_only_invalid_cells(tmp_path: Path):
 def test_compact_export_omits_chunks_and_writes_hashed_table(tmp_path: Path):
     analysis_id = "analysis-20260102T030405Z-gabc-c123456789abc"
     source = tmp_path / "source" / analysis_id
-    (source / "panel1" / "chunks").mkdir(parents=True)
-    (source / "panel1" / "observed.json").write_text(
+    (source / "feature_modulation" / "chunks").mkdir(parents=True)
+    (source / "feature_modulation" / "observed.json").write_text(
         '{"summary": {"metrics": {"auc": 0.75}}}'
     )
-    (source / "panel1" / "observed.npz").write_bytes(b"compact")
-    (source / "panel1" / "chunks" / "private.npz").write_bytes(b"private")
+    (source / "feature_modulation" / "observed.npz").write_bytes(b"compact")
+    (source / "feature_modulation" / "chunks" / "private.npz").write_bytes(b"private")
     (source / "preflight_report.json").write_text("{}")
     destination = tmp_path / "export"
     export_analysis(
@@ -168,9 +168,9 @@ def test_compact_export_omits_chunks_and_writes_hashed_table(tmp_path: Path):
             destination=str(destination),
         )
     )
-    assert not (destination / "panel1" / "chunks").exists()
+    assert not (destination / "feature_modulation" / "chunks").exists()
     table = destination / "tables" / "observed_summary.csv"
-    assert "panel1,metrics.auc,0.75" in table.read_text()
+    assert "feature_modulation,metrics.auc,0.75" in table.read_text()
     manifest = json.loads((destination / "export_manifest.json").read_text())
     assert not manifest["contains_subject_feature_matrices"]
     assert all("sha256" in item for item in manifest["files"])
@@ -317,9 +317,9 @@ def test_four_subject_pipeline_fits_in_one_complete_submission():
     assert len(ready) == 269
     assert not deferred
     assert {
-        "panel1_aggregator",
-        "panel2_aggregator",
-        "panel3_aggregator",
+        "feature_modulation_results",
+        "multifeature_decoding_results",
+        "network_dynamics_results",
     } <= {cell["node"] for cell in ready}
 
 

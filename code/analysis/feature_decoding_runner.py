@@ -1,4 +1,4 @@
-"""Run one synchronized Panel 1 decoding permutation chunk."""
+"""Run one synchronized feature-modulation analysis decoding permutation chunk."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from code.classification.run_classification import (
     run_univariate_with_tmax,
 )
 from code.analysis.chunks import derive_chunk_seed
-from code.analysis.contracts import PANEL1_FEATURES
+from code.analysis.contracts import FEATURE_MODULATION_FEATURES
 from code.analysis.real_inputs import load_real_inputs
 from code.analysis.result_io import write_result_bundle
 from code.utils.config import load_config
@@ -22,8 +22,8 @@ from code.utils.config import load_config
 
 def run_chunk(args: argparse.Namespace) -> Path:
     """Run one feature × permutation-interval decoding cell."""
-    if args.feature not in PANEL1_FEATURES:
-        raise ValueError(f"feature must be one of {PANEL1_FEATURES}")
+    if args.feature not in FEATURE_MODULATION_FEATURES:
+        raise ValueError(f"feature must be one of {FEATURE_MODULATION_FEATURES}")
     config = load_config(args.config)
     analysis_dir = _analysis_directory(config, args.analysis_root, args.analysis_id)
     directory = _chunk_directory(
@@ -38,9 +38,9 @@ def run_chunk(args: argparse.Namespace) -> Path:
         args.chunk_index,
     ):
         return directory
-    panel_analysis = config.get("panel_analysis", {})
-    total = int(panel_analysis.get("map_permutations", 10_000))
-    size = int(panel_analysis.get("map_chunk_size", 250))
+    analysis_workflow = config.get("analysis_workflow", {})
+    total = int(analysis_workflow.get("map_permutations", 10_000))
+    size = int(analysis_workflow.get("map_chunk_size", 250))
     start = args.chunk_index * size
     stop = min(start + size, total)
     if start >= total:
@@ -52,13 +52,13 @@ def run_chunk(args: argparse.Namespace) -> Path:
     labels = (inputs.states[valid] == "OUT").astype(int)
     groups = inputs.subjects[valid]
     if np.unique(groups).size < 3:
-        raise ValueError("Panel 1 nested subject validation requires >= 3 subjects")
-    index = PANEL1_FEATURES.index(args.feature)
+        raise ValueError("feature-modulation analysis nested subject validation requires >= 3 subjects")
+    index = FEATURE_MODULATION_FEATURES.index(args.feature)
     seed = derive_chunk_seed(
-        args.analysis_id, "panel1", "decoding", args.chunk_index
+        args.analysis_id, "feature_modulation", "decoding", args.chunk_index
     )
     result = run_univariate_with_tmax(
-        inputs.panel1_tensor[valid, :, index],
+        inputs.feature_modulation_tensor[valid, :, index],
         labels,
         groups,
         clf_factory=lambda: get_classifier("logistic"),
@@ -81,7 +81,7 @@ def run_chunk(args: argparse.Namespace) -> Path:
     provenance = {
         "analysis_id": args.analysis_id,
         "data_mode": "real",
-        "node": "panel1_decoding_permutations",
+        "node": "feature_modulation_decoding_permutations",
         "cell_index": args.cell_index,
         "git": analysis["git"],
         "config_hash": analysis["config_hash"],
@@ -101,10 +101,10 @@ def _chunk_directory(
     feature: str,
     chunk_index: int,
 ) -> Path:
-    """Return one immutable Panel 1 permutation chunk directory."""
+    """Return one immutable feature-modulation analysis permutation chunk directory."""
     return (
         analysis_dir
-        / "panel1"
+        / "feature_modulation"
         / "partials"
         / "decoding"
         / feature
@@ -148,7 +148,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():
@@ -157,7 +157,7 @@ def _analysis_directory(
 
 
 def main() -> None:
-    """Run one Panel 1 decoding chunk from scheduler arguments."""
+    """Run one feature-modulation analysis decoding chunk from scheduler arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--analysis-id", required=True)

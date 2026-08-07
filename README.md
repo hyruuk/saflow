@@ -1,10 +1,10 @@
 # Saflow: MEG Analysis Pipeline for GradCPT Task
 
-## Corrected panel-analysis pipeline
+## Corrected analysis pipeline
 
-The publication workflow is separate and immutable. It rebuilds strict
-eight-trial labels from reflected-boundary filtered VTC and generates three
-final panels from compact exports. The authoritative frequency policy contains
+The corrected workflow is immutable. It rebuilds strict eight-trial labels
+from reflected-boundary filtered VTC, runs the scientific analyses, and
+generates three final panels from compact exports. The authoritative frequency policy contains
 Theta through Gamma 3; Delta and complexity are excluded from the primary branch.
 
 ```bash
@@ -16,7 +16,7 @@ invoke pipeline.resume --slurm --analysis-id=analysis-...
 invoke viz.panels --panel=all --analysis-id=analysis-...
 ```
 
-`pipeline.all` creates an immutable panel analysis, renders every cell script,
+`pipeline.all` creates an immutable analysis, renders every cell script,
 and executes it locally unless `--slurm` is passed explicitly. SLURM execution
 counts array elements and existing queued/running jobs, and never lets the
 total exceed the 900-job Rorqual safety ceiling.
@@ -419,7 +419,7 @@ invoke pipeline.preprocess --subject=04 --runs="02" --crop=60 --skip-report
 
 # Exercise all three scientific workers and resumable chunks locally
 invoke analysis.synthetic \
-  --output-dir=/tmp/saflow-panel-analysis
+  --output-dir=/tmp/saflow-analysis
 
 # Inspect the complete raw-to-paper SLURM execution plan
 invoke pipeline.all --slurm --dry-run
@@ -441,7 +441,7 @@ invoke slurm.jobs --pattern=saflow_
 invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 
 # execution_plan.json includes commands, resources, job IDs, arrays, and dependencies.
-# Real Panel 1 rendering requires the complete A-J render-array contract;
+# Real Final feature-modulation panel rendering requires the complete A-J render-array contract;
 # incomplete map-only bundles fail instead of receiving synthetic filler.
 
 # 4. Preprocess all subjects on HPC (SLURM array job)

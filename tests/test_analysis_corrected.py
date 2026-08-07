@@ -8,8 +8,8 @@ import pytest
 
 from code.analysis.alignment import build_alignment_keys, require_exact_alignment, validate_schaefer_400
 from code.analysis.contracts import (
-    PANEL1_FEATURES,
-    PANEL23_FEATURES,
+    FEATURE_MODULATION_FEATURES,
+    CORRECTED_FEATURES,
     PANEL_SPECS,
     CANONICAL_BAND_KEYS,
     canonical_band_key,
@@ -120,7 +120,7 @@ def test_band_and_feature_contract_excludes_delta():
         "theta", "alpha", "lobeta", "hibeta", "gamma1", "gamma2", "gamma3"
     )
     assert canonical_band_key("low_beta") == "lobeta"
-    assert not any("delta" in feature for feature in (*PANEL1_FEATURES, *PANEL23_FEATURES))
+    assert not any("delta" in feature for feature in (*FEATURE_MODULATION_FEATURES, *CORRECTED_FEATURES))
     with pytest.raises(ValueError, match="not a canonical"):
         canonical_band_key("delta")
 
@@ -155,9 +155,9 @@ def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
     assert ("run_preprocessing", "run_source", "aftercorr") in edges
     assert ("run_source", "run_features", "aftercorr") in edges
     assert ("run_features", "schaefer_400_feature_validator", "afterany") in edges
-    assert ("schaefer_400_feature_validator", "panel1_statistics", "afterok") in edges
-    assert ("panel1_validator", "compact_export_tables_slides", "afterok") in edges
-    assert ("figure_composites", "analysis_audit", "afterok") in edges
+    assert ("schaefer_400_feature_validator", "feature_modulation_statistics", "afterok") in edges
+    assert ("feature_modulation_validator", "analysis_export", "afterok") in edges
+    assert ("panel_generation", "analysis_audit", "afterok") in edges
 
 
 def test_preflight_reads_corrected_events_and_exact_window_metadata(tmp_path: Path):

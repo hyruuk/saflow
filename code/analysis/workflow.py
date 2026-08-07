@@ -1,4 +1,4 @@
-"""Command-line orchestration for immutable corrected Panel analysis analyses."""
+"""Command-line orchestration for immutable corrected Saflow analysis analyses."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ import csv
 from pathlib import Path
 
 from code.analysis.contracts import (
-    PANEL1_FEATURES,
-    PANEL23_FEATURES,
+    FEATURE_MODULATION_FEATURES,
+    CORRECTED_FEATURES,
     PANEL_COMPONENTS,
     PANEL_SPECS,
+    PANEL_ANALYSES,
     frequency_band_manifest,
     schema_catalog,
 )
@@ -37,7 +38,7 @@ from code.analysis.slurm_execution import (
     execute_plan_locally,
     submit_execution_plan,
 )
-from code.analysis.panel_validator import validate_panel
+from code.analysis.result_validator import validate_analysis_result
 from code.utils.logging_config import setup_logging
 from code.utils.config import load_config
 
@@ -53,7 +54,7 @@ def _load_config(path: Path) -> dict:
 def _analysis_root(config: dict, override: str | None) -> Path:
     if override:
         return Path(override)
-    directory = config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+    directory = config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     return Path(config["paths"]["data_root"]) / "processed" / directory
 
 
@@ -69,9 +70,9 @@ def run_preflight(args: argparse.Namespace) -> Path:
         "trial_sets": ["alltrials", "correct", "lapse"],
         "primary_trial_set": "alltrials",
         "feature_families": {
-            "panel1": list(PANEL1_FEATURES),
-            "panel2": list(PANEL23_FEATURES),
-            "panel3": list(PANEL23_FEATURES),
+            "feature_modulation": list(FEATURE_MODULATION_FEATURES),
+            "multifeature_decoding": list(CORRECTED_FEATURES),
+            "network_dynamics": list(CORRECTED_FEATURES),
         },
         "frequency_bands": frequency_band_manifest(),
         "panels": PANEL_SPECS,
@@ -90,7 +91,7 @@ def run_preflight(args: argparse.Namespace) -> Path:
     (analysis_dir / "manifests" / "schemas.json").write_text(
         json.dumps(schema_catalog(), indent=2) + "\n"
     )
-    LOGGER.info("Panel analysis preflight initialized %s", analysis_dir)
+    LOGGER.info("Saflow analysis preflight initialized %s", analysis_dir)
     return analysis_dir
 
 
@@ -106,7 +107,7 @@ def run_analysis(args: argparse.Namespace) -> Path:
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
     preflight = analysis_dir / "preflight_report.json"
     if not preflight.exists() or json.loads(preflight.read_text()).get("status") != "passed":
-        raise RuntimeError("a passing panel_analysis-preflight report is required")
+        raise RuntimeError("a passing analysis_workflow-preflight report is required")
     manifest = {
         "analysis_id": args.analysis_id,
         "n_permutations": args.n_permutations,
@@ -133,7 +134,7 @@ def plan_execution(args: argparse.Namespace) -> Path:
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     spaces = args.spaces.split()
-    panel_analysis_config = config.get("panel_analysis", {})
+    analysis_workflow_config = config.get("analysis_workflow", {})
     manifest = build_execution_plan(
         args.analysis_id,
         subjects,
@@ -141,24 +142,24 @@ def plan_execution(args: argparse.Namespace) -> Path:
         spaces,
         include_exploratory=args.include_exploratory,
         map_chunk_count=_chunk_count(
-            panel_analysis_config,
+            analysis_workflow_config,
             "map_permutations",
             "map_chunk_size",
             10_000,
             250,
         ),
         decoding_chunk_count=_chunk_count(
-            panel_analysis_config,
+            analysis_workflow_config,
             "decoding_permutations",
             "decoding_chunk_size",
             1_000,
             25,
         ),
         map_chunks_per_job=int(
-            panel_analysis_config.get("map_chunks_per_job", 5)
+            analysis_workflow_config.get("map_chunks_per_job", 5)
         ),
         decoding_chunks_per_job=int(
-            panel_analysis_config.get("decoding_chunks_per_job", 5)
+            analysis_workflow_config.get("decoding_chunks_per_job", 5)
         ),
     )
     path = analysis_dir / "manifests" / "execution_plan.json"
@@ -181,7 +182,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         raise FileExistsError(f"immutable analysis already exists: {analysis_dir}")
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
-    panel_analysis_config = config.get("panel_analysis", {})
+    analysis_workflow_config = config.get("analysis_workflow", {})
     graph = build_execution_plan(
         analysis_id,
         subjects,
@@ -189,20 +190,20 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         args.spaces.split(),
         include_exploratory=args.include_exploratory,
         map_chunk_count=_chunk_count(
-            panel_analysis_config, "map_permutations", "map_chunk_size", 10_000, 250
+            analysis_workflow_config, "map_permutations", "map_chunk_size", 10_000, 250
         ),
         decoding_chunk_count=_chunk_count(
-            panel_analysis_config,
+            analysis_workflow_config,
             "decoding_permutations",
             "decoding_chunk_size",
             1_000,
             25,
         ),
         map_chunks_per_job=int(
-            panel_analysis_config.get("map_chunks_per_job", 5)
+            analysis_workflow_config.get("map_chunks_per_job", 5)
         ),
         decoding_chunks_per_job=int(
-            panel_analysis_config.get("decoding_chunks_per_job", 5)
+            analysis_workflow_config.get("decoding_chunks_per_job", 5)
         ),
     )
     graph = bound_execution_plan(
@@ -237,7 +238,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
     )
     analysis_resources = {
         **DEFAULT_ANALYSIS_RESOURCES,
-        **panel_analysis_config.get("resources", {}),
+        **analysis_workflow_config.get("resources", {}),
     }
     graph["submission_plan"] = build_submission_plan(
         graph,
@@ -566,7 +567,7 @@ def export_analysis(args: argparse.Namespace) -> Path:
     if destination.exists():
         raise FileExistsError(f"export destination exists: {destination}")
     if not (source / "preflight_report.json").exists():
-        raise ValueError("source is not a Panel analysis analysis")
+        raise ValueError("source is not a Saflow analysis analysis")
     destination.mkdir(parents=True)
     excluded = {"chunks", "partials", "subject_features", "inputs", "slurm"}
     copied = []
@@ -614,17 +615,17 @@ def export_analysis(args: argparse.Namespace) -> Path:
 def _write_compact_summary_table(destination: Path) -> Path:
     """Export scalar observed summaries without subject feature matrices."""
     rows = []
-    for panel in PANEL_SPECS:
-        path = destination / panel / "observed.json"
+    for analysis in PANEL_ANALYSES.values():
+        path = destination / analysis / "observed.json"
         if not path.exists():
             continue
         payload = json.loads(path.read_text())
         for key, value in _scalar_items(payload.get("summary", payload)):
-            rows.append({"panel": panel, "metric": key, "value": value})
+            rows.append({"analysis": analysis, "metric": key, "value": value})
     table = destination / "tables" / "observed_summary.csv"
     table.parent.mkdir(parents=True, exist_ok=True)
     with table.open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=("panel", "metric", "value"))
+        writer = csv.DictWriter(stream, fieldnames=("analysis", "metric", "value"))
         writer.writeheader()
         writer.writerows(rows)
     return table
@@ -654,12 +655,13 @@ def audit_analysis(args: argparse.Namespace) -> Path:
     findings = []
     modes = set()
     for panel, spec in PANEL_SPECS.items():
+        analysis = PANEL_ANALYSES[panel]
         try:
-            validate_panel(
+            validate_analysis_result(
                 args.config,
                 args.analysis_id,
                 str(_analysis_root(config, args.analysis_root)),
-                panel,
+                analysis,
             )
         except (FileNotFoundError, ValueError) as error:
             findings.append(
@@ -670,7 +672,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                     "reason": str(error),
                 }
             )
-        bundle = analysis_dir / panel / "observed.json"
+        bundle = analysis_dir / analysis / "observed.json"
         composite = reports_root / "figures" / "paper" / spec["composite_filename"]
         sidecar = composite.with_name(f"{composite.name}.json")
         for kind, path in (("bundle", bundle), ("composite", composite), ("sidecar", sidecar)):
@@ -737,12 +739,12 @@ def audit_analysis(args: argparse.Namespace) -> Path:
     path = analysis_dir / "analysis_audit.json"
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     if status != "passed":
-        raise RuntimeError(f"panel analysis audit failed; see {path}")
+        raise RuntimeError(f"analysis audit failed; see {path}")
     return path
 
 
 def inventory_legacy(args: argparse.Namespace) -> Path:
-    """Hash legacy Panel analysis outputs without moving, deleting, or modifying them."""
+    """Hash legacy Saflow analysis outputs without moving, deleting, or modifying them."""
     entries = []
     source = Path(args.source)
     for path in sorted(source.rglob("*")) if source.exists() else []:
@@ -757,7 +759,7 @@ def inventory_legacy(args: argparse.Namespace) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the Panel analysis workflow parser."""
+    """Build the Saflow analysis workflow parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser("preflight")
@@ -822,7 +824,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run the selected Panel analysis workflow command."""
+    """Run the selected Saflow analysis workflow command."""
     args = build_parser().parse_args()
     setup_logging("analysis_pipeline", log_file="analysis_pipeline.log",
                   config={"paths": {"logs": "logs"}, "logging": {"level": "INFO"}})

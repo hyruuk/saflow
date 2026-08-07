@@ -1,4 +1,4 @@
-"""Validate one complete real panel bundle before downstream rendering."""
+"""Validate one complete scientific result bundle before downstream rendering."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from pathlib import Path
 
 import numpy as np
 
-from code.analysis.contracts import PANEL1_RENDER_ARRAYS
+from code.analysis.contracts import FEATURE_MODULATION_RENDER_ARRAYS
 from code.utils.config import load_config
 
 REQUIRED_ARRAYS = {
-    "panel1": set(PANEL1_RENDER_ARRAYS)
+    "feature_modulation": set(FEATURE_MODULATION_RENDER_ARRAYS)
     | {
         "raw_psd_p_fdr",
         "fooof_p_fdr",
@@ -23,7 +23,7 @@ REQUIRED_ARRAYS = {
         "p_values_uncorrected",
         "p_values_fdr",
     },
-    "panel2": {
+    "multifeature_decoding": {
         "joint_auc",
         "standalone_feature_auc",
         "feature_contribution",
@@ -35,7 +35,7 @@ REQUIRED_ARRAYS = {
         "held_out_probabilities_lapse_within_IN",
         "held_out_probabilities_lapse_within_OUT",
     },
-    "panel3": {
+    "network_dynamics": {
         "network_cell_means",
         "interaction",
         "modulation_contrasts",
@@ -51,48 +51,52 @@ REQUIRED_ARRAYS = {
 }
 
 
-def validate_panel(
+def validate_analysis_result(
     config_path: str,
     analysis_id: str,
     analysis_root: str | None,
-    panel: str,
+    analysis: str,
 ) -> None:
-    """Reject missing, synthetic, empty, or schema-incomplete panel bundles."""
-    if panel not in REQUIRED_ARRAYS:
-        raise ValueError(f"unknown panel: {panel}")
+    """Reject missing, synthetic, empty, or schema-incomplete result bundles."""
+    if analysis not in REQUIRED_ARRAYS:
+        raise ValueError(f"unknown analysis: {analysis}")
     config = load_config(config_path)
     root = (
         Path(analysis_root)
         if analysis_root
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
+        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
-    directory = root / analysis_id / panel
+    directory = root / analysis_id / analysis
     metadata = json.loads((directory / "observed.json").read_text())
     provenance = metadata.get("provenance", {})
     if provenance.get("analysis_id") != analysis_id:
-        raise ValueError(f"{panel} bundle has the wrong analysis ID")
+        raise ValueError(f"{analysis} bundle has the wrong analysis ID")
     if provenance.get("data_mode") != "real":
-        raise ValueError(f"{panel} validator requires real data")
+        raise ValueError(f"{analysis} validator requires real data")
     with np.load(directory / "observed.npz", allow_pickle=False) as archive:
-        missing = sorted(REQUIRED_ARRAYS[panel] - set(archive.files))
+        missing = sorted(REQUIRED_ARRAYS[analysis] - set(archive.files))
         if missing:
-            raise ValueError(f"{panel} bundle lacks arrays: {missing}")
-        empty = sorted(name for name in REQUIRED_ARRAYS[panel] if archive[name].size == 0)
+            raise ValueError(f"{analysis} bundle lacks arrays: {missing}")
+        empty = sorted(
+            name for name in REQUIRED_ARRAYS[analysis] if archive[name].size == 0
+        )
         if empty:
-            raise ValueError(f"{panel} bundle has empty arrays: {empty}")
+            raise ValueError(f"{analysis} bundle has empty arrays: {empty}")
 
 
 def main() -> None:
-    """Validate a real panel bundle."""
+    """Validate a real scientific result bundle."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--analysis-id", required=True)
     parser.add_argument("--analysis-root")
-    parser.add_argument("--panel", required=True)
+    parser.add_argument("--analysis", required=True, choices=tuple(REQUIRED_ARRAYS))
     args = parser.parse_args()
-    validate_panel(args.config, args.analysis_id, args.analysis_root, args.panel)
+    validate_analysis_result(
+        args.config, args.analysis_id, args.analysis_root, args.analysis
+    )
 
 
 if __name__ == "__main__":

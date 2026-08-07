@@ -1,4 +1,4 @@
-"""Declarative, inspectable SLURM graph for the panel-analysis pipeline."""
+"""Declarative, inspectable SLURM graph for the analysis pipeline."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from itertools import product
 from typing import Any, Sequence
 
-from code.analysis.contracts import PANEL1_FEATURES, PANEL23_FEATURES
+from code.analysis.contracts import FEATURE_MODULATION_FEATURES, CORRECTED_FEATURES
 
 PIPELINE_STAGES = (
     "validation",
@@ -125,9 +125,9 @@ def bound_execution_plan(
         "atlas": "source",
         "source-recon": "source",
         "source_recon": "source",
-        "panel1": "analyses",
-        "panel2": "analyses",
-        "panel3": "analyses",
+        "feature-modulation": "analyses",
+        "multifeature-decoding": "analyses",
+        "network-dynamics": "analyses",
         "panels": "render",
     }
     start = aliases.get(start_at, start_at) if start_at else PIPELINE_STAGES[0]
@@ -180,14 +180,14 @@ def stage_for_node(name: str) -> str:
     if name == "run_features":
         return "features"
     if (
-        "feature" in name
-        or "complexity" in name
-        or name.endswith(("_psd", "_fooof_corrected_psd"))
+        name.endswith("_feature_validator")
+        or name.startswith(("sensor_", "schaefer_400_"))
+        or name == "run_features"
     ):
         return "features"
-    if name == "compact_export_tables_slides":
+    if name == "analysis_export":
         return "export"
-    if name == "figure_composites":
+    if name == "panel_generation":
         return "render"
     if name == "analysis_audit":
         return "audit"
@@ -240,25 +240,25 @@ def _build_node_cells(
             node_cells[name] = [{"index": 0}]
         elif name in subject_run_nodes:
             node_cells[name] = manifest["array_cells"]
-        elif name == "panel1_statistics":
-            node_cells[name] = _named_cells("feature", PANEL1_FEATURES)
-        elif name == "panel1_decoding_permutations":
+        elif name == "feature_modulation_statistics":
+            node_cells[name] = _named_cells("feature", FEATURE_MODULATION_FEATURES)
+        elif name == "feature_modulation_decoding_permutations":
             node_cells[name] = _feature_chunk_batch_cells(
-                PANEL1_FEATURES,
+                FEATURE_MODULATION_FEATURES,
                 map_chunk_count,
                 map_chunks_per_job,
             )
-        elif name == "panel2_observed_models":
+        elif name == "multifeature_decoding_models":
             node_cells[name] = _named_cells(
                 "model", ("state", "lapse_within_IN", "lapse_within_OUT")
             )
-        elif name == "panel2_permutation_chunks":
+        elif name == "multifeature_decoding_permutations":
             node_cells[name] = _chunk_batch_cells(
                 decoding_chunk_count,
                 decoding_chunks_per_job,
             )
-        elif name in {"panel3_factorial_maps", "panel3_coupling"}:
-            node_cells[name] = _named_cells("feature", PANEL23_FEATURES)
+        elif name in {"network_factorial_modulation", "network_coupling"}:
+            node_cells[name] = _named_cells("feature", CORRECTED_FEATURES)
         else:
             node_cells[name] = [{"index": 0}]
     return node_cells
@@ -379,11 +379,11 @@ def _resources_for_node(
         )
     elif (
         "decoding" in name
-        or name == "panel2_observed_models"
+        or name == "multifeature_decoding_models"
         or name == "exploratory_analyses"
     ):
         key = "decoding"
-    elif name in {"compact_export_tables_slides", "figure_composites"}:
+    elif name in {"analysis_export", "panel_generation"}:
         key = "rendering"
     else:
         key = "maps"
@@ -493,42 +493,54 @@ def _add_feature_validators(
 def _add_analysis_branches(
     nodes: list[ExecutionNode], edges: list[ExecutionDependency], include_exploratory: bool
 ) -> None:
-    """Add concurrent panel inference, export, render, and audit barriers."""
+    """Add concurrent scientific analyses, export, render, and audit barriers."""
     source = "schaefer_400_feature_validator"
-    panel_workers = {
-        "panel1": ("statistics", "decoding_permutations"),
-        "panel2": ("observed_models", "permutation_chunks"),
-        "panel3": ("factorial_maps", "coupling"),
+    analysis_workers = {
+        "feature_modulation": (
+            "feature_modulation_statistics",
+            "feature_modulation_decoding_permutations",
+        ),
+        "multifeature_decoding": (
+            "multifeature_decoding_models",
+            "multifeature_decoding_permutations",
+        ),
+        "network_dynamics": (
+            "network_factorial_modulation",
+            "network_coupling",
+        ),
     }
-    for panel, worker_names in panel_workers.items():
-        validator = f"{panel}_validator"
-        aggregator = f"{panel}_aggregator"
-        nodes.extend(ExecutionNode(f"{panel}_{name}", "worker", array=True) for name in worker_names)
-        nodes.extend([ExecutionNode(aggregator, "aggregator"), ExecutionNode(validator, "validator")])
+    for analysis, worker_names in analysis_workers.items():
+        validator = f"{analysis}_validator"
+        aggregator = f"{analysis}_results"
+        nodes.extend(ExecutionNode(name, "worker", array=True) for name in worker_names)
+        nodes.extend(
+            [ExecutionNode(aggregator, "aggregator"), ExecutionNode(validator, "validator")]
+        )
         for worker_name in worker_names:
-            worker = f"{panel}_{worker_name}"
-            edges.append(ExecutionDependency(source, worker, "afterok"))
-            edges.append(ExecutionDependency(worker, aggregator, "afterany"))
+            edges.append(ExecutionDependency(source, worker_name, "afterok"))
+            edges.append(ExecutionDependency(worker_name, aggregator, "afterany"))
         edges.append(ExecutionDependency(aggregator, validator, "afterok"))
     if include_exploratory:
         nodes.append(ExecutionNode("exploratory_analyses", "worker", array=True, exploratory=True))
         edges.append(ExecutionDependency(source, "exploratory_analyses", "afterok"))
     nodes.extend([
-        ExecutionNode("compact_export_tables_slides", "exporter"),
-        ExecutionNode("figure_composites", "renderer"),
+        ExecutionNode("analysis_export", "exporter"),
+        ExecutionNode("panel_generation", "renderer"),
         ExecutionNode("analysis_audit", "validator"),
     ])
-    for panel in panel_workers:
-        edges.append(ExecutionDependency(f"{panel}_validator", "compact_export_tables_slides", "afterok"))
+    for analysis in analysis_workers:
+        edges.append(
+            ExecutionDependency(f"{analysis}_validator", "analysis_export", "afterok")
+        )
     if include_exploratory:
         edges.append(
             ExecutionDependency(
                 "exploratory_analyses",
-                "compact_export_tables_slides",
+                "analysis_export",
                 "afterok",
             )
         )
     edges.extend([
-        ExecutionDependency("compact_export_tables_slides", "figure_composites", "afterok"),
-        ExecutionDependency("figure_composites", "analysis_audit", "afterok"),
+        ExecutionDependency("analysis_export", "panel_generation", "afterok"),
+        ExecutionDependency("panel_generation", "analysis_audit", "afterok"),
     ])
