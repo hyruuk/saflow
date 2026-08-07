@@ -1,17 +1,17 @@
-"""Tests for resumable paper-panel inference infrastructure."""
+"""Tests for resumable panel-analysis inference infrastructure."""
 
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from code.paper_panels.chunks import (
+from code.analysis.chunks import (
     aggregate_chunks,
     build_chunk_specs,
     derive_chunk_seed,
     write_chunk,
 )
-from code.paper_panels.networks import (
+from code.analysis.networks import (
     CELL_ORDER,
     combine_run_fisher_z,
     compute_factorial_contrasts,
@@ -19,17 +19,17 @@ from code.paper_panels.networks import (
     require_complete_cells,
     synchronized_sign_flip_test,
 )
-from code.paper_panels.labels import permute_outcomes_within_run_state
-from code.paper_panels.decoding import DecodingConfig
-from code.paper_panels.workers import (
+from code.analysis.labels import permute_outcomes_within_run_state
+from code.analysis.decoding import DecodingConfig
+from code.analysis.workers import (
     compute_panel1_statistics,
     compute_panel2_models,
     compute_panel3_modulation,
     compute_panel3_coupling,
     compute_mixed_effects_sensitivity,
 )
-from code.paper_panels.synthetic_phase_c import run_synthetic_phase_c
-from code.paper_panels.permutations import (
+from code.analysis.synthetic_phase_c import run_synthetic_phase_c
+from code.analysis.permutations import (
     DecodingModelInput,
     correct_decoding_families,
     run_decoding_permutation_chunk,
@@ -39,7 +39,7 @@ from code.classification.multifeature_scientific import NestedRidgeConfig
 
 def _specs():
     return build_chunk_specs(
-        analysis_id="paper-20260102T030405Z-gabc-c123456789abc",
+        analysis_id="analysis-20260102T030405Z-gabc-c123456789abc",
         endpoint="panel2",
         family="features",
         n_permutations=9,
@@ -82,7 +82,7 @@ def test_chunk_aggregation_rejects_missing_overlap_and_incompatibility(tmp_path:
         write_chunk(paths[0], specs[0], np.ones((4, 2)))
 
 
-def test_factorial_contrast_signs_match_paper_definition():
+def test_factorial_contrast_signs_match_primary_definition():
     # IN correct, IN lapse, OUT correct, OUT lapse
     cells = np.asarray([[[1.0], [3.0], [2.0], [7.0]]])
     contrasts = compute_factorial_contrasts(cells)

@@ -5,24 +5,24 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-from code.paper_panels.execution_plan import (
+from code.analysis.execution_plan import (
     bound_execution_plan,
     build_execution_plan,
     build_submission_plan,
 )
-from code.paper_panels.workflow import (
+from code.analysis.workflow import (
     _capacity_limited_wave,
     _invalid_cell_reason,
     _resume_submission_wave,
     build_parser,
 )
-from code.paper_panels.workflow import export_analysis
-from code.paper_panels.cell_status import execute_cell
+from code.analysis.workflow import export_analysis
+from code.analysis.cell_status import execute_cell
 
 
 def test_full_plan_bounds_features_and_keeps_dependency_barriers():
     raw = build_execution_plan(
-        "paper-20260102T030405Z-gabc-c123456789abc",
+        "analysis-20260102T030405Z-gabc-c123456789abc",
         ["04", "05"],
         ["02", "03"],
         include_exploratory=True,
@@ -144,7 +144,7 @@ def test_resume_reason_selects_only_invalid_cells(tmp_path: Path):
 
 
 def test_compact_export_omits_chunks_and_writes_hashed_table(tmp_path: Path):
-    analysis_id = "paper-20260102T030405Z-gabc-c123456789abc"
+    analysis_id = "analysis-20260102T030405Z-gabc-c123456789abc"
     source = tmp_path / "source" / analysis_id
     (source / "panel1" / "chunks").mkdir(parents=True)
     (source / "panel1" / "observed.json").write_text(

@@ -9,11 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from code.paper_panels.chunks import build_chunk_specs, write_chunk
-from code.paper_panels.contracts import PANEL1_FEATURES, PANEL23_FEATURES, SCHEMA_VERSION
-from code.paper_panels.decoding import DecodingConfig
-from code.paper_panels.networks import CELL_ORDER, YEO7_ORDER
-from code.paper_panels.workers import (
+from code.analysis.chunks import build_chunk_specs, write_chunk
+from code.analysis.contracts import PANEL1_FEATURES, PANEL23_FEATURES, SCHEMA_VERSION
+from code.analysis.decoding import DecodingConfig
+from code.analysis.networks import CELL_ORDER, YEO7_ORDER
+from code.analysis.workers import (
     compute_panel1_statistics,
     compute_panel2_models,
     compute_panel3_modulation,

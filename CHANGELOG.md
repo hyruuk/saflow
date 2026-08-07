@@ -10,9 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Renamed the misleading corrected-analysis namespace from `figure3` to
-  `paper_panels`, including configuration, analysis IDs, tasks, logs, SLURM
-  jobs, templates, processed roots, tests, schemas, and methods documentation.
+- Replaced the misleading `figure3`/`paper_panels` infrastructure with the
+  neutral `code.analysis` package and `panel_analysis` configuration scope,
+  including IDs, tasks, logs, SLURM jobs, templates, processed roots, tests,
+  schemas, and methods documentation.
 - Renamed the complete endpoint to `pipeline.all`, made SLURM opt-in through
   `--slurm`, and replaced internal/user-facing graph terminology with
   `execution plan`.
@@ -21,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   duplicate protection.
 
 ### Added
-- Production SLURM execution for the immutable 29-node paper execution plan: concrete
+- Production SLURM execution for the immutable 29-node execution plan: concrete
   per-cell commands, status wrappers, stage-specific resources, real job IDs,
   dependency-safe arrays, and selective multi-wave resume without deleting
   valid chunks.
@@ -42,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subplot-level synthetic watermarks.
 - Bounded immutable `pipeline.all` execution plan manifests, expected cell artifacts,
   selective `pipeline.resume` audits, compact hashed exports/tables, and a
-  real-output final analysis audit.
+  real-output panel analysis audit.
 - Phase C workers for Panel 1 paired/FDR maps, three-model nested Panel 2
   decoding with held-out grouped reliance, Panel 3 factorial Yeo modulation,
   weighted DMN–DAN coupling, and secondary all-available mixed effects.
@@ -53,9 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compact exports, figures, and immutable execution plan manifests.
 - Canonical seven-band paper policy, three named panel layout contracts, and an
   inspectable raw-to-panels execution plan with aligned arrays and validator barriers.
-- `analysis.paper-execution-plan` for writing a complete manifest without
+- `analysis.execution-plan` for writing a complete manifest without
   execution or submission.
-- Immutable corrected paper-panel workflow with reflected-boundary VTC filtering,
+- Immutable corrected panel-analysis workflow with reflected-boundary VTC filtering,
   strict eight-trial labels, exact alignment, Schaefer-400 validation, circular
   nulls, nested LOSO, and synchronized family-wise map/decoding corrections.
 - Paper-panel preflight, run, compact export, legacy inventory, and local render

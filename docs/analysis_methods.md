@@ -1,4 +1,4 @@
-# Corrected paper-panel methods notes
+# Corrected panel-analysis methods notes
 
 ## Behavioral labeling
 

@@ -1000,11 +1000,11 @@ def all_pipeline(
     analysis_root=None,
     config="config.yaml",
 ):
-    """Run the complete raw-to-paper pipeline locally or with explicit SLURM."""
+    """Run the complete raw-to-analysis pipeline locally or with explicit SLURM."""
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.paper_panels.workflow",
+        "code.analysis.workflow",
         "all",
         "--config",
         config,
@@ -1040,7 +1040,7 @@ def resume(
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.paper_panels.workflow",
+        "code.analysis.workflow",
         "resume",
         "--analysis-id",
         analysis_id,
@@ -1675,7 +1675,7 @@ def stats_classif_panel(c, space="sensor", trial_type="alltrials",
                         region_mode="pool",
                         output=None, config="config.yaml",
                         correction=None, cv=None):
-    """Render the paper-ready stats + classification multi-panel (Fig. 3).
+    """Render the publication-ready stats + classification multi-panel (Fig. 3).
 
     A single composite figure (panels A-J): per-band t-values and AUC for
     raw and corrected PSD, FOOOF parameter t-values and AUC, plus the
@@ -3344,10 +3344,10 @@ def multifeature_run(c, analysis_id, analysis_root, features="all",
 
 
 @task
-def paper_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
+def panel_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
                     runs=None, config="config.yaml"):
-    """Create and validate a new immutable paper-panel analysis."""
-    cmd = [get_python_executable(config), "-m", "code.paper_panels.workflow", "preflight",
+    """Create and validate a new immutable final analysis."""
+    cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "preflight",
            "--config", config]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])
@@ -3361,10 +3361,10 @@ def paper_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
 
 
 @task
-def paper_run(c, analysis_id, analysis_root=None, n_permutations=1000,
+def panel_run(c, analysis_id, analysis_root=None, n_permutations=1000,
                 minimum_circular_offset=24, seed=42, config="config.yaml"):
     """Configure corrected sensor and Schaefer-400 fitting/permutation inference."""
-    cmd = [get_python_executable(config), "-m", "code.paper_panels.workflow", "run",
+    cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "run",
            "--analysis-id", analysis_id, "--config", config,
            "--n-permutations", str(n_permutations),
            "--minimum-circular-offset", str(minimum_circular_offset), "--seed", str(seed)]
@@ -3374,12 +3374,12 @@ def paper_run(c, analysis_id, analysis_root=None, n_permutations=1000,
 
 
 @task
-def paper_synthetic(c, output_dir="reports/synthetic/paper-panels", seed=42):
+def panel_synthetic(c, output_dir="reports/synthetic/panel-analysis", seed=42):
     """Run all three scientific workers with small schema-compatible data."""
     cmd = [
         get_python_executable(),
         "-m",
-        "code.paper_panels.synthetic_phase_c",
+        "code.analysis.synthetic_phase_c",
         "--output-dir",
         output_dir,
         "--seed",
@@ -3389,14 +3389,14 @@ def paper_synthetic(c, output_dir="reports/synthetic/paper-panels", seed=42):
 
 
 @task
-def paper_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
+def panel_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
                          spaces="sensor schaefer_400",
                          include_exploratory=True, config="config.yaml"):
     """Write the complete raw-to-panels execution plan without submission."""
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.paper_panels.workflow",
+        "code.analysis.workflow",
         "plan",
         "--analysis-id",
         analysis_id,
@@ -3418,25 +3418,25 @@ def paper_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs
 
 
 @task
-def paper_export(c, analysis_id, analysis_root, destination=None):
-    """Export paper-panel bundles without subject-level feature matrices."""
+def panel_export(c, analysis_id, analysis_root, destination=None):
+    """Export analysis bundles without subject-level feature matrices."""
     target = destination or str(Path("reports/exports") / analysis_id)
-    cmd = [get_python_executable(), "-m", "code.paper_panels.workflow", "export",
+    cmd = [get_python_executable(), "-m", "code.analysis.workflow", "export",
            "--analysis-id", analysis_id, "--analysis-root", analysis_root,
            "--destination", target]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
-def paper_audit(
+def panel_audit(
     c, analysis_id, analysis_root=None, reports_root="reports",
     config="config.yaml",
 ):
-    """Require complete real bundles and matching rendered paper provenance."""
+    """Require complete real bundles and matching rendered composite provenance."""
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.paper_panels.workflow",
+        "code.analysis.workflow",
         "audit",
         "--analysis-id",
         analysis_id,
@@ -3451,19 +3451,19 @@ def paper_audit(
 
 
 @task
-def paper_legacy_inventory(c, source, manifest="reports/legacy/paper-panels.json"):
-    """Write a read-only hash inventory of existing paper-panel outputs."""
-    cmd = [get_python_executable(), "-m", "code.paper_panels.workflow", "legacy-inventory",
+def panel_legacy_inventory(c, source, manifest="reports/legacy/panel-analysis.json"):
+    """Write a read-only hash inventory of existing analysis outputs."""
+    cmd = [get_python_executable(), "-m", "code.analysis.workflow", "legacy-inventory",
            "--source", source, "--manifest", manifest]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
-def viz_paper(
+def viz_panels(
     c, panel="all", analysis_id=None, analysis_root=None,
     reports_root="reports", config="config.yaml",
 ):
-    """Render real paper bundles or protected watermarked synthetic fallbacks."""
+    """Render real analysis bundles or protected watermarked synthetic fallbacks."""
     if analysis_root is None:
         from code.utils.config import load_config
 
@@ -3471,12 +3471,12 @@ def viz_paper(
         analysis_root = str(
             Path(loaded["paths"]["data_root"])
             / "processed"
-            / loaded.get("paper_panels", {}).get("processed_directory", "paper_panels")
+            / loaded.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
         )
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.paper_panels.render",
+        "code.analysis.render",
         "--panel",
         panel,
         "--analysis-root",
@@ -4152,13 +4152,13 @@ analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")
 analysis.add_task(multifeature_legacy_inventory,
                   name="multifeature-legacy-inventory")
-analysis.add_task(paper_preflight, name="paper-preflight")
-analysis.add_task(paper_run, name="paper-run")
-analysis.add_task(paper_synthetic, name="paper-synthetic")
-analysis.add_task(paper_execution_plan, name="paper-execution-plan")
-analysis.add_task(paper_export, name="paper-export")
-analysis.add_task(paper_audit, name="paper-audit")
-analysis.add_task(paper_legacy_inventory, name="paper-legacy-inventory")
+analysis.add_task(panel_preflight, name="preflight")
+analysis.add_task(panel_run, name="run")
+analysis.add_task(panel_synthetic, name="synthetic")
+analysis.add_task(panel_execution_plan, name="execution-plan")
+analysis.add_task(panel_export, name="export")
+analysis.add_task(panel_audit, name="audit")
+analysis.add_task(panel_legacy_inventory, name="legacy-inventory")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection
@@ -4173,7 +4173,7 @@ viz.add_task(viz_auto, name="auto")
 viz.add_task(spectra)
 viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
-viz.add_task(viz_paper, name="paper")
+viz.add_task(viz_panels, name="panels")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

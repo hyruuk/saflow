@@ -1,4 +1,4 @@
-"""Blinded input validation and cell-count reporting for paper panels."""
+"""Blinded input validation and cell-count reporting for panel analysis."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
-from code.paper_panels.alignment import build_alignment_keys, validate_schaefer_400
-from code.paper_panels.labels import build_corrected_window_labels
+from code.analysis.alignment import build_alignment_keys, validate_schaefer_400
+from code.analysis.labels import build_corrected_window_labels
 from code.utils.behavioral import VTC_FILTER_METHOD, VTC_FILTER_VERSION
 
 CELL_ORDER = (
@@ -171,13 +171,13 @@ def _validate_feature_alignment(
     subject: str,
     run: str,
 ) -> None:
-    """Require identical keys and spatial order across every paper family."""
-    from code.paper_panels.alignment import require_exact_alignment
+    """Require identical keys and spatial order across every feature family."""
+    from code.analysis.alignment import require_exact_alignment
 
     reference_names: list[str] | None = None
     for path in paths.values():
         if path is None:
-            raise ValueError("paper feature family is missing")
+            raise ValueError("panel-analysis feature family is missing")
         metadata, names = _load_feature_metadata(path)
         indices = np.asarray(list(metadata["included_epoch_indices"]), dtype=int)
         keys = build_alignment_keys(

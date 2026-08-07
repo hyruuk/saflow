@@ -1,34 +1,34 @@
 # Saflow Pipeline Task Reference
 
-## Corrected paper-panel workflow
+## Corrected panel-analysis workflow
 
-Paper-panel analyses use immutable `paper-<UTC>-g<git>-c<config>` directories and distinct
+Panel analyses use immutable `analysis-<UTC>-g<git>-c<config>` directories and distinct
 tasks, leaving all legacy commands unchanged:
 
 ```bash
-invoke analysis.paper-preflight [--analysis-id=paper-...] [--analysis-root=PATH]
+invoke analysis.preflight [--analysis-id=analysis-...] [--analysis-root=PATH]
   [--subjects="04 05"] [--runs="02 03"]
-invoke analysis.paper-execution-plan --analysis-id=paper-... [--subjects="04 05"] \
+invoke analysis.execution-plan --analysis-id=analysis-... [--subjects="04 05"] \
   [--runs="02 03"] [--spaces="sensor schaefer_400"] \
   [--no-include-exploratory]
-invoke analysis.paper-run --analysis-id=paper-... [--analysis-root=PATH] \
+invoke analysis.run --analysis-id=analysis-... [--analysis-root=PATH] \
   [--n-permutations=1000] [--minimum-circular-offset=24] [--seed=42]
-invoke analysis.paper-export --analysis-id=paper-... --analysis-root=PATH
-invoke viz.paper --analysis-id=paper-... [--analysis-root=reports/exports]
+invoke analysis.export --analysis-id=analysis-... --analysis-root=PATH
+invoke viz.panels --analysis-id=analysis-... [--analysis-root=reports/exports]
 ```
 
 `alltrials` is Panel 1 confirmatory; broad `correct` and `lapse` selectors are
 exploratory. Panel 1 includes raw PSD, FOOOF, and corrected PSD. Panels 2 and 3
-exclude raw PSD. All corrected paper PSD families use the canonical seven bands
+exclude raw PSD. All corrected PSD families use the canonical seven bands
 from Theta through Gamma 3; Delta is excluded. Complexity is an exploratory
 sidekick. Compact exports omit subject-level features and resumable chunks.
 
-`analysis.paper-execution-plan` writes `manifests/execution_plan.json` and
+`analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.
 Its subject-major array mapping is shared by every `aftercorr` edge. Validators
 and aggregators use `afterany` to inspect failures; scientific consumers use
 `afterok`. The Phase A schema catalog is documented in
-`docs/paper_panels_output_schemas.md`.
+`docs/analysis_output_schemas.md`.
 
 `pipeline.bids` accepts `--runs`, `--skip-valid/--no-skip-valid`, and
 `--slurm`. SLURM mode creates one subject/run array cell. Skip-valid requires
@@ -231,14 +231,14 @@ invoke pipeline.preprocess-report --subject=04
 invoke pipeline.preprocess-report --dataset
 ```
 
-### `invoke analysis.paper-synthetic`
+### `invoke analysis.synthetic`
 
 Run all three observed scientific workers and create deterministic immutable
 permutation chunks from small schema-compatible synthetic data.
 
 ```bash
-invoke analysis.paper-synthetic \
-  --output-dir=/tmp/saflow-paper-panels --seed=17
+invoke analysis.synthetic \
+  --output-dir=/tmp/saflow-panel-analysis --seed=17
 ```
 
 This checks inference I/O and resumability only; it is not publishable analysis.
@@ -281,18 +281,18 @@ recovery whose `aftercorr` subsets differ is split into safe waves; rerun
 downstream cells.
 
 ```bash
-invoke pipeline.resume --slurm --analysis-id=paper-... --dry-run
-invoke pipeline.resume --slurm --analysis-id=paper-...
+invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
+invoke pipeline.resume --slurm --analysis-id=analysis-...
 ```
 
-### `invoke viz.paper`
+### `invoke viz.panels`
 
 Render one or all panels from complete real bundles, otherwise use protected
 watermarked synthetic data.
 
 ```bash
-invoke viz.paper --panel=all
-invoke viz.paper --panel=panel2 --analysis-id=paper-...
+invoke viz.panels --panel=all
+invoke viz.panels --panel=panel2 --analysis-id=analysis-...
 ```
 
 Paper composites are written at 600 DPI under `reports/figures/paper/`.
@@ -300,7 +300,7 @@ Standalone white-background 2560×1440 PNG and editable SVG components are
 written under `reports/figures/slides/`. Every artifact has a JSON sidecar.
 Synthetic rendering cannot overwrite real output.
 
-### `invoke analysis.paper-audit`
+### `invoke analysis.audit`
 
 Fail unless all three real bundles and matching real paper sidecars are
 complete and belong to the requested immutable analysis ID.
@@ -1075,7 +1075,7 @@ invoke viz.spectra --subject=07
 
 ### `invoke viz.stats-classif-panel`
 
-Render the paper-ready stats + classification multi-panel figure (Fig. 3 from cc_saflow).
+Render the publication-ready stats + classification multi-panel figure (Fig. 3 from cc_saflow).
 
 A single composite figure with letter labels A–J:
 

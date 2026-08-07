@@ -1,4 +1,4 @@
-"""Declarative, inspectable SLURM graph for the paper-panel pipeline."""
+"""Declarative, inspectable SLURM graph for the panel-analysis pipeline."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from itertools import product
 from typing import Any, Sequence
 
-from code.paper_panels.contracts import PANEL1_FEATURES, PANEL23_FEATURES
+from code.analysis.contracts import PANEL1_FEATURES, PANEL23_FEATURES
 
 PIPELINE_STAGES = (
     "validation",
@@ -20,7 +20,7 @@ PIPELINE_STAGES = (
     "render",
     "audit",
 )
-DEFAULT_PAPER_PANEL_RESOURCES = {
+DEFAULT_ANALYSIS_RESOURCES = {
     "maps": {"time": "08:00:00", "memory_gb": 16, "cpus": 4},
     "decoding": {"time": "12:00:00", "memory_gb": 24, "cpus": 4},
     "rendering": {"time": "01:00:00", "memory_gb": 8, "cpus": 2},
@@ -28,7 +28,7 @@ DEFAULT_PAPER_PANEL_RESOURCES = {
 
 
 @dataclass(frozen=True)
-class DagNode:
+class ExecutionNode:
     """Describe one pipeline node without submitting it."""
 
     name: str
@@ -38,7 +38,7 @@ class DagNode:
 
 
 @dataclass(frozen=True)
-class DagEdge:
+class ExecutionDependency:
     """Describe one dependency and its SLURM dependency type."""
 
     upstream: str
@@ -58,17 +58,17 @@ def build_execution_plan(
 ) -> dict[str, Any]:
     """Build the immutable raw-to-panels execution plan manifest."""
     nodes = [
-        DagNode("input_validation", "validator"),
-        DagNode("bids_reflected_vtc", "worker", array=True),
-        DagNode("preprocessing", "worker", array=True),
-        DagNode("source_reconstruction", "worker", array=True),
-        DagNode("schaefer_400_atlas", "worker", array=True),
+        ExecutionNode("input_validation", "validator"),
+        ExecutionNode("bids_reflected_vtc", "worker", array=True),
+        ExecutionNode("preprocessing", "worker", array=True),
+        ExecutionNode("source_reconstruction", "worker", array=True),
+        ExecutionNode("schaefer_400_atlas", "worker", array=True),
     ]
     edges = [
-        DagEdge("input_validation", "bids_reflected_vtc", "afterok"),
-        DagEdge("bids_reflected_vtc", "preprocessing", "aftercorr"),
-        DagEdge("preprocessing", "source_reconstruction", "aftercorr"),
-        DagEdge("source_reconstruction", "schaefer_400_atlas", "aftercorr"),
+        ExecutionDependency("input_validation", "bids_reflected_vtc", "afterok"),
+        ExecutionDependency("bids_reflected_vtc", "preprocessing", "aftercorr"),
+        ExecutionDependency("preprocessing", "source_reconstruction", "aftercorr"),
+        ExecutionDependency("source_reconstruction", "schaefer_400_atlas", "aftercorr"),
     ]
     _add_feature_branches(nodes, edges, spaces, include_exploratory)
     _add_analysis_branches(nodes, edges, include_exploratory)
@@ -100,7 +100,7 @@ def bound_execution_plan(
     stop_after: str | None = None,
     skip: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """Return a stage-bounded graph while retaining inspectable exclusions."""
+    """Return a stage-bounded plan while retaining inspectable exclusions."""
     aliases = {
         "source-recon": "source",
         "source_recon": "source",
@@ -149,7 +149,7 @@ def bound_execution_plan(
 
 
 def stage_for_node(name: str) -> str:
-    """Map a execution plan node to its public bounded-execution stage."""
+    """Map an execution plan node to its public bounded-execution stage."""
     if name == "input_validation":
         return "validation"
     if name == "bids_reflected_vtc":
@@ -168,9 +168,9 @@ def stage_for_node(name: str) -> str:
         return "features"
     if name == "compact_export_tables_slides":
         return "export"
-    if name == "paper_composites":
+    if name == "figure_composites":
         return "render"
-    if name == "final_analysis_audit":
+    if name == "analysis_audit":
         return "audit"
     return "analyses"
 
@@ -338,7 +338,7 @@ def _resources_for_node(
         or name == "exploratory_analyses"
     ):
         key = "decoding"
-    elif name in {"compact_export_tables_slides", "paper_composites"}:
+    elif name in {"compact_export_tables_slides", "figure_composites"}:
         key = "rendering"
     else:
         key = "maps"
@@ -392,8 +392,8 @@ def _validate_aftercorr_alignment(
 
 
 def _add_feature_branches(
-    nodes: list[DagNode],
-    edges: list[DagEdge],
+    nodes: list[ExecutionNode],
+    edges: list[ExecutionDependency],
     spaces: Sequence[str],
     include_exploratory: bool,
 ) -> None:
@@ -404,27 +404,27 @@ def _add_feature_branches(
         fooof = f"{space}_fooof_corrected_psd"
         validator = f"{space}_feature_validator"
         nodes.extend([
-            DagNode(psd, "worker", array=True),
-            DagNode(fooof, "worker", array=True),
-            DagNode(validator, "validator"),
+            ExecutionNode(psd, "worker", array=True),
+            ExecutionNode(fooof, "worker", array=True),
+            ExecutionNode(validator, "validator"),
         ])
         edges.extend([
-            DagEdge(upstream, psd, "aftercorr"),
-            DagEdge(psd, fooof, "aftercorr"),
-            DagEdge(psd, validator, "afterany"),
-            DagEdge(fooof, validator, "afterany"),
+            ExecutionDependency(upstream, psd, "aftercorr"),
+            ExecutionDependency(psd, fooof, "aftercorr"),
+            ExecutionDependency(psd, validator, "afterany"),
+            ExecutionDependency(fooof, validator, "afterany"),
         ])
         if include_exploratory:
             complexity = f"{space}_complexity_exploratory"
-            nodes.append(DagNode(complexity, "worker", array=True, exploratory=True))
+            nodes.append(ExecutionNode(complexity, "worker", array=True, exploratory=True))
             edges.extend([
-                DagEdge(upstream, complexity, "aftercorr"),
-                DagEdge(complexity, validator, "afterany"),
+                ExecutionDependency(upstream, complexity, "aftercorr"),
+                ExecutionDependency(complexity, validator, "afterany"),
             ])
 
 
 def _add_analysis_branches(
-    nodes: list[DagNode], edges: list[DagEdge], include_exploratory: bool
+    nodes: list[ExecutionNode], edges: list[ExecutionDependency], include_exploratory: bool
 ) -> None:
     """Add concurrent panel inference, export, render, and audit barriers."""
     source = "schaefer_400_feature_validator"
@@ -436,32 +436,32 @@ def _add_analysis_branches(
     for panel, worker_names in panel_workers.items():
         validator = f"{panel}_validator"
         aggregator = f"{panel}_aggregator"
-        nodes.extend(DagNode(f"{panel}_{name}", "worker", array=True) for name in worker_names)
-        nodes.extend([DagNode(aggregator, "aggregator"), DagNode(validator, "validator")])
+        nodes.extend(ExecutionNode(f"{panel}_{name}", "worker", array=True) for name in worker_names)
+        nodes.extend([ExecutionNode(aggregator, "aggregator"), ExecutionNode(validator, "validator")])
         for worker_name in worker_names:
             worker = f"{panel}_{worker_name}"
-            edges.append(DagEdge(source, worker, "afterok"))
-            edges.append(DagEdge(worker, aggregator, "afterany"))
-        edges.append(DagEdge(aggregator, validator, "afterok"))
+            edges.append(ExecutionDependency(source, worker, "afterok"))
+            edges.append(ExecutionDependency(worker, aggregator, "afterany"))
+        edges.append(ExecutionDependency(aggregator, validator, "afterok"))
     if include_exploratory:
-        nodes.append(DagNode("exploratory_analyses", "worker", array=True, exploratory=True))
-        edges.append(DagEdge(source, "exploratory_analyses", "afterok"))
+        nodes.append(ExecutionNode("exploratory_analyses", "worker", array=True, exploratory=True))
+        edges.append(ExecutionDependency(source, "exploratory_analyses", "afterok"))
     nodes.extend([
-        DagNode("compact_export_tables_slides", "exporter"),
-        DagNode("paper_composites", "renderer"),
-        DagNode("final_analysis_audit", "validator"),
+        ExecutionNode("compact_export_tables_slides", "exporter"),
+        ExecutionNode("figure_composites", "renderer"),
+        ExecutionNode("analysis_audit", "validator"),
     ])
     for panel in panel_workers:
-        edges.append(DagEdge(f"{panel}_validator", "compact_export_tables_slides", "afterok"))
+        edges.append(ExecutionDependency(f"{panel}_validator", "compact_export_tables_slides", "afterok"))
     if include_exploratory:
         edges.append(
-            DagEdge(
+            ExecutionDependency(
                 "exploratory_analyses",
                 "compact_export_tables_slides",
                 "afterok",
             )
         )
     edges.extend([
-        DagEdge("compact_export_tables_slides", "paper_composites", "afterok"),
-        DagEdge("paper_composites", "final_analysis_audit", "afterok"),
+        ExecutionDependency("compact_export_tables_slides", "figure_composites", "afterok"),
+        ExecutionDependency("figure_composites", "analysis_audit", "afterok"),
     ])

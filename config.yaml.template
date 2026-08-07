@@ -27,10 +27,10 @@ paths:
   # FreeSurfer subjects directory (in data_root)
   freesurfer_subjects_dir: fs_subjects/  # Will be resolved relative to data_root
 
-# Corrected Paper panels values are resolved into every immutable analysis folder.
-paper_panels:
+# Corrected Panel analysis values are resolved into every immutable analysis folder.
+panel_analysis:
   schema_version: "1.0.0"        # Result/manifest contract version
-  processed_directory: paper_panels   # Under paths.data_root/processed/
+  processed_directory: panel_analysis   # Under paths.data_root/processed/
   gaussian_fwhm: 9.0             # Reflected Gaussian width, trials
   strict_window_size: 8          # Every constituent shares the IN/OUT label
   inout_percentiles: [25, 75]    # Run-specific VTC percentile bounds
@@ -45,7 +45,7 @@ paper_panels:
   inner_splits: 5                # Subject-grouped inner folds, training only
   minimum_modulation_windows: 5  # Required in every state × outcome cell
   minimum_coupling_windows: 10   # Required in every coupling cell
-  spaces: [sensor, schaefer_400] # Sensor QC plus paper-primary parcel space
+  spaces: [sensor, schaefer_400] # Sensor QC plus primary parcel space
   include_exploratory: true      # Complexity and legacy-selection sidekicks
   resources:
     maps: {time: "08:00:00", memory_gb: 16, cpus: 4} # SLURM request per map cell
@@ -218,7 +218,7 @@ behavioral:
     filter:
       type: "gaussian"  # "gaussian" or "butterworth"
       gaussian_fwhm: 9  # Full width at half maximum (for Gaussian)
-      gaussian_boundary: "reflect"  # Corrected paper workflow; never zero-pad
+      gaussian_boundary: "reflect"  # Corrected panel-analysis workflow; never zero-pad
       version: "1.0.0"  # Invalidates stale enriched BIDS events
       butterworth_order: 3  # Filter order (for Butterworth)
       butterworth_cutoff: 0.05  # Normalized cutoff frequency (for Butterworth)

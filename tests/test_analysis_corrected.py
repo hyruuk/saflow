@@ -1,4 +1,4 @@
-"""Deterministic contracts for the corrected paper-panel workflow."""
+"""Deterministic contracts for the corrected panel-analysis workflow."""
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,18 +6,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from code.paper_panels.alignment import build_alignment_keys, require_exact_alignment, validate_schaefer_400
-from code.paper_panels.contracts import (
+from code.analysis.alignment import build_alignment_keys, require_exact_alignment, validate_schaefer_400
+from code.analysis.contracts import (
     PANEL1_FEATURES,
     PANEL23_FEATURES,
     PANEL_SPECS,
-    PAPER_BAND_KEYS,
+    CANONICAL_BAND_KEYS,
     canonical_band_key,
     schema_catalog,
 )
-from code.paper_panels.execution_plan import build_execution_plan
-from code.paper_panels.inference import synchronized_cluster_mass_test
-from code.paper_panels.labels import (
+from code.analysis.execution_plan import build_execution_plan
+from code.analysis.inference import synchronized_cluster_mass_test
+from code.analysis.labels import (
     LABEL_MID,
     OUTCOME_COMMISSION_ERROR,
     OUTCOME_CORRECT_OMISSION,
@@ -29,9 +29,9 @@ from code.paper_panels.labels import (
     summarize_label_overlap,
     valid_circular_offsets,
 )
-from code.paper_panels.real_inputs import _band_reduce
-from code.paper_panels.preflight import inspect_inputs
-from code.paper_panels.provenance import create_analysis_id, initialize
+from code.analysis.real_inputs import _band_reduce
+from code.analysis.preflight import inspect_inputs
+from code.analysis.provenance import create_analysis_id, initialize
 
 
 def test_reflected_filter_is_boundary_safe():
@@ -115,8 +115,8 @@ def test_label_qc_and_immutable_id(tmp_path: Path):
         initialize(tmp_path, analysis_id, config, {}, Path.cwd())
 
 
-def test_paper_band_and_feature_contract_excludes_delta():
-    assert PAPER_BAND_KEYS == (
+def test_band_and_feature_contract_excludes_delta():
+    assert CANONICAL_BAND_KEYS == (
         "theta", "alpha", "lobeta", "hibeta", "gamma1", "gamma2", "gamma3"
     )
     assert canonical_band_key("low_beta") == "lobeta"
@@ -127,9 +127,9 @@ def test_paper_band_and_feature_contract_excludes_delta():
 
 def test_panel_and_schema_contracts_are_complete():
     assert set(PANEL_SPECS) == {"panel1", "panel2", "panel3"}
-    assert PANEL_SPECS["panel1"]["paper_filename"] == "panel1_feature_modulation.png"
-    assert PANEL_SPECS["panel2"]["paper_filename"] == "panel2_multifeature_decoding.png"
-    assert PANEL_SPECS["panel3"]["paper_filename"] == "panel3_network_dynamics.png"
+    assert PANEL_SPECS["panel1"]["composite_filename"] == "panel1_feature_modulation.png"
+    assert PANEL_SPECS["panel2"]["composite_filename"] == "panel2_multifeature_decoding.png"
+    assert PANEL_SPECS["panel3"]["composite_filename"] == "panel3_network_dynamics.png"
     assert set(schema_catalog()) == {
         "labels", "maps", "decoding", "factorial_networks", "coupling",
         "compact_export", "figure", "dag_manifest",
@@ -138,7 +138,7 @@ def test_panel_and_schema_contracts_are_complete():
 
 def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
     manifest = build_execution_plan(
-        "paper-20260102T000000Z-gunknown-c123456789abc",
+        "analysis-20260102T000000Z-gunknown-c123456789abc",
         ["04", "05"],
         ["02", "03"],
     )
@@ -156,7 +156,7 @@ def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
     assert ("schaefer_400_psd", "schaefer_400_feature_validator", "afterany") in edges
     assert ("schaefer_400_feature_validator", "panel1_statistics", "afterok") in edges
     assert ("panel1_validator", "compact_export_tables_slides", "afterok") in edges
-    assert ("paper_composites", "final_analysis_audit", "afterok") in edges
+    assert ("figure_composites", "analysis_audit", "afterok") in edges
 
 
 def test_preflight_reads_corrected_events_and_exact_window_metadata(tmp_path: Path):

@@ -12,9 +12,9 @@ from code.classification.multifeature_scientific import (
     NestedRidgeConfig,
     run_primary_analysis,
 )
-from code.paper_panels.chunks import derive_chunk_seed
-from code.paper_panels.contracts import PANEL23_FEATURES
-from code.paper_panels.labels import (
+from code.analysis.chunks import derive_chunk_seed
+from code.analysis.contracts import PANEL23_FEATURES
+from code.analysis.labels import (
     LABEL_IN,
     LABEL_OUT,
     OUTCOME_COMMISSION_ERROR,
@@ -24,8 +24,8 @@ from code.paper_panels.labels import (
     shift_and_rebuild_labels,
     valid_circular_offsets,
 )
-from code.paper_panels.real_inputs import RealFigure3Inputs, load_real_inputs
-from code.paper_panels.result_io import write_result_bundle
+from code.analysis.real_inputs import RealFigure3Inputs, load_real_inputs
+from code.analysis.result_io import write_result_bundle
 from code.utils.config import load_config
 
 MODEL_ORDER = ("state", "lapse_within_IN", "lapse_within_OUT")
@@ -34,9 +34,9 @@ MODEL_ORDER = ("state", "lapse_within_IN", "lapse_within_OUT")
 def run_chunk(args: argparse.Namespace) -> Path:
     """Run one deterministic synchronized decoding permutation interval."""
     config = load_config(args.config)
-    paper_panels = config.get("paper_panels", {})
-    total = int(paper_panels.get("decoding_permutations", 1_000))
-    size = int(paper_panels.get("decoding_chunk_size", 25))
+    panel_analysis = config.get("panel_analysis", {})
+    total = int(panel_analysis.get("decoding_permutations", 1_000))
+    size = int(panel_analysis.get("decoding_chunk_size", 25))
     start = args.chunk_index * size
     stop = min(start + size, total)
     if start >= total:
@@ -51,8 +51,8 @@ def run_chunk(args: argparse.Namespace) -> Path:
         inputs,
         stop - start,
         seed,
-        int(paper_panels.get("minimum_circular_offset", 24)),
-        _nested_config(paper_panels),
+        int(panel_analysis.get("minimum_circular_offset", 24)),
+        _nested_config(panel_analysis),
     )
     result.update(
         {
@@ -225,7 +225,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
+        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():

@@ -1,4 +1,4 @@
-"""Validate complete sensor or Schaefer feature barriers for Paper panels."""
+"""Validate complete sensor or Schaefer feature barriers for Panel analysis."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from code.paper_panels.preflight import inspect_inputs
+from code.analysis.preflight import inspect_inputs
 from code.utils.config import load_config
 
 
@@ -43,7 +43,7 @@ def validate_feature_barrier(
 def _validate_sensor_recording(
     config: dict, subject: str, run: str
 ) -> None:
-    """Validate all three paper sensor feature bundles for one recording."""
+    """Validate all three panel-analysis sensor feature bundles for one recording."""
     root = Path(config["paths"]["features"])
     directories = (
         ("welch_psds_sensor", {"psds", "freqs", "trial_metadata", "ch_names"}),

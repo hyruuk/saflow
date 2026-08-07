@@ -164,24 +164,34 @@ def validate_config(config: Dict[str, Any]) -> None:
 
     if "figure3" in config:
         raise ConfigurationError(
-            "config key 'figure3' was renamed to 'paper_panels'; "
-            "rename that section before running the paper pipeline"
+            "config key 'figure3' was renamed to 'panel_analysis'; "
+            "rename that section before running the panel analysis pipeline"
         )
-    _validate_paper_panels_config(config.get("paper_panels", {}))
+    if "paper_panels" in config:
+        raise ConfigurationError(
+            "config key 'paper_panels' was renamed to 'panel_analysis'; "
+            "rename that section before running the panel analysis pipeline"
+        )
+    if "final_analysis" in config:
+        raise ConfigurationError(
+            "config key 'final_analysis' was renamed to 'panel_analysis'; "
+            "rename that section before running the panel analysis pipeline"
+        )
+    _validate_panel_analysis_config(config.get("panel_analysis", {}))
     _validate_slurm_submission_limits(config.get("computing", {}).get("slurm", {}))
 
 
-def _validate_paper_panels_config(config: Dict[str, Any]) -> None:
-    """Validate corrected paper-panel parameters when configured."""
+def _validate_panel_analysis_config(config: Dict[str, Any]) -> None:
+    """Validate corrected panel-analysis parameters when configured."""
     if not config:
         return
     bounds = config.get("inout_percentiles")
     if bounds != [25, 75]:
-        raise ConfigurationError("paper_panels.inout_percentiles must be [25, 75]")
+        raise ConfigurationError("panel_analysis.inout_percentiles must be [25, 75]")
     if config.get("strict_window_size") != 8:
-        raise ConfigurationError("paper_panels.strict_window_size must be 8")
+        raise ConfigurationError("panel_analysis.strict_window_size must be 8")
     if config.get("gaussian_fwhm") != 9.0:
-        raise ConfigurationError("paper_panels.gaussian_fwhm must be 9 trials")
+        raise ConfigurationError("panel_analysis.gaussian_fwhm must be 9 trials")
     positive = (
         "map_permutations",
         "decoding_permutations",
@@ -194,13 +204,13 @@ def _validate_paper_panels_config(config: Dict[str, Any]) -> None:
     invalid = [key for key in positive if int(config.get(key, 0)) <= 0]
     if invalid:
         raise ConfigurationError(
-            f"Paper panels parameters must be positive: {', '.join(invalid)}"
+            f"Panel analysis parameters must be positive: {', '.join(invalid)}"
         )
     if config["map_permutations"] % config["map_chunk_size"]:
-        raise ConfigurationError("paper_panels.map_chunk_size must divide map_permutations")
+        raise ConfigurationError("panel_analysis.map_chunk_size must divide map_permutations")
     if config["decoding_permutations"] % config["decoding_chunk_size"]:
         raise ConfigurationError(
-            "paper_panels.decoding_chunk_size must divide decoding_permutations"
+            "panel_analysis.decoding_chunk_size must divide decoding_permutations"
         )
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from code.paper_panels.contracts import PANEL1_RENDER_ARRAYS
+from code.analysis.contracts import PANEL1_RENDER_ARRAYS
 from code.utils.config import load_config
 
 REQUIRED_ARRAYS = {
@@ -66,7 +66,7 @@ def validate_panel(
         if analysis_root
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
+        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
     )
     directory = root / analysis_id / panel
     metadata = json.loads((directory / "observed.json").read_text())

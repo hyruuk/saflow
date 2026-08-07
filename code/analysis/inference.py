@@ -1,4 +1,4 @@
-"""Synchronized family-wise statistics for Paper panels maps."""
+"""Synchronized family-wise statistics for Panel analysis maps."""
 
 from __future__ import annotations
 

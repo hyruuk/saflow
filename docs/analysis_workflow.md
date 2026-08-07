@@ -1,6 +1,6 @@
 # Analysis workflow
 
-## Corrected paper-panel branch
+## Corrected panel-analysis branch
 
 The paper panels are regenerated under a new immutable analysis ID. Raw VTC is filtered
 per run with reflected Gaussian boundaries, then every neural window is aligned
@@ -40,7 +40,7 @@ from Theta through Gamma 3 and excludes Delta. Panel 1 includes raw PSD, FOOOF,
 and corrected PSD; Panels 2 and 3 use only FOOOF and corrected PSD. Complexity
 is exploratory. HPC output is authoritative; compact exports reproduce local
 tables and figures. The machine-readable schemas and dry-run dependency rules
-are described in [`paper_panels_output_schemas.md`](paper_panels_output_schemas.md).
+are described in [`analysis_output_schemas.md`](analysis_output_schemas.md).
 
 ### Resumable inference
 
@@ -92,7 +92,7 @@ queued/running jobs, stays below the configured 1,000-job ceiling, and keeps a
 
 ### Rendering and replacement safety
 
-`viz.paper` checks all requested compact observed bundles. If any are missing
+`viz.panels` checks all requested compact observed bundles. If any are missing
 or are not explicitly marked `data_mode: real`, the requested render uses
 schema-compatible deterministic synthetic arrays and watermarks every subplot.
 Synthetic figures may replace only synthetic figures. A real render may

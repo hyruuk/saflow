@@ -1,4 +1,4 @@
-"""Render and submit immutable Paper panels execution plan cells to SLURM."""
+"""Render and submit immutable Panel analysis execution plan cells to SLURM."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from code.paper_panels.cell_status import execute_cell
-from code.paper_panels.execution_plan import stage_for_node
+from code.analysis.cell_status import execute_cell
+from code.analysis.execution_plan import stage_for_node
 from code.utils.slurm import (
     render_slurm_script,
     submit_job_array,
@@ -55,8 +55,8 @@ VALIDATOR_NODES = {
 FINALIZATION_NODES = {
     "exploratory_analyses",
     "compact_export_tables_slides",
-    "paper_composites",
-    "final_analysis_audit",
+    "figure_composites",
+    "analysis_audit",
 }
 IMPLEMENTED_NODES = (
     RAW_FEATURE_NODES
@@ -91,7 +91,7 @@ def submit_execution_plan(
         )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     script_root = analysis_dir / "slurm" / "scripts"
-    log_root = Path(config["paths"]["logs"]) / "paper_panels" / analysis_dir.name
+    log_root = Path(config["paths"]["logs"]) / "analysis_pipeline" / analysis_dir.name
     job_ids: dict[str, str] = {}
     submissions = []
     plan = {record["name"]: record for record in manifest["submission_plan"]}
@@ -169,7 +169,7 @@ def execute_plan_locally(
     )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     script_root = analysis_dir / "local" / "scripts"
-    log_root = Path(config["paths"]["logs"]) / "paper_panels" / analysis_dir.name
+    log_root = Path(config["paths"]["logs"]) / "analysis_pipeline" / analysis_dir.name
     plan = {record["name"]: record for record in manifest["submission_plan"]}
     executions = []
     for node in retained:
@@ -312,10 +312,10 @@ def _render_cell(
     resources = _base_resources(config, plan, log_root)
     script_path = cell_dir / f"cell-{cell['index']:04d}.sh"
     render_slurm_script(
-        "paper_panel_cell.sh.j2",
+        "analysis_cell.sh.j2",
         {
             **resources,
-            "job_name": f"paper_{name[:30]}",
+            "job_name": f"saflow_{name[:30]}",
             "timestamp": timestamp,
             "spec_path": shlex.quote(str(spec_path)),
             "config_path": shlex.quote(
@@ -393,7 +393,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.paper_panels.validation_runner",
+            "code.analysis.validation_runner",
             "--space",
             node.removesuffix("_feature_validator"),
         ]
@@ -406,7 +406,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.paper_panels.observed_runner",
+            "code.analysis.observed_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -428,7 +428,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.paper_panels.panel1_decoding_runner",
+            "code.analysis.panel1_decoding_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -440,7 +440,7 @@ def command_for_cell(
             "--cell-index",
             str(cell["index"]),
             "--jobs",
-            str(config.get("paper_panels", {}).get("resources", {}).get(
+            str(config.get("panel_analysis", {}).get("resources", {}).get(
                 "maps", {}
             ).get("cpus", 4)),
         ]
@@ -453,7 +453,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.paper_panels.panel2_permutation_runner",
+            "code.analysis.panel2_permutation_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -473,7 +473,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.paper_panels.aggregate_runner",
+            "code.analysis.aggregate_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -490,7 +490,7 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.paper_panels.panel_validator",
+            "code.analysis.panel_validator",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -499,19 +499,19 @@ def command_for_cell(
             node.removesuffix("_validator"),
         ]
     if node == "exploratory_analyses":
-        resources = config.get("paper_panels", {}).get("resources", {}).get(
+        resources = config.get("panel_analysis", {}).get("resources", {}).get(
             "maps", {}
         )
         return [
             python,
             "-m",
-            "code.paper_panels.exploratory_runner",
+            "code.analysis.exploratory_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
             str(analysis_root),
             "--n-permutations",
-            str(config.get("paper_panels", {}).get("decoding_permutations", 1_000)),
+            str(config.get("panel_analysis", {}).get("decoding_permutations", 1_000)),
             "--jobs",
             str(resources.get("cpus", 4)),
         ]
@@ -519,7 +519,7 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.paper_panels.workflow",
+            "code.analysis.workflow",
             "export",
             "--analysis-id",
             analysis_id,
@@ -528,11 +528,11 @@ def command_for_cell(
             "--destination",
             str(Path(config["paths"]["reports"]) / "exports" / analysis_id),
         ]
-    if node == "paper_composites":
+    if node == "figure_composites":
         return [
             python,
             "-m",
-            "code.paper_panels.render",
+            "code.analysis.render",
             "--panel",
             "all",
             "--analysis-id",
@@ -542,11 +542,11 @@ def command_for_cell(
             "--reports-root",
             str(config["paths"]["reports"]),
         ]
-    if node == "final_analysis_audit":
+    if node == "analysis_audit":
         return [
             python,
             "-m",
-            "code.paper_panels.workflow",
+            "code.analysis.workflow",
             "audit",
             "--analysis-id",
             analysis_id,
@@ -559,7 +559,7 @@ def command_for_cell(
         python,
         "-c",
         (
-            "raise RuntimeError('Paper panels node adapter is not implemented: "
+            "raise RuntimeError('Panel analysis node adapter is not implemented: "
             f"{node}')"
         ),
     ]
@@ -607,12 +607,12 @@ def _submit_node(
     resources = _base_resources(
         config,
         plan,
-        Path(config["paths"]["logs"]) / "paper_panels",
+        Path(config["paths"]["logs"]) / "panel_analysis",
     )
     if node["array"]:
         return submit_job_array(
             scripts,
-            f"paper_{node['name']}",
+            f"saflow_{node['name']}",
             resources,
             script_root / node["name"],
             timestamp,
@@ -636,7 +636,7 @@ def _submit_node(
 def _base_resources(
     config: dict[str, Any], plan: dict[str, Any], log_root: Path
 ) -> dict[str, Any]:
-    """Translate the Paper panels resource contract to the shared template."""
+    """Translate the Panel analysis resource contract to the shared template."""
     slurm = config["computing"]["slurm"]
     return {
         "account": slurm["account"],

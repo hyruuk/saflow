@@ -1,4 +1,4 @@
-"""Observed scientific workers for the three paper panels."""
+"""Observed scientific workers for the three panel analysis."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from code.classification.multifeature_scientific import (
     NestedRidgeConfig,
     run_primary_analysis,
 )
-from code.paper_panels.decoding import DecodingConfig
-from code.paper_panels.networks import (
+from code.analysis.decoding import DecodingConfig
+from code.analysis.networks import (
     CELL_ORDER,
     YEO7_ORDER,
     compute_factorial_contrasts,

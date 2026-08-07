@@ -1,4 +1,4 @@
-"""Command-line orchestration for immutable corrected Paper panels analyses."""
+"""Command-line orchestration for immutable corrected Panel analysis analyses."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import subprocess
 import csv
 from pathlib import Path
 
-from code.paper_panels.contracts import (
+from code.analysis.contracts import (
     PANEL1_FEATURES,
     PANEL23_FEATURES,
     PANEL_COMPONENTS,
@@ -20,24 +20,24 @@ from code.paper_panels.contracts import (
     frequency_band_manifest,
     schema_catalog,
 )
-from code.paper_panels.execution_plan import (
-    DEFAULT_PAPER_PANEL_RESOURCES,
+from code.analysis.execution_plan import (
+    DEFAULT_ANALYSIS_RESOURCES,
     bound_execution_plan,
     build_execution_plan,
     build_submission_plan,
 )
-from code.paper_panels.preflight import inspect_inputs, write_reports
-from code.paper_panels.provenance import (
+from code.analysis.preflight import inspect_inputs, write_reports
+from code.analysis.provenance import (
     config_hash,
     create_analysis_id,
     initialize,
     validate_analysis_id,
 )
-from code.paper_panels.slurm_execution import (
+from code.analysis.slurm_execution import (
     execute_plan_locally,
     submit_execution_plan,
 )
-from code.paper_panels.panel_validator import validate_panel
+from code.analysis.panel_validator import validate_panel
 from code.utils.logging_config import setup_logging
 from code.utils.config import load_config
 
@@ -52,7 +52,7 @@ def _load_config(path: Path) -> dict:
 def _analysis_root(config: dict, override: str | None) -> Path:
     if override:
         return Path(override)
-    directory = config.get("paper_panels", {}).get("processed_directory", "paper_panels")
+    directory = config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
     return Path(config["paths"]["data_root"]) / "processed" / directory
 
 
@@ -89,7 +89,7 @@ def run_preflight(args: argparse.Namespace) -> Path:
     (analysis_dir / "manifests" / "schemas.json").write_text(
         json.dumps(schema_catalog(), indent=2) + "\n"
     )
-    LOGGER.info("Paper panels preflight initialized %s", analysis_dir)
+    LOGGER.info("Panel analysis preflight initialized %s", analysis_dir)
     return analysis_dir
 
 
@@ -105,7 +105,7 @@ def run_analysis(args: argparse.Namespace) -> Path:
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
     preflight = analysis_dir / "preflight_report.json"
     if not preflight.exists() or json.loads(preflight.read_text()).get("status") != "passed":
-        raise RuntimeError("a passing paper_panels-preflight report is required")
+        raise RuntimeError("a passing panel_analysis-preflight report is required")
     manifest = {
         "analysis_id": args.analysis_id,
         "n_permutations": args.n_permutations,
@@ -160,7 +160,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
     initialize(root, analysis_id, config, vars(args), Path.cwd())
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
-    paper_panels_config = config.get("paper_panels", {})
+    panel_analysis_config = config.get("panel_analysis", {})
     graph = build_execution_plan(
         analysis_id,
         subjects,
@@ -168,10 +168,10 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         args.spaces.split(),
         include_exploratory=args.include_exploratory,
         map_chunk_count=_chunk_count(
-            paper_panels_config, "map_permutations", "map_chunk_size", 10_000, 250
+            panel_analysis_config, "map_permutations", "map_chunk_size", 10_000, 250
         ),
         decoding_chunk_count=_chunk_count(
-            paper_panels_config,
+            panel_analysis_config,
             "decoding_permutations",
             "decoding_chunk_size",
             1_000,
@@ -197,7 +197,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
     )
     graph["submission_plan"] = build_submission_plan(
         graph,
-        paper_panels_config.get("resources", DEFAULT_PAPER_PANEL_RESOURCES),
+        panel_analysis_config.get("resources", DEFAULT_ANALYSIS_RESOURCES),
         config.get("computing", {}).get("slurm", {}),
     )
     path = analysis_dir / "manifests" / "execution_plan.json"
@@ -509,7 +509,7 @@ def export_analysis(args: argparse.Namespace) -> Path:
     if destination.exists():
         raise FileExistsError(f"export destination exists: {destination}")
     if not (source / "preflight_report.json").exists():
-        raise ValueError("source is not a Paper panels analysis")
+        raise ValueError("source is not a Panel analysis analysis")
     destination.mkdir(parents=True)
     excluded = {"chunks", "partials", "subject_features", "inputs", "slurm"}
     copied = []
@@ -589,7 +589,7 @@ def _scalar_items(value: object, prefix: str = "") -> list[tuple[str, object]]:
 
 
 def audit_analysis(args: argparse.Namespace) -> Path:
-    """Audit complete bundles and rendered paper/slide provenance."""
+    """Audit complete bundles and rendered composite/slide provenance."""
     validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
@@ -614,9 +614,9 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                 }
             )
         bundle = analysis_dir / panel / "observed.json"
-        paper = reports_root / "figures" / "paper" / spec["paper_filename"]
-        sidecar = paper.with_name(f"{paper.name}.json")
-        for kind, path in (("bundle", bundle), ("paper", paper), ("sidecar", sidecar)):
+        composite = reports_root / "figures" / "paper" / spec["composite_filename"]
+        sidecar = composite.with_name(f"{composite.name}.json")
+        for kind, path in (("bundle", bundle), ("composite", composite), ("sidecar", sidecar)):
             if not path.exists():
                 findings.append({"panel": panel, "kind": kind, "status": "missing"})
         if sidecar.exists():
@@ -677,15 +677,15 @@ def audit_analysis(args: argparse.Namespace) -> Path:
         "observed_data_modes": sorted(str(mode) for mode in modes),
         "findings": findings,
     }
-    path = analysis_dir / "final_analysis_audit.json"
+    path = analysis_dir / "analysis_audit.json"
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     if status != "passed":
-        raise RuntimeError(f"final analysis audit failed; see {path}")
+        raise RuntimeError(f"panel analysis audit failed; see {path}")
     return path
 
 
 def inventory_legacy(args: argparse.Namespace) -> Path:
-    """Hash legacy Paper panels outputs without moving, deleting, or modifying them."""
+    """Hash legacy Panel analysis outputs without moving, deleting, or modifying them."""
     entries = []
     source = Path(args.source)
     for path in sorted(source.rglob("*")) if source.exists() else []:
@@ -700,7 +700,7 @@ def inventory_legacy(args: argparse.Namespace) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the Paper panels workflow parser."""
+    """Build the Panel analysis workflow parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser("preflight")
@@ -765,9 +765,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run the selected Paper panels workflow command."""
+    """Run the selected Panel analysis workflow command."""
     args = build_parser().parse_args()
-    setup_logging("paper_panels", log_file="paper_panels.log",
+    setup_logging("analysis_pipeline", log_file="analysis_pipeline.log",
                   config={"paths": {"logs": "logs"}, "logging": {"level": "INFO"}})
     functions = {
         "preflight": run_preflight,

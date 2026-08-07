@@ -1,36 +1,36 @@
 # Saflow: MEG Analysis Pipeline for GradCPT Task
 
-## Corrected paper-panel pipeline
+## Corrected panel-analysis pipeline
 
 The publication workflow is separate and immutable. It rebuilds strict
 eight-trial labels from reflected-boundary filtered VTC and generates three
-paper panels from compact exports. The authoritative frequency policy contains
-Theta through Gamma 3; Delta and complexity are excluded from the paper branch.
+final panels from compact exports. The authoritative frequency policy contains
+Theta through Gamma 3; Delta and complexity are excluded from the primary branch.
 
 ```bash
 invoke pipeline.all --dry-run                 # inspect local execution
 invoke pipeline.all                          # execute locally
 invoke pipeline.all --slurm --dry-run         # inspect Rorqual submission wave
 invoke pipeline.all --slurm                   # submit to Rorqual
-invoke pipeline.resume --slurm --analysis-id=paper-...
-invoke viz.paper --panel=all --analysis-id=paper-...
+invoke pipeline.resume --slurm --analysis-id=analysis-...
+invoke viz.panels --panel=all --analysis-id=analysis-...
 ```
 
-`pipeline.all` creates an immutable paper analysis, renders every cell script,
+`pipeline.all` creates an immutable panel analysis, renders every cell script,
 and executes it locally unless `--slurm` is passed explicitly. SLURM execution
 uses capacity-limited waves below the configured 1,000-job ceiling.
 `--dry-run` performs planning and script generation without executing cells or
 calling `sbatch`.
 `--stop-after=features` retains the former raw-to-feature endpoint. See
-[the output contracts](docs/paper_panels_output_schemas.md).
+[the output contracts](docs/analysis_output_schemas.md).
 The statistical definitions are summarized in
-[the corrected methods notes](docs/paper_panels_methods.md).
+[the corrected methods notes](docs/analysis_methods.md).
 
 Corrected BIDS enrichment is run-wise and provenance-aware:
 
 ```bash
 invoke pipeline.bids --subjects "04 05" --runs "02 03" --slurm
-invoke analysis.paper-preflight --subjects "04 05" --runs "02 03"
+invoke analysis.preflight --subjects "04 05" --runs "02 03"
 ```
 
 Gaussian VTC smoothing uses reflected boundaries with FWHM 9 trials. Existing
@@ -40,7 +40,7 @@ rejection, matched anchor outcomes, four-cell counts, and 5/10-window
 modulation/coupling eligibility.
 
 Legacy paper outputs are not changed. Create their hash inventory with
-`invoke analysis.paper-legacy-inventory`.
+`invoke analysis.legacy-inventory`.
 
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 
@@ -99,7 +99,7 @@ Saflow implements a complete MEG analysis pipeline for the gradCPT (gradual Cont
 - ✅ **Two-pass preprocessing** - ICA + AutoReject with aggregate QC reports
 - ✅ **Group statistics** - paired t-tests with tmax/FDR/Bonferroni corrections
 - ✅ **Classification** - single-feature, multi-feature (4 axes), and Yeo-network-restricted
-- ✅ **Composite figures** - paper-ready stats+classif panels, FOOOF spectral decomposition, network story panels
+- ✅ **Composite figures** - publication-ready stats+classif panels, FOOOF spectral decomposition, network story panels
 - ✅ **Modern Python** - type hints, dataclasses, invoke task runner
 
 ---
@@ -417,8 +417,8 @@ invoke pipeline.preprocess --subject=04 --runs="02"
 invoke pipeline.preprocess --subject=04 --runs="02" --crop=60 --skip-report
 
 # Exercise all three scientific workers and resumable chunks locally
-invoke analysis.paper-synthetic \
-  --output-dir=/tmp/saflow-paper-panels
+invoke analysis.synthetic \
+  --output-dir=/tmp/saflow-panel-analysis
 
 # Inspect the complete raw-to-paper SLURM execution plan
 invoke pipeline.all --slurm --dry-run
@@ -427,15 +427,15 @@ invoke pipeline.all --slurm --dry-run
 invoke pipeline.all --slurm
 
 # Render protected synthetic prototypes or complete real bundles
-invoke viz.paper --panel=all
+invoke viz.panels --panel=all
 
 # Preview or submit only invalid cells in an immutable analysis
-invoke pipeline.resume --slurm --analysis-id=paper-... --dry-run
-invoke pipeline.resume --slurm --analysis-id=paper-...
+invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
+invoke pipeline.resume --slurm --analysis-id=analysis-...
 
 # Monitor and repeat resume until no invalid cells remain
-invoke slurm.jobs --pattern=paper_
-invoke pipeline.resume --slurm --analysis-id=paper-... --dry-run
+invoke slurm.jobs --pattern=saflow_
+invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 
 # execution_plan.json includes commands, resources, job IDs, arrays, and dependencies.
 # Real Panel 1 rendering requires the complete A-J render-array contract;

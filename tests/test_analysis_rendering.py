@@ -1,4 +1,4 @@
-"""Protected paper and slide rendering tests."""
+"""Protected composite and slide rendering tests."""
 
 import json
 from pathlib import Path
@@ -7,22 +7,22 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from code.paper_panels.render import (
+from code.analysis.render import (
     _assert_overwrite_allowed,
-    render_paper_panels,
+    render_panels,
 )
 
 
-def test_synthetic_panel_writes_watermarked_paper_and_exact_slide_exports(
+def test_synthetic_panel_writes_watermarked_composite_and_exact_slide_exports(
     tmp_path: Path,
 ):
-    outputs = render_paper_panels(
+    outputs = render_panels(
         panel="panel2",
         analysis_id=None,
         analysis_root=None,
         reports_root=tmp_path,
     )
-    paper = tmp_path / "figures" / "paper" / "panel2_multifeature_decoding.png"
+    composite = tmp_path / "figures" / "paper" / "panel2_multifeature_decoding.png"
     slide = (
         tmp_path
         / "figures"
@@ -31,7 +31,7 @@ def test_synthetic_panel_writes_watermarked_paper_and_exact_slide_exports(
         / "01_A_model_performance.png"
     )
     svg = slide.with_suffix(".svg")
-    assert paper in outputs
+    assert composite in outputs
     assert slide in outputs
     assert svg in outputs
     assert Image.open(slide).size == (2560, 1440)
@@ -82,7 +82,7 @@ def test_real_mode_requires_complete_real_bundle(tmp_path: Path):
     (bundle / "observed.json").write_text(
         '{"provenance": {"data_mode": "real"}}'
     )
-    outputs = render_paper_panels(
+    outputs = render_panels(
         panel="panel1",
         analysis_id="analysis-1",
         analysis_root=analysis_root,

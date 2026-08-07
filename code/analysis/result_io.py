@@ -1,4 +1,4 @@
-"""Atomic JSON/NPZ serialization for Paper panels scientific results."""
+"""Atomic JSON/NPZ serialization for Panel analysis scientific results."""
 
 from __future__ import annotations
 

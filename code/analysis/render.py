@@ -1,4 +1,4 @@
-"""Protected publication rendering for all three corrected paper panels."""
+"""Protected publication rendering for all three corrected panel analysis."""
 
 from __future__ import annotations
 
@@ -14,15 +14,15 @@ from typing import Any, Callable
 import matplotlib.pyplot as plt
 import numpy as np
 
-from code.paper_panels.contracts import (
-    PAPER_BANDS,
+from code.analysis.contracts import (
+    CANONICAL_BANDS,
     PANEL_COMPONENTS,
     PANEL1_RENDER_ARRAYS,
     PANEL_SPECS,
     SCHEMA_VERSION,
 )
 
-PAPER_DPI = 600
+COMPOSITE_DPI = 600
 SLIDE_DPI = 160
 SLIDE_SIZE = (16.0, 9.0)
 
@@ -41,7 +41,7 @@ class RenderContext:
     seed: int = 42
 
 
-def render_paper_panels(
+def render_panels(
     *,
     panel: str,
     analysis_id: str | None,
@@ -169,21 +169,21 @@ def _synthetic_arrays(
 def _render_panel(
     panel: str, arrays: dict[str, np.ndarray], context: RenderContext
 ) -> list[Path]:
-    """Render one paper composite and every standalone component."""
+    """Render one final composite and every standalone component."""
     components = PANEL_COMPONENTS[panel]
     plotters = [_component_plotter(panel, index) for index in range(len(components))]
-    paper_path = (
-        context.reports_root / "figures" / "paper" / PANEL_SPECS[panel]["paper_filename"]
+    composite_path = (
+        context.reports_root / "figures" / "paper" / PANEL_SPECS[panel]["composite_filename"]
     )
-    figure, axes = _paper_canvas(panel, len(components))
+    figure, axes = _composite_canvas(panel, len(components))
     for index, (axis, title, plotter) in enumerate(zip(axes, components, plotters)):
         plotter(axis, arrays, index)
         axis.set_title(title.replace("_", " "), loc="left", fontsize=7, fontweight="bold")
         _watermark(axis, context.data_mode)
     figure.suptitle(_panel_title(panel), fontsize=11, fontweight="bold")
-    _save_figure(figure, paper_path, context, panel, "composite", PAPER_DPI)
+    _save_figure(figure, composite_path, context, panel, "composite", COMPOSITE_DPI)
     plt.close(figure)
-    outputs = [paper_path]
+    outputs = [composite_path]
     slide_dir = (
         context.reports_root
         / "figures"
@@ -206,7 +206,7 @@ def _render_panel(
     return outputs
 
 
-def _paper_canvas(panel: str, count: int) -> tuple[plt.Figure, list[plt.Axes]]:
+def _composite_canvas(panel: str, count: int) -> tuple[plt.Figure, list[plt.Axes]]:
     """Create the focused publication geometry for one panel."""
     if panel == "panel1":
         figure = plt.figure(figsize=(13.5, 15.5), constrained_layout=True)
@@ -277,21 +277,21 @@ def _plot_panel1_band_summary(
             axis,
             values,
             arrays,
-            [band.display_name for band in PAPER_BANDS],
+            [band.display_name for band in CANONICAL_BANDS],
             key,
             decoding=decoding,
         )
         return
     summary = np.nanmean(values, axis=1)
     errors = np.nanstd(values, axis=1) / np.sqrt(values.shape[1])
-    colors = plt.get_cmap("viridis")(np.linspace(0.15, 0.9, len(PAPER_BANDS)))
+    colors = plt.get_cmap("viridis")(np.linspace(0.15, 0.9, len(CANONICAL_BANDS)))
     axis.bar(np.arange(len(summary)), summary, color=colors, width=0.75)
     axis.errorbar(
         np.arange(len(summary)), summary, yerr=errors, fmt="none", ecolor="black", lw=0.6
     )
     axis.set_xticks(
-        np.arange(len(PAPER_BANDS)),
-        [band.display_name for band in PAPER_BANDS],
+        np.arange(len(CANONICAL_BANDS)),
+        [band.display_name for band in CANONICAL_BANDS],
         rotation=55,
         ha="right",
         fontsize=5.5,
@@ -668,14 +668,14 @@ def _analysis_provenance(analysis_dir: Path | None) -> dict[str, Any]:
 
 
 def main() -> None:
-    """Render paper panels from CLI arguments."""
+    """Render panel analysis from CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--panel", default="all")
     parser.add_argument("--analysis-id")
     parser.add_argument("--analysis-root", type=Path)
     parser.add_argument("--reports-root", type=Path, default=Path("reports"))
     arguments = parser.parse_args()
-    render_paper_panels(
+    render_panels(
         panel=arguments.panel,
         analysis_id=arguments.analysis_id,
         analysis_root=arguments.analysis_root,

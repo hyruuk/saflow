@@ -1,4 +1,4 @@
-"""Run clearly separated corrected-paper exploratory sidekick analyses."""
+"""Run clearly separated corrected exploratory sidekick analyses."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from code.paper_panels.contracts import PANEL1_FEATURES
+from code.analysis.contracts import PANEL1_FEATURES
 from code.utils.config import load_config
 
 
@@ -74,7 +74,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
         if args.analysis_root
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
+        / config.get("panel_analysis", {}).get("processed_directory", "panel_analysis")
     )
     output = root / args.analysis_id / "exploratory" / "sidekick_manifest.json"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
                 "analysis_id": args.analysis_id,
                 "status": "complete",
                 "classification": "exploratory only",
-                "paper_masks_replaced": False,
+                "primary_masks_replaced": False,
                 "features": [*PANEL1_FEATURES, "complexity shortcut"],
                 "spaces": ["sensor", "schaefer_400"],
                 "trial_types": ["alltrials sensor diagnostic", "correct", "lapse"],

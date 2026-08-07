@@ -1,4 +1,4 @@
-"""Stable scientific and artifact contracts for the paper-panel workflow."""
+"""Stable scientific and artifact contracts for the panel-analysis workflow."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ SCHEMA_VERSION = "1.0.0"
 
 @dataclass(frozen=True)
 class FrequencyBand:
-    """Describe one canonical paper frequency band."""
+    """Describe one canonical frequency band."""
 
     display_name: str
     key: str
@@ -18,7 +18,7 @@ class FrequencyBand:
     high_hz: float
 
 
-PAPER_BANDS = (
+CANONICAL_BANDS = (
     FrequencyBand("Theta", "theta", 4.0, 8.0),
     FrequencyBand("Alpha", "alpha", 8.0, 12.0),
     FrequencyBand("Low Beta", "lobeta", 12.0, 20.0),
@@ -27,7 +27,7 @@ PAPER_BANDS = (
     FrequencyBand("Gamma 2", "gamma2", 60.0, 90.0),
     FrequencyBand("Gamma 3", "gamma3", 90.0, 120.0),
 )
-PAPER_BAND_KEYS = tuple(band.key for band in PAPER_BANDS)
+CANONICAL_BAND_KEYS = tuple(band.key for band in CANONICAL_BANDS)
 BAND_ALIASES = {
     "low_beta": "lobeta",
     "high_beta": "hibeta",
@@ -35,9 +35,9 @@ BAND_ALIASES = {
     "high_gamma": "gamma2",
 }
 FOOOF_FEATURES = ("fooof_exponent", "fooof_offset", "fooof_r_squared")
-CORRECTED_PSD_FEATURES = tuple(f"psd_corrected_{key}" for key in PAPER_BAND_KEYS)
+CORRECTED_PSD_FEATURES = tuple(f"psd_corrected_{key}" for key in CANONICAL_BAND_KEYS)
 PANEL1_FEATURES = (
-    *(f"psd_{key}" for key in PAPER_BAND_KEYS),
+    *(f"psd_{key}" for key in CANONICAL_BAND_KEYS),
     *FOOOF_FEATURES,
     *CORRECTED_PSD_FEATURES,
 )
@@ -92,19 +92,19 @@ PANEL1_RENDER_ARRAYS = (
 
 PANEL_SPECS = {
     "panel1": {
-        "paper_filename": "panel1_feature_modulation.png",
+        "composite_filename": "panel1_feature_modulation.png",
         "slide_directory": "panel1_feature_modulation",
         "layout": "A-J preserved feature-modulation and spectral narrative",
         "features": PANEL1_FEATURES,
     },
     "panel2": {
-        "paper_filename": "panel2_multifeature_decoding.png",
+        "composite_filename": "panel2_multifeature_decoding.png",
         "slide_directory": "panel2_multifeature_decoding",
         "layout": "three-model performance, feature reliance, and parcel reliance",
         "features": PANEL23_FEATURES,
     },
     "panel3": {
-        "paper_filename": "panel3_network_dynamics.png",
+        "composite_filename": "panel3_network_dynamics.png",
         "slide_directory": "panel3_network_dynamics",
         "layout": "four-cell modulation, contrasts, and DMN-DAN coupling",
         "features": PANEL23_FEATURES,
@@ -124,16 +124,16 @@ RESULT_SCHEMA_NAMES = (
 
 
 def canonical_band_key(key: str) -> str:
-    """Return a canonical compatibility key and reject non-paper bands."""
+    """Return a canonical compatibility key and reject noncanonical bands."""
     canonical = BAND_ALIASES.get(key, key)
-    if canonical not in PAPER_BAND_KEYS:
-        raise ValueError(f"{key!r} is not a canonical paper band")
+    if canonical not in CANONICAL_BAND_KEYS:
+        raise ValueError(f"{key!r} is not a canonical band")
     return canonical
 
 
 def frequency_band_manifest() -> list[dict[str, Any]]:
-    """Return the serializable ordered paper-band manifest."""
-    return [asdict(band) for band in PAPER_BANDS]
+    """Return the serializable ordered band manifest."""
+    return [asdict(band) for band in CANONICAL_BANDS]
 
 
 def schema_catalog() -> dict[str, dict[str, Any]]:
