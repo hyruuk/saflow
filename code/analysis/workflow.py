@@ -133,12 +133,33 @@ def plan_execution(args: argparse.Namespace) -> Path:
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     spaces = args.spaces.split()
+    panel_analysis_config = config.get("panel_analysis", {})
     manifest = build_execution_plan(
         args.analysis_id,
         subjects,
         runs,
         spaces,
         include_exploratory=args.include_exploratory,
+        map_chunk_count=_chunk_count(
+            panel_analysis_config,
+            "map_permutations",
+            "map_chunk_size",
+            10_000,
+            250,
+        ),
+        decoding_chunk_count=_chunk_count(
+            panel_analysis_config,
+            "decoding_permutations",
+            "decoding_chunk_size",
+            1_000,
+            25,
+        ),
+        map_chunks_per_job=int(
+            panel_analysis_config.get("map_chunks_per_job", 5)
+        ),
+        decoding_chunks_per_job=int(
+            panel_analysis_config.get("decoding_chunks_per_job", 5)
+        ),
     )
     path = analysis_dir / "manifests" / "execution_plan.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -158,7 +179,6 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
     analysis_dir = root / analysis_id
     if analysis_dir.exists():
         raise FileExistsError(f"immutable analysis already exists: {analysis_dir}")
-    initialize(root, analysis_id, config, vars(args), Path.cwd())
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     panel_analysis_config = config.get("panel_analysis", {})
@@ -178,6 +198,12 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
             1_000,
             25,
         ),
+        map_chunks_per_job=int(
+            panel_analysis_config.get("map_chunks_per_job", 5)
+        ),
+        decoding_chunks_per_job=int(
+            panel_analysis_config.get("decoding_chunks_per_job", 5)
+        ),
     )
     graph = bound_execution_plan(
         graph,
@@ -185,6 +211,19 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         stop_after=args.stop_after,
         skip=_split_stages(args.skip),
     )
+    capacity = None
+    if args.slurm:
+        capacity = _available_submission_capacity(config, dry_run=args.dry_run)
+        required = len(graph["expected_outputs"])
+        if required > capacity:
+            raise RuntimeError(
+                "complete pipeline requires "
+                f"{required} available SLURM job slots, but only "
+                f"{capacity} remain below the 900-job ceiling; wait for at "
+                f"least {required - capacity} queued/running jobs to finish, "
+                "then rerun pipeline.all"
+            )
+    initialize(root, analysis_id, config, vars(args), Path.cwd())
     provenance = json.loads((analysis_dir / "provenance.json").read_text())
     graph["provenance"].update(
         {
@@ -196,17 +235,21 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
             "submission_status": "dry_run" if args.dry_run else "ready",
         }
     )
+    analysis_resources = {
+        **DEFAULT_ANALYSIS_RESOURCES,
+        **panel_analysis_config.get("resources", {}),
+    }
     graph["submission_plan"] = build_submission_plan(
         graph,
-        panel_analysis_config.get("resources", DEFAULT_ANALYSIS_RESOURCES),
+        analysis_resources,
         config.get("computing", {}).get("slurm", {}),
     )
     path = analysis_dir / "manifests" / "execution_plan.json"
     path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
     if args.slurm:
         invalid = list(graph["expected_outputs"])
-        capacity = _available_submission_capacity(config, dry_run=args.dry_run)
-        ready, deferred = _capacity_limited_wave(graph, invalid, capacity)
+        ready = invalid
+        deferred: list[dict] = []
         submission = submit_execution_plan(
             graph,
             analysis_dir,

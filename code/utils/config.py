@@ -212,6 +212,9 @@ def _validate_panel_analysis_config(config: Dict[str, Any]) -> None:
         raise ConfigurationError(
             "panel_analysis.decoding_chunk_size must divide decoding_permutations"
         )
+    for key in ("map_chunks_per_job", "decoding_chunks_per_job"):
+        if int(config.get(key, 5)) < 1:
+            raise ConfigurationError(f"panel_analysis.{key} must be positive")
 
 
 def _validate_slurm_submission_limits(config: Dict[str, Any]) -> None:

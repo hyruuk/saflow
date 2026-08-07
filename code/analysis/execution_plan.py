@@ -23,7 +23,17 @@ PIPELINE_STAGES = (
 DEFAULT_ANALYSIS_RESOURCES = {
     "maps": {"time": "08:00:00", "memory_gb": 16, "cpus": 4},
     "decoding": {"time": "12:00:00", "memory_gb": 24, "cpus": 4},
+    "permutation_batches": {
+        "time": "3-00:00:00",
+        "memory_gb": 24,
+        "cpus": 4,
+    },
     "rendering": {"time": "01:00:00", "memory_gb": 8, "cpus": 2},
+}
+BUNDLE_MINIMUM_RESOURCES = {
+    "run_preprocessing": {"time": "18:00:00", "mem": "64G", "cpus": 12},
+    "run_source": {"time": "05:00:00", "mem": "256G", "cpus": 1},
+    "run_features": {"time": "1-12:00:00", "mem": "96G", "cpus": 12},
 }
 
 
@@ -55,22 +65,29 @@ def build_execution_plan(
     include_exploratory: bool = True,
     map_chunk_count: int = 40,
     decoding_chunk_count: int = 40,
+    map_chunks_per_job: int = 5,
+    decoding_chunks_per_job: int = 5,
 ) -> dict[str, Any]:
     """Build the immutable raw-to-panels execution plan manifest."""
     nodes = [
         ExecutionNode("input_validation", "validator"),
-        ExecutionNode("bids_reflected_vtc", "worker", array=True),
-        ExecutionNode("preprocessing", "worker", array=True),
-        ExecutionNode("source_reconstruction", "worker", array=True),
-        ExecutionNode("schaefer_400_atlas", "worker", array=True),
+        ExecutionNode("run_preprocessing", "worker", array=True),
     ]
     edges = [
-        ExecutionDependency("input_validation", "bids_reflected_vtc", "afterok"),
-        ExecutionDependency("bids_reflected_vtc", "preprocessing", "aftercorr"),
-        ExecutionDependency("preprocessing", "source_reconstruction", "aftercorr"),
-        ExecutionDependency("source_reconstruction", "schaefer_400_atlas", "aftercorr"),
+        ExecutionDependency("input_validation", "run_preprocessing", "afterok"),
     ]
-    _add_feature_branches(nodes, edges, spaces, include_exploratory)
+    feature_upstream = "run_preprocessing"
+    if "schaefer_400" in spaces:
+        nodes.append(ExecutionNode("run_source", "worker", array=True))
+        edges.append(
+            ExecutionDependency("run_preprocessing", "run_source", "aftercorr")
+        )
+        feature_upstream = "run_source"
+    nodes.append(ExecutionNode("run_features", "worker", array=True))
+    edges.append(
+        ExecutionDependency(feature_upstream, "run_features", "aftercorr")
+    )
+    _add_feature_validators(nodes, edges, spaces)
     _add_analysis_branches(nodes, edges, include_exploratory)
     cells = [
         {"index": index, "subject": subject, "run": run}
@@ -89,6 +106,8 @@ def build_execution_plan(
         manifest,
         map_chunk_count=map_chunk_count,
         decoding_chunk_count=decoding_chunk_count,
+        map_chunks_per_job=map_chunks_per_job,
+        decoding_chunks_per_job=decoding_chunks_per_job,
     )
     return manifest
 
@@ -102,6 +121,8 @@ def bound_execution_plan(
 ) -> dict[str, Any]:
     """Return a stage-bounded plan while retaining inspectable exclusions."""
     aliases = {
+        "bids": "preprocess",
+        "atlas": "source",
         "source-recon": "source",
         "source_recon": "source",
         "panel1": "analyses",
@@ -152,14 +173,12 @@ def stage_for_node(name: str) -> str:
     """Map an execution plan node to its public bounded-execution stage."""
     if name == "input_validation":
         return "validation"
-    if name == "bids_reflected_vtc":
-        return "bids"
-    if name == "preprocessing":
+    if name == "run_preprocessing":
         return "preprocess"
-    if name == "source_reconstruction":
+    if name == "run_source":
         return "source"
-    if name == "schaefer_400_atlas":
-        return "atlas"
+    if name == "run_features":
+        return "features"
     if (
         "feature" in name
         or "complexity" in name
@@ -190,6 +209,7 @@ def expected_output_cells(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                     "feature": cell.get("feature"),
                     "model": cell.get("model"),
                     "chunk_index": cell.get("chunk_index"),
+                    "chunk_indices": cell.get("chunk_indices"),
                     "status_path": (
                         f"manifests/cells/{node['name']}/"
                         f"cell-{cell['index']:04d}.json"
@@ -204,19 +224,14 @@ def _build_node_cells(
     *,
     map_chunk_count: int,
     decoding_chunk_count: int,
+    map_chunks_per_job: int,
+    decoding_chunks_per_job: int,
 ) -> dict[str, list[dict[str, Any]]]:
     """Define the scientifically meaningful index mapping for every node."""
     subject_run_nodes = {
-        "bids_reflected_vtc",
-        "preprocessing",
-        "source_reconstruction",
-        "schaefer_400_atlas",
-        "sensor_psd",
-        "sensor_fooof_corrected_psd",
-        "sensor_complexity_exploratory",
-        "schaefer_400_psd",
-        "schaefer_400_fooof_corrected_psd",
-        "schaefer_400_complexity_exploratory",
+        "run_preprocessing",
+        "run_source",
+        "run_features",
     }
     node_cells: dict[str, list[dict[str, Any]]] = {}
     for node in manifest["nodes"]:
@@ -228,15 +243,20 @@ def _build_node_cells(
         elif name == "panel1_statistics":
             node_cells[name] = _named_cells("feature", PANEL1_FEATURES)
         elif name == "panel1_decoding_permutations":
-            node_cells[name] = _feature_chunk_cells(
-                PANEL1_FEATURES, map_chunk_count
+            node_cells[name] = _feature_chunk_batch_cells(
+                PANEL1_FEATURES,
+                map_chunk_count,
+                map_chunks_per_job,
             )
         elif name == "panel2_observed_models":
             node_cells[name] = _named_cells(
                 "model", ("state", "lapse_within_IN", "lapse_within_OUT")
             )
         elif name == "panel2_permutation_chunks":
-            node_cells[name] = _chunk_cells(decoding_chunk_count)
+            node_cells[name] = _chunk_batch_cells(
+                decoding_chunk_count,
+                decoding_chunks_per_job,
+            )
         elif name in {"panel3_factorial_maps", "panel3_coupling"}:
             node_cells[name] = _named_cells("feature", PANEL23_FEATURES)
         else:
@@ -251,28 +271,42 @@ def _named_cells(field: str, values: Sequence[str]) -> list[dict[str, Any]]:
     ]
 
 
-def _chunk_cells(count: int) -> list[dict[str, Any]]:
-    """Create ordered immutable permutation chunk cells."""
-    if count < 1:
-        raise ValueError("chunk count must be positive")
-    return [
-        {"index": index, "chunk_index": index} for index in range(count)
-    ]
-
-
-def _feature_chunk_cells(
-    features: Sequence[str], chunk_count: int
+def _chunk_batch_cells(
+    chunk_count: int,
+    chunks_per_job: int,
 ) -> list[dict[str, Any]]:
-    """Create synchronized feature × permutation-chunk cells."""
-    return [
-        {
-            "index": feature_index * chunk_count + chunk_index,
-            "feature": feature,
-            "chunk_index": chunk_index,
-        }
-        for feature_index, feature in enumerate(features)
-        for chunk_index in range(chunk_count)
-    ]
+    """Group ordered immutable chunks into sequential scheduler cells."""
+    if chunk_count < 1 or chunks_per_job < 1:
+        raise ValueError("chunk counts and chunks per job must be positive")
+    batches = []
+    for start in range(0, chunk_count, chunks_per_job):
+        indices = list(range(start, min(start + chunks_per_job, chunk_count)))
+        batches.append({"index": len(batches), "chunk_indices": indices})
+    return batches
+
+
+def _feature_chunk_batch_cells(
+    features: Sequence[str],
+    chunk_count: int,
+    chunks_per_job: int,
+) -> list[dict[str, Any]]:
+    """Group each feature's chunks without mixing scientific families."""
+    batches = []
+    for feature_index, feature in enumerate(features):
+        for batch in _chunk_batch_cells(chunk_count, chunks_per_job):
+            chunk_indices = batch["chunk_indices"]
+            batches.append(
+                {
+                    "index": len(batches),
+                    "feature": feature,
+                    "chunk_indices": chunk_indices,
+                    "chunk_cell_indices": [
+                        feature_index * chunk_count + chunk_index
+                        for chunk_index in chunk_indices
+                    ],
+                }
+            )
+    return batches
 
 
 def build_submission_plan(
@@ -325,15 +359,26 @@ def _resources_for_node(
     raw_key = _raw_resource_key(name)
     if raw_key and raw_key in stage_resources:
         selected = stage_resources[raw_key]
+        if name in BUNDLE_MINIMUM_RESOURCES:
+            return _bounded_bundle_resources(
+                name,
+                raw_key,
+                selected,
+            )
         return {
             "class": raw_key,
             "time": selected["time"],
             "mem": str(selected["mem"]),
             "cpus": selected["cpus"],
         }
-    if (
+    if "permutation" in name:
+        key = (
+            "permutation_batches"
+            if "permutation_batches" in resources
+            else "decoding"
+        )
+    elif (
         "decoding" in name
-        or "permutation" in name
         or name == "panel2_observed_models"
         or name == "exploratory_analyses"
     ):
@@ -351,20 +396,60 @@ def _resources_for_node(
     }
 
 
+def _bounded_bundle_resources(
+    name: str,
+    resource_class: str,
+    configured: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply safe lower bounds to sequential multi-stage run allocations."""
+    minimum = BUNDLE_MINIMUM_RESOURCES[name]
+    configured_time = str(configured["time"])
+    time = (
+        configured_time
+        if _slurm_time_seconds(configured_time)
+        >= _slurm_time_seconds(minimum["time"])
+        else minimum["time"]
+    )
+    configured_mem = str(configured["mem"])
+    memory = (
+        configured_mem
+        if _memory_gb(configured_mem) >= _memory_gb(minimum["mem"])
+        else minimum["mem"]
+    )
+    return {
+        "class": resource_class,
+        "time": time,
+        "mem": memory,
+        "cpus": max(int(configured["cpus"]), int(minimum["cpus"])),
+    }
+
+
+def _slurm_time_seconds(value: str) -> int:
+    """Convert SLURM ``[days-]HH:MM:SS`` time to seconds."""
+    day_text, clock = value.split("-", 1) if "-" in value else ("0", value)
+    hours, minutes, seconds = (int(part) for part in clock.split(":"))
+    return int(day_text) * 86_400 + hours * 3_600 + minutes * 60 + seconds
+
+
+def _memory_gb(value: str) -> float:
+    """Convert a SLURM memory request in G or M to GiB."""
+    normalized = value.strip().upper()
+    if normalized.endswith("G"):
+        return float(normalized[:-1])
+    if normalized.endswith("M"):
+        return float(normalized[:-1]) / 1024
+    raise ValueError(f"memory must use G or M units: {value}")
+
+
 def _raw_resource_key(name: str) -> str | None:
     """Map raw-to-feature nodes to established SLURM resource sections."""
-    if name in {"input_validation", "bids_reflected_vtc"}:
+    if name == "input_validation":
         return "bids"
-    if name == "preprocessing":
+    if name == "run_preprocessing":
         return "preprocessing"
-    if name == "source_reconstruction":
+    if name == "run_source":
         return "source_reconstruction"
-    if name == "schaefer_400_atlas":
-        return "atlas"
-    if (
-        name.endswith(("_psd", "_fooof_corrected_psd"))
-        or "complexity" in name
-    ):
+    if name == "run_features":
         return "features"
     if name.endswith("_feature_validator"):
         return "report"
@@ -391,36 +476,18 @@ def _validate_aftercorr_alignment(
             )
 
 
-def _add_feature_branches(
+def _add_feature_validators(
     nodes: list[ExecutionNode],
     edges: list[ExecutionDependency],
     spaces: Sequence[str],
-    include_exploratory: bool,
 ) -> None:
-    """Add PSD, FOOOF, corrected-PSD, complexity, and validation nodes."""
+    """Add one completeness barrier per requested spatial representation."""
     for space in spaces:
-        upstream = "preprocessing" if space == "sensor" else "schaefer_400_atlas"
-        psd = f"{space}_psd"
-        fooof = f"{space}_fooof_corrected_psd"
         validator = f"{space}_feature_validator"
-        nodes.extend([
-            ExecutionNode(psd, "worker", array=True),
-            ExecutionNode(fooof, "worker", array=True),
-            ExecutionNode(validator, "validator"),
-        ])
-        edges.extend([
-            ExecutionDependency(upstream, psd, "aftercorr"),
-            ExecutionDependency(psd, fooof, "aftercorr"),
-            ExecutionDependency(psd, validator, "afterany"),
-            ExecutionDependency(fooof, validator, "afterany"),
-        ])
-        if include_exploratory:
-            complexity = f"{space}_complexity_exploratory"
-            nodes.append(ExecutionNode(complexity, "worker", array=True, exploratory=True))
-            edges.extend([
-                ExecutionDependency(upstream, complexity, "aftercorr"),
-                ExecutionDependency(complexity, validator, "afterany"),
-            ])
+        nodes.append(ExecutionNode(validator, "validator"))
+        edges.append(
+            ExecutionDependency("run_features", validator, "afterany")
+        )
 
 
 def _add_analysis_branches(

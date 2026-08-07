@@ -83,13 +83,21 @@ nonzero on incomplete inputs; scientific consumers depend on them with
 `afterok`.
 
 `pipeline.resume` audits these status records and submits only invalid cells.
-It never removes a valid chunk. If a partial recovery would make two
+It never removes a valid chunk. If a recovery would make two
 `aftercorr` arrays use different index subsets, the downstream node is
 deferred to the next recovery wave rather than pairing incorrect cells.
-SLURM is selected only with `--slurm`. Each wave counts the user's current
-queued/running array elements and enforces a strict 900-job total ceiling.
-Configuration may lower that ceiling or reserve additional slots. Resume
-refuses to duplicate an active prior wave.
+SLURM is selected only with `--slurm`. The initial submission is atomic: it
+counts the user's current queued/running array elements and submits the entire
+plan only when the strict 900-job total ceiling permits it. The default
+32-subject plan contains 773 jobs. Configuration may lower the ceiling or
+reserve additional slots. Resume refuses to duplicate an active prior wave.
+
+Run-level work is grouped into three arrays with identical subject/run
+indices: BIDS plus preprocessing; source reconstruction plus atlas extraction;
+and all requested feature families. Sequential step outcomes are retained in
+the run-cell status JSON. Panel 1 and Panel 2 permutation array elements each
+process five original immutable chunks, reducing scheduler pressure without
+changing intervals, seeds, or aggregation checks.
 
 Concurrent run cells serialize the one shared empty-room BIDS write for each
 subject and reuse a complete derivative. Each SLURM element sets

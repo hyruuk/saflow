@@ -267,12 +267,24 @@ also records per-node resources, array sizes, and stable dry-run job
 identifiers, and validates every `aftercorr` index mapping.
 
 SLURM execution records returned job IDs in `manifests/execution_plan.json`.
-Submission waves count every array element plus the user's existing queue and
-enforce a hard total ceiling of 900 jobs. A lower
+The complete plan uses three resource-homogeneous arrays per run:
+`run_preprocessing` executes BIDS then preprocessing, `run_source` executes
+source reconstruction then Schaefer-400 extraction, and `run_features`
+executes the requested PSD, FOOOF/corrected-PSD, and exploratory complexity
+commands sequentially. Each status sidecar records every internal step and
+stops at the first failure.
+
+Panel 1 and Panel 2 scheduler cells each execute five deterministic immutable
+permutation chunks. Individual chunks retain their original intervals, seeds,
+and result bundles; retries reuse compatible completed chunks.
+
+Initial submission counts every array element plus the user's existing queue
+and enforces a hard total ceiling of 900 jobs. A lower
 `computing.slurm.max_submitted_jobs` or a positive
-`submission_job_reserve` can retain additional capacity. The scheduler records
-submitted and deferred cell counts in the manifest. Run resume only after the
-current wave ends.
+`submission_job_reserve` can retain additional capacity. The 32-subject ×
+six-run plan contains 773 jobs; the four-subject plan contains 269. If the
+complete plan cannot fit alongside existing jobs, `pipeline.all` submits
+nothing and reports how many slots must be freed.
 Validators run with `afterany` so they can report incomplete upstream arrays;
 scientific consumers use `afterok` on those barriers.
 
@@ -294,9 +306,8 @@ invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 invoke pipeline.resume --slurm --analysis-id=analysis-...
 ```
 
-A four-subject, six-run complete plan currently contains 1,013 cells. Its first
-wave contains 900 cells and defers aggregators until the remaining permutation
-chunks are submitted in a later resume wave.
+`pipeline.resume` is therefore a failure-recovery command, not a routine
+continuation step.
 
 ### `invoke viz.panels`
 

@@ -152,8 +152,9 @@ def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
         (edge["upstream"], edge["downstream"], edge["dependency"])
         for edge in manifest["edges"]
     }
-    assert ("bids_reflected_vtc", "preprocessing", "aftercorr") in edges
-    assert ("schaefer_400_psd", "schaefer_400_feature_validator", "afterany") in edges
+    assert ("run_preprocessing", "run_source", "aftercorr") in edges
+    assert ("run_source", "run_features", "aftercorr") in edges
+    assert ("run_features", "schaefer_400_feature_validator", "afterany") in edges
     assert ("schaefer_400_feature_validator", "panel1_statistics", "afterok") in edges
     assert ("panel1_validator", "compact_export_tables_slides", "afterok") in edges
     assert ("figure_composites", "analysis_audit", "afterok") in edges

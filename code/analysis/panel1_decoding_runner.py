@@ -25,6 +25,19 @@ def run_chunk(args: argparse.Namespace) -> Path:
     if args.feature not in PANEL1_FEATURES:
         raise ValueError(f"feature must be one of {PANEL1_FEATURES}")
     config = load_config(args.config)
+    analysis_dir = _analysis_directory(config, args.analysis_root, args.analysis_id)
+    directory = _chunk_directory(
+        analysis_dir,
+        args.feature,
+        args.chunk_index,
+    )
+    if args.skip_valid and _compatible_chunk_exists(
+        directory,
+        args.analysis_id,
+        args.feature,
+        args.chunk_index,
+    ):
+        return directory
     panel_analysis = config.get("panel_analysis", {})
     total = int(panel_analysis.get("map_permutations", 10_000))
     size = int(panel_analysis.get("map_chunk_size", 250))
@@ -64,7 +77,6 @@ def run_chunk(args: argparse.Namespace) -> Path:
             "seed": seed,
         }
     )
-    analysis_dir = _analysis_directory(config, args.analysis_root, args.analysis_id)
     analysis = json.loads((analysis_dir / "provenance.json").read_text())
     provenance = {
         "analysis_id": args.analysis_id,
@@ -80,16 +92,51 @@ def run_chunk(args: argparse.Namespace) -> Path:
         "permutation_interval": [start, stop],
         "seed": seed,
     }
-    directory = (
+    write_result_bundle(directory, result, provenance)
+    return directory
+
+
+def _chunk_directory(
+    analysis_dir: Path,
+    feature: str,
+    chunk_index: int,
+) -> Path:
+    """Return one immutable Panel 1 permutation chunk directory."""
+    return (
         analysis_dir
         / "panel1"
         / "partials"
         / "decoding"
-        / args.feature
-        / f"chunk-{args.chunk_index:04d}"
+        / feature
+        / f"chunk-{chunk_index:04d}"
     )
-    write_result_bundle(directory, result, provenance)
-    return directory
+
+
+def _compatible_chunk_exists(
+    directory: Path,
+    analysis_id: str,
+    feature: str,
+    chunk_index: int,
+) -> bool:
+    """Return whether a completed chunk can be reused inside a batch."""
+    archive = directory / "observed.npz"
+    metadata = directory / "observed.json"
+    if not archive.exists() and not metadata.exists():
+        return False
+    if not archive.exists() or not metadata.exists():
+        raise ValueError(f"incomplete immutable result bundle: {directory}")
+    provenance = json.loads(metadata.read_text()).get("provenance", {})
+    expected = {
+        "analysis_id": analysis_id,
+        "feature": feature,
+        "chunk_index": chunk_index,
+    }
+    if any(provenance.get(key) != value for key, value in expected.items()):
+        raise ValueError(f"incompatible immutable result bundle: {directory}")
+    with np.load(archive, allow_pickle=False) as arrays:
+        if not arrays.files:
+            raise ValueError(f"empty immutable result bundle: {directory}")
+    return True
 
 
 def _analysis_directory(
@@ -121,6 +168,7 @@ def main() -> None:
     parser.add_argument("--subjects")
     parser.add_argument("--runs")
     parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--skip-valid", action="store_true")
     run_chunk(parser.parse_args())
 
 

@@ -1,9 +1,12 @@
 """Phase D execution plan, resume, and protected export tests."""
 
 import json
+import subprocess
 import sys
 from argparse import Namespace
 from pathlib import Path
+
+import pytest
 
 from code.analysis.execution_plan import (
     bound_execution_plan,
@@ -41,7 +44,7 @@ def test_full_plan_bounds_features_and_keeps_dependency_barriers():
     preprocessing = [
         cell
         for cell in bounded["expected_outputs"]
-        if cell["node"] == "preprocessing"
+        if cell["node"] == "run_preprocessing"
     ]
     assert len(preprocessing) == 4
 
@@ -81,12 +84,12 @@ def test_submission_plan_records_resources_arrays_and_dependency_types():
     }
     plan = build_submission_plan(plan, resources)
     by_name = {record["name"]: record for record in plan}
-    assert by_name["preprocessing"]["array_size"] == 4
-    dependency = by_name["source_reconstruction"]["dependencies"][0]
+    assert by_name["run_preprocessing"]["array_size"] == 4
+    dependency = by_name["run_source"]["dependencies"][0]
     assert dependency == {
-        "node": "preprocessing",
+        "node": "run_preprocessing",
         "type": "aftercorr",
-        "job_id": "dry-preprocessing",
+        "job_id": "dry-run_preprocessing",
     }
     assert by_name["sensor_feature_validator"]["array_size"] == 1
 
@@ -105,13 +108,15 @@ def test_scientific_arrays_use_feature_model_and_chunk_cells():
     )
     cells = plan["node_cells"]
     assert len(cells["panel1_statistics"]) == 17
-    assert len(cells["panel1_decoding_permutations"]) == 34
+    assert len(cells["panel1_decoding_permutations"]) == 17
+    assert cells["panel1_decoding_permutations"][0]["chunk_indices"] == [0, 1]
     assert [cell["model"] for cell in cells["panel2_observed_models"]] == [
         "state",
         "lapse_within_IN",
         "lapse_within_OUT",
     ]
-    assert len(cells["panel2_permutation_chunks"]) == 3
+    assert len(cells["panel2_permutation_chunks"]) == 1
+    assert cells["panel2_permutation_chunks"][0]["chunk_indices"] == [0, 1, 2]
     assert len(cells["panel3_factorial_maps"]) == 10
     assert all("subject" not in cell for cell in cells["panel3_coupling"])
 
@@ -194,17 +199,52 @@ def test_cell_status_wrapper_records_compatible_complete_status(tmp_path: Path):
     assert payload["analysis_id"] == "analysis"
 
 
+def test_cell_status_stops_bundle_after_first_failed_step(tmp_path: Path):
+    status = tmp_path / "status.json"
+    marker = tmp_path / "must-not-run"
+    spec = tmp_path / "spec.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "analysis_id": "analysis",
+                "node": "run_preprocessing",
+                "cell_index": 0,
+                "config_hash": "config",
+                "git_commit": "commit",
+                "status_path": str(status),
+                "commands": [
+                    [sys.executable, "-c", "raise SystemExit(0)"],
+                    [sys.executable, "-c", "raise SystemExit(7)"],
+                    [
+                        sys.executable,
+                        "-c",
+                        f"from pathlib import Path; Path({str(marker)!r}).touch()",
+                    ],
+                ],
+            }
+        )
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        execute_cell(spec)
+    payload = json.loads(status.read_text())
+    assert payload["status"] == "failed"
+    assert payload["return_code"] == 7
+    assert len(payload["steps"]) == 2
+    assert not marker.exists()
+
+
 def test_resume_defers_misaligned_aftercorr_subsets_without_valid_recompute():
     plan = bound_execution_plan(
         build_execution_plan("analysis", ["04", "05"], ["02"]),
-        stop_after="preprocess",
+        stop_after="source",
     )
     invalid = [
         {
             **next(
                 cell
                 for cell in plan["expected_outputs"]
-                if cell["node"] == "bids_reflected_vtc"
+                if cell["node"] == "run_preprocessing"
                 and cell["cell_index"] == 0
             ),
             "reason": "failed",
@@ -213,15 +253,15 @@ def test_resume_defers_misaligned_aftercorr_subsets_without_valid_recompute():
             **next(
                 cell
                 for cell in plan["expected_outputs"]
-                if cell["node"] == "preprocessing"
+                if cell["node"] == "run_source"
                 and cell["cell_index"] == 1
             ),
             "reason": "missing",
         },
     ]
     ready, deferred = _resume_submission_wave(plan, invalid)
-    assert [cell["node"] for cell in ready] == ["bids_reflected_vtc"]
-    assert [cell["node"] for cell in deferred] == ["preprocessing"]
+    assert [cell["node"] for cell in ready] == ["run_preprocessing"]
+    assert [cell["node"] for cell in deferred] == ["run_source"]
 
 
 def test_submission_wave_stays_below_rorqual_capacity():
@@ -236,10 +276,11 @@ def test_submission_wave_stays_below_rorqual_capacity():
         plan, list(plan["expected_outputs"]), capacity=900
     )
     assert 0 < len(ready) <= 900
-    assert deferred
+    assert not deferred
     selected_nodes = {cell["node"] for cell in ready}
     assert "input_validation" in selected_nodes
-    assert "bids_reflected_vtc" in selected_nodes
+    assert "run_preprocessing" in selected_nodes
+    assert len(ready) == 773
 
 
 def test_submission_capacity_counts_existing_jobs_and_never_exceeds_900(
@@ -262,7 +303,7 @@ def test_submission_capacity_counts_existing_jobs_and_never_exceeds_900(
     assert _available_submission_capacity(config, dry_run=True) == 875
 
 
-def test_four_subject_pipeline_is_split_into_complete_safe_waves():
+def test_four_subject_pipeline_fits_in_one_complete_submission():
     plan = bound_execution_plan(
         build_execution_plan(
             "analysis",
@@ -273,13 +314,13 @@ def test_four_subject_pipeline_is_split_into_complete_safe_waves():
     ready, deferred = _capacity_limited_wave(
         plan, list(plan["expected_outputs"]), capacity=900
     )
-    assert len(ready) == 900
-    assert len(deferred) > 0
-    assert not {
+    assert len(ready) == 269
+    assert not deferred
+    assert {
         "panel1_aggregator",
         "panel2_aggregator",
         "panel3_aggregator",
-    }.intersection(cell["node"] for cell in ready)
+    } <= {cell["node"] for cell in ready}
 
 
 def test_all_pipeline_requires_explicit_slurm_flag():

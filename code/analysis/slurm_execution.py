@@ -19,16 +19,9 @@ from code.utils.slurm import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_FEATURE_NODES = {
     "input_validation",
-    "bids_reflected_vtc",
-    "preprocessing",
-    "source_reconstruction",
-    "schaefer_400_atlas",
-    "sensor_psd",
-    "sensor_fooof_corrected_psd",
-    "sensor_complexity_exploratory",
-    "schaefer_400_psd",
-    "schaefer_400_fooof_corrected_psd",
-    "schaefer_400_complexity_exploratory",
+    "run_preprocessing",
+    "run_source",
+    "run_features",
     "sensor_feature_validator",
     "schaefer_400_feature_validator",
 }
@@ -284,7 +277,7 @@ def _render_cell(
     log_root.mkdir(parents=True, exist_ok=True)
     cell_dir = script_root / name
     cell_dir.mkdir(parents=True, exist_ok=True)
-    command = command_for_cell(
+    commands = commands_for_cell(
         name,
         cell,
         manifest["analysis_id"],
@@ -292,6 +285,8 @@ def _render_cell(
         config,
         subjects=sorted({item["subject"] for item in manifest["array_cells"]}),
         runs=sorted({item["run"] for item in manifest["array_cells"]}),
+        spaces=manifest["spaces"],
+        include_exploratory=manifest["include_exploratory"],
     )
     expected = next(
         item
@@ -305,7 +300,7 @@ def _render_cell(
         "config_hash": manifest["provenance"]["config_hash"],
         "git_commit": manifest["provenance"]["git_commit"],
         "status_path": str(analysis_dir / expected["status_path"]),
-        "command": command,
+        "commands": commands,
     }
     spec_path = cell_dir / f"cell-{cell['index']:04d}.json"
     spec_path.write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n")
@@ -327,6 +322,94 @@ def _render_cell(
     return script_path
 
 
+def commands_for_cell(
+    node: str,
+    cell: dict[str, Any],
+    analysis_id: str,
+    analysis_root: Path,
+    config: dict[str, Any],
+    *,
+    subjects: Sequence[str] = (),
+    runs: Sequence[str] = (),
+    spaces: Sequence[str] = (),
+    include_exploratory: bool = True,
+) -> list[list[str]]:
+    """Return ordered commands executed inside one scheduler allocation."""
+    python = str(Path(config["paths"]["venv"]) / "bin" / "python")
+    invoke = str(Path(config["paths"]["venv"]) / "bin" / "invoke")
+    subject = cell.get("subject")
+    run = cell.get("run")
+    if node == "run_preprocessing":
+        return [
+            [
+                invoke,
+                "pipeline.bids",
+                f"--subjects={subject}",
+                f"--runs={run}",
+            ],
+            [
+                invoke,
+                "pipeline.preprocess",
+                f"--subject={subject}",
+                f"--runs={run}",
+            ],
+        ]
+    if node == "run_source":
+        return [
+            [
+                invoke,
+                "pipeline.source-recon",
+                f"--subject={subject}",
+                f"--runs={run}",
+            ],
+            [
+                invoke,
+                "pipeline.atlas",
+                f"--subject={subject}",
+                f"--runs={run}",
+                "--atlases=schaefer_400",
+            ],
+        ]
+    if node == "run_features":
+        return _feature_commands(
+            invoke,
+            str(subject),
+            str(run),
+            spaces,
+            include_exploratory,
+        )
+    if node == "panel1_decoding_permutations":
+        return _panel1_permutation_commands(
+            python,
+            cell,
+            analysis_id,
+            analysis_root,
+            config,
+            subjects,
+            runs,
+        )
+    if node == "panel2_permutation_chunks":
+        return _panel2_permutation_commands(
+            python,
+            cell,
+            analysis_id,
+            analysis_root,
+            subjects,
+            runs,
+        )
+    return [
+        command_for_cell(
+            node,
+            cell,
+            analysis_id,
+            analysis_root,
+            config,
+            subjects=subjects,
+            runs=runs,
+        )
+    ]
+
+
 def command_for_cell(
     node: str,
     cell: dict[str, Any],
@@ -337,58 +420,10 @@ def command_for_cell(
     subjects: Sequence[str] = (),
     runs: Sequence[str] = (),
 ) -> list[str]:
-    """Return the concrete non-shell command for one execution plan cell."""
+    """Return one concrete command for a non-bundled execution-plan cell."""
     python = str(Path(config["paths"]["venv"]) / "bin" / "python")
-    invoke = str(Path(config["paths"]["venv"]) / "bin" / "invoke")
-    subject = cell.get("subject")
-    run = cell.get("run")
-    raw = {
-        "input_validation": [
-            python, "-m", "code.utils.validation", "--check-inputs"
-        ],
-        "bids_reflected_vtc": [
-            invoke, "pipeline.bids", f"--subjects={subject}", f"--runs={run}"
-        ],
-        "preprocessing": [
-            invoke, "pipeline.preprocess", f"--subject={subject}", f"--runs={run}"
-        ],
-        "source_reconstruction": [
-            invoke, "pipeline.source-recon", f"--subject={subject}", f"--runs={run}"
-        ],
-        "schaefer_400_atlas": [
-            invoke,
-            "pipeline.atlas",
-            f"--subject={subject}",
-            f"--runs={run}",
-            "--atlases=schaefer_400",
-        ],
-        "sensor_psd": [
-            invoke, "pipeline.features.psd", f"--subject={subject}",
-            f"--runs={run}", "--space=sensor"
-        ],
-        "sensor_fooof_corrected_psd": [
-            invoke, "pipeline.features.fooof", f"--subject={subject}",
-            f"--runs={run}", "--space=sensor"
-        ],
-        "sensor_complexity_exploratory": [
-            invoke, "pipeline.features.complexity", f"--subject={subject}",
-            f"--runs={run}", "--space=sensor"
-        ],
-        "schaefer_400_psd": [
-            invoke, "pipeline.features.psd", f"--subject={subject}",
-            f"--runs={run}", "--space=schaefer_400"
-        ],
-        "schaefer_400_fooof_corrected_psd": [
-            invoke, "pipeline.features.fooof", f"--subject={subject}",
-            f"--runs={run}", "--space=schaefer_400"
-        ],
-        "schaefer_400_complexity_exploratory": [
-            invoke, "pipeline.features.complexity", f"--subject={subject}",
-            f"--runs={run}", "--space=schaefer_400"
-        ],
-    }
-    if node in raw:
-        return raw[node]
+    if node == "input_validation":
+        return [python, "-m", "code.utils.validation", "--check-inputs"]
     if node in {"sensor_feature_validator", "schaefer_400_feature_validator"}:
         command = [
             python,
@@ -419,50 +454,6 @@ def command_for_cell(
         for field in ("feature", "model"):
             if cell.get(field):
                 command.extend([f"--{field}", cell[field]])
-        if subjects:
-            command.extend(["--subjects", " ".join(subjects)])
-        if runs:
-            command.extend(["--runs", " ".join(runs)])
-        return command
-    if node == "panel1_decoding_permutations":
-        command = [
-            python,
-            "-m",
-            "code.analysis.panel1_decoding_runner",
-            "--analysis-id",
-            analysis_id,
-            "--analysis-root",
-            str(analysis_root),
-            "--feature",
-            cell["feature"],
-            "--chunk-index",
-            str(cell["chunk_index"]),
-            "--cell-index",
-            str(cell["index"]),
-            "--jobs",
-            str(config.get("panel_analysis", {}).get("resources", {}).get(
-                "maps", {}
-            ).get("cpus", 4)),
-        ]
-        if subjects:
-            command.extend(["--subjects", " ".join(subjects)])
-        if runs:
-            command.extend(["--runs", " ".join(runs)])
-        return command
-    if node == "panel2_permutation_chunks":
-        command = [
-            python,
-            "-m",
-            "code.analysis.panel2_permutation_runner",
-            "--analysis-id",
-            analysis_id,
-            "--analysis-root",
-            str(analysis_root),
-            "--chunk-index",
-            str(cell["chunk_index"]),
-            "--cell-index",
-            str(cell["index"]),
-        ]
         if subjects:
             command.extend(["--subjects", " ".join(subjects)])
         if runs:
@@ -563,6 +554,105 @@ def command_for_cell(
             f"{node}')"
         ),
     ]
+
+
+def _feature_commands(
+    invoke: str,
+    subject: str,
+    run: str,
+    spaces: Sequence[str],
+    include_exploratory: bool,
+) -> list[list[str]]:
+    """Build sequential PSD, FOOOF, and optional complexity commands."""
+    commands = []
+    for space in spaces:
+        common = [f"--subject={subject}", f"--runs={run}", f"--space={space}"]
+        commands.append([invoke, "pipeline.features.psd", *common])
+        commands.append([invoke, "pipeline.features.fooof", *common])
+        if include_exploratory:
+            commands.append([invoke, "pipeline.features.complexity", *common])
+    return commands
+
+
+def _panel1_permutation_commands(
+    python: str,
+    cell: dict[str, Any],
+    analysis_id: str,
+    analysis_root: Path,
+    config: dict[str, Any],
+    subjects: Sequence[str],
+    runs: Sequence[str],
+) -> list[list[str]]:
+    """Build one command per immutable Panel 1 chunk in a scheduler batch."""
+    jobs = str(
+        config.get("panel_analysis", {})
+        .get("resources", {})
+        .get("maps", {})
+        .get("cpus", 4)
+    )
+    commands = []
+    for chunk_index, cell_index in zip(
+        cell["chunk_indices"],
+        cell["chunk_cell_indices"],
+        strict=True,
+    ):
+        command = [
+            python,
+            "-m",
+            "code.analysis.panel1_decoding_runner",
+            "--analysis-id",
+            analysis_id,
+            "--analysis-root",
+            str(analysis_root),
+            "--feature",
+            cell["feature"],
+            "--chunk-index",
+            str(chunk_index),
+            "--cell-index",
+            str(cell_index),
+            "--jobs",
+            jobs,
+            "--skip-valid",
+        ]
+        if subjects:
+            command.extend(["--subjects", " ".join(subjects)])
+        if runs:
+            command.extend(["--runs", " ".join(runs)])
+        commands.append(command)
+    return commands
+
+
+def _panel2_permutation_commands(
+    python: str,
+    cell: dict[str, Any],
+    analysis_id: str,
+    analysis_root: Path,
+    subjects: Sequence[str],
+    runs: Sequence[str],
+) -> list[list[str]]:
+    """Build one command per immutable Panel 2 chunk in a scheduler batch."""
+    commands = []
+    for chunk_index in cell["chunk_indices"]:
+        command = [
+            python,
+            "-m",
+            "code.analysis.panel2_permutation_runner",
+            "--analysis-id",
+            analysis_id,
+            "--analysis-root",
+            str(analysis_root),
+            "--chunk-index",
+            str(chunk_index),
+            "--cell-index",
+            str(chunk_index),
+            "--skip-valid",
+        ]
+        if subjects:
+            command.extend(["--subjects", " ".join(subjects)])
+        if runs:
+            command.extend(["--runs", " ".join(runs)])
+        commands.append(command)
+    return commands
 
 
 def _dependencies(

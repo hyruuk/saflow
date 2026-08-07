@@ -39,6 +39,8 @@ panel_analysis:
   decoding_permutations: 1000    # Synchronized nested-decoding permutations
   map_chunk_size: 250            # Immutable permutations per map chunk
   decoding_chunk_size: 25        # Tune after the HPC subset benchmark
+  map_chunks_per_job: 5          # Sequential immutable chunks per SLURM job
+  decoding_chunks_per_job: 5     # Keeps the full plan below 900 jobs
   cluster_forming_threshold: 2.0 # Absolute paired-t threshold
   random_seed: 42                # Shared deterministic seed
   c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0] # Inner grouped ridge tuning
@@ -50,6 +52,7 @@ panel_analysis:
   resources:
     maps: {time: "08:00:00", memory_gb: 16, cpus: 4} # SLURM request per map cell
     decoding: {time: "12:00:00", memory_gb: 24, cpus: 4} # Per decoding chunk
+    permutation_batches: {time: "3-00:00:00", memory_gb: 24, cpus: 4} # Five chunks
     rendering: {time: "01:00:00", memory_gb: 8, cpus: 2} # Export and panels
 
 # =============================================================================

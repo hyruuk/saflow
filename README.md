@@ -10,7 +10,7 @@ Theta through Gamma 3; Delta and complexity are excluded from the primary branch
 ```bash
 invoke pipeline.all --dry-run                 # inspect local execution
 invoke pipeline.all                          # execute locally
-invoke pipeline.all --slurm --dry-run         # inspect Rorqual submission wave
+invoke pipeline.all --slurm --dry-run         # inspect complete Rorqual submission
 invoke pipeline.all --slurm                   # submit to Rorqual
 invoke pipeline.resume --slurm --analysis-id=analysis-...
 invoke viz.panels --panel=all --analysis-id=analysis-...
@@ -424,12 +424,10 @@ invoke analysis.synthetic \
 # Inspect the complete raw-to-paper SLURM execution plan
 invoke pipeline.all --slurm --dry-run
 
-# Submit the first capacity-safe wave on Rorqual
+# Submit the complete four-subject smoke analysis
 invoke pipeline.all --slurm --subjects="08 09 10 11"
 
-# Save the printed immutable analysis ID. After that wave has left squeue,
-# submit the next dependency-safe wave; repeat until deferred_cell_count is 0.
-invoke pipeline.resume --slurm --analysis-id=analysis-...
+# pipeline.resume is reserved for genuinely failed or corrupt cells.
 
 # Render protected synthetic prototypes or complete real bundles
 invoke viz.panels --panel=all
@@ -438,7 +436,7 @@ invoke viz.panels --panel=all
 invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 invoke pipeline.resume --slurm --analysis-id=analysis-...
 
-# Monitor and repeat resume until no invalid cells remain
+# Audit or recover only after a genuine failure
 invoke slurm.jobs --pattern=saflow_
 invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 

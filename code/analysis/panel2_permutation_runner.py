@@ -34,6 +34,14 @@ MODEL_ORDER = ("state", "lapse_within_IN", "lapse_within_OUT")
 def run_chunk(args: argparse.Namespace) -> Path:
     """Run one deterministic synchronized decoding permutation interval."""
     config = load_config(args.config)
+    analysis_dir = _analysis_directory(config, args.analysis_root, args.analysis_id)
+    directory = _chunk_directory(analysis_dir, args.chunk_index)
+    if args.skip_valid and _compatible_chunk_exists(
+        directory,
+        args.analysis_id,
+        args.chunk_index,
+    ):
+        return directory
     panel_analysis = config.get("panel_analysis", {})
     total = int(panel_analysis.get("decoding_permutations", 1_000))
     size = int(panel_analysis.get("decoding_chunk_size", 25))
@@ -64,7 +72,6 @@ def run_chunk(args: argparse.Namespace) -> Path:
             "seed": seed,
         }
     )
-    analysis_dir = _analysis_directory(config, args.analysis_root, args.analysis_id)
     analysis = json.loads((analysis_dir / "provenance.json").read_text())
     provenance = {
         "analysis_id": args.analysis_id,
@@ -79,15 +86,41 @@ def run_chunk(args: argparse.Namespace) -> Path:
         "permutation_interval": [start, stop],
         "seed": seed,
     }
-    directory = (
+    write_result_bundle(directory, result, provenance)
+    return directory
+
+
+def _chunk_directory(analysis_dir: Path, chunk_index: int) -> Path:
+    """Return one immutable Panel 2 permutation chunk directory."""
+    return (
         analysis_dir
         / "panel2"
         / "partials"
         / "permutations"
-        / f"chunk-{args.chunk_index:04d}"
+        / f"chunk-{chunk_index:04d}"
     )
-    write_result_bundle(directory, result, provenance)
-    return directory
+
+
+def _compatible_chunk_exists(
+    directory: Path,
+    analysis_id: str,
+    chunk_index: int,
+) -> bool:
+    """Return whether a completed chunk can be reused inside a batch."""
+    archive = directory / "observed.npz"
+    metadata = directory / "observed.json"
+    if not archive.exists() and not metadata.exists():
+        return False
+    if not archive.exists() or not metadata.exists():
+        raise ValueError(f"incomplete immutable result bundle: {directory}")
+    provenance = json.loads(metadata.read_text()).get("provenance", {})
+    expected = {"analysis_id": analysis_id, "chunk_index": chunk_index}
+    if any(provenance.get(key) != value for key, value in expected.items()):
+        raise ValueError(f"incompatible immutable result bundle: {directory}")
+    with np.load(archive, allow_pickle=False) as arrays:
+        if not arrays.files:
+            raise ValueError(f"empty immutable result bundle: {directory}")
+    return True
 
 
 def _run_permutations(
@@ -243,6 +276,7 @@ def main() -> None:
     parser.add_argument("--cell-index", type=int, required=True)
     parser.add_argument("--subjects")
     parser.add_argument("--runs")
+    parser.add_argument("--skip-valid", action="store_true")
     run_chunk(parser.parse_args())
 
 
