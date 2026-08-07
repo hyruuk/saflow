@@ -1,4 +1,4 @@
-"""Immutable Figure 3 analysis identities and artifacts."""
+"""Immutable Paper panels analysis identities and artifacts."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import yaml
 
 from code.classification.multifeature_provenance import environment_snapshot, git_state
 
-ID_PATTERN = re.compile(r"^fig3-(\d{8}T\d{6}Z)-g([0-9a-f]+|unknown)-c([0-9a-f]{12})$")
+ID_PATTERN = re.compile(r"^paper-(\d{8}T\d{6}Z)-g([0-9a-f]+|unknown)-c([0-9a-f]{12})$")
 
 
 def config_hash(config: Mapping[str, Any]) -> str:
@@ -24,16 +24,16 @@ def config_hash(config: Mapping[str, Any]) -> str:
 
 def create_analysis_id(config: Mapping[str, Any], project_root: Path,
                        timestamp: datetime | None = None) -> str:
-    """Create a Figure 3 ID from UTC time, Git commit, and configuration."""
+    """Create a Paper panels ID from UTC time, Git commit, and configuration."""
     moment = (timestamp or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    return (f"fig3-{moment.strftime('%Y%m%dT%H%M%SZ')}-"
+    return (f"paper-{moment.strftime('%Y%m%dT%H%M%SZ')}-"
             f"g{git_state(project_root)['short_commit']}-c{config_hash(config)}")
 
 
 def validate_analysis_id(analysis_id: str) -> None:
     """Reject unsafe or noncanonical analysis identifiers."""
     if not ID_PATTERN.fullmatch(analysis_id):
-        raise ValueError(f"invalid Figure 3 analysis ID: {analysis_id!r}")
+        raise ValueError(f"invalid Paper panels analysis ID: {analysis_id!r}")
 
 
 def initialize(root: Path, analysis_id: str, config: Mapping[str, Any],
@@ -59,9 +59,9 @@ def initialize(root: Path, analysis_id: str, config: Mapping[str, Any],
     ]
     (destination / "resolved_config.yaml").write_text(yaml.safe_dump(dict(config), sort_keys=True))
     artifacts = {
-        "dataset_description.json": {"Name": f"Saflow corrected Figure 3 {analysis_id}",
+        "dataset_description.json": {"Name": f"Saflow corrected Paper panels {analysis_id}",
             "BIDSVersion": "1.10.0", "DatasetType": "derivative",
-            "GeneratedBy": [{"Name": "saflow Figure 3", "Version": state["commit"]}]},
+            "GeneratedBy": [{"Name": "saflow Paper panels", "Version": state["commit"]}]},
         "provenance.json": {"analysis_id": analysis_id, "config_hash": config_hash(config),
             "created_utc": datetime.now(timezone.utc).isoformat(), "git": state,
             "inputs": input_roots, "software": software},

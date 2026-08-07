@@ -41,11 +41,19 @@ def test_config_rejects_knee_mode(tmp_path: Path) -> None:
         validate_config(config)
 
 
-def test_figure3_config_requires_exact_divisible_chunks(tmp_path: Path) -> None:
+def test_paper_panels_config_requires_exact_divisible_chunks(tmp_path: Path) -> None:
     config = load_template_config(tmp_path)
-    config["figure3"]["decoding_chunk_size"] = 33
+    config["paper_panels"]["decoding_chunk_size"] = 33
 
     with pytest.raises(ConfigurationError, match="must divide"):
+        validate_config(config)
+
+
+def test_legacy_figure3_config_key_has_actionable_error(tmp_path: Path) -> None:
+    config = load_template_config(tmp_path)
+    config["figure3"] = config.pop("paper_panels")
+
+    with pytest.raises(ConfigurationError, match="renamed to 'paper_panels'"):
         validate_config(config)
 
 

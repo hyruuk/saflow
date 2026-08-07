@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from itertools import product
 from typing import Any, Sequence
 
-from code.figure3.contracts import PANEL1_FEATURES, PANEL23_FEATURES
+from code.paper_panels.contracts import PANEL1_FEATURES, PANEL23_FEATURES
 
 PIPELINE_STAGES = (
     "validation",
@@ -20,7 +20,7 @@ PIPELINE_STAGES = (
     "render",
     "audit",
 )
-DEFAULT_FIGURE3_RESOURCES = {
+DEFAULT_PAPER_PANEL_RESOURCES = {
     "maps": {"time": "08:00:00", "memory_gb": 16, "cpus": 4},
     "decoding": {"time": "12:00:00", "memory_gb": 24, "cpus": 4},
     "rendering": {"time": "01:00:00", "memory_gb": 8, "cpus": 2},
@@ -46,7 +46,7 @@ class DagEdge:
     dependency: str
 
 
-def build_paper_dag(
+def build_execution_plan(
     analysis_id: str,
     subjects: Sequence[str],
     runs: Sequence[str],
@@ -56,7 +56,7 @@ def build_paper_dag(
     map_chunk_count: int = 40,
     decoding_chunk_count: int = 40,
 ) -> dict[str, Any]:
-    """Build the immutable raw-to-panels DAG manifest."""
+    """Build the immutable raw-to-panels execution plan manifest."""
     nodes = [
         DagNode("input_validation", "validator"),
         DagNode("bids_reflected_vtc", "worker", array=True),
@@ -93,7 +93,7 @@ def build_paper_dag(
     return manifest
 
 
-def bound_paper_dag(
+def bound_execution_plan(
     manifest: dict[str, Any],
     *,
     start_at: str | None = None,
@@ -149,7 +149,7 @@ def bound_paper_dag(
 
 
 def stage_for_node(name: str) -> str:
-    """Map a DAG node to its public bounded-execution stage."""
+    """Map a execution plan node to its public bounded-execution stage."""
     if name == "input_validation":
         return "validation"
     if name == "bids_reflected_vtc":

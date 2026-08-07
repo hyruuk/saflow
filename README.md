@@ -8,25 +8,29 @@ paper panels from compact exports. The authoritative frequency policy contains
 Theta through Gamma 3; Delta and complexity are excluded from the paper branch.
 
 ```bash
-invoke pipeline.full --dry-run
-invoke pipeline.full
-invoke pipeline.resume --analysis-id=fig3-...
-invoke viz.paper --panel=all --analysis-id=fig3-...
+invoke pipeline.all --dry-run                 # inspect local execution
+invoke pipeline.all                          # execute locally
+invoke pipeline.all --slurm --dry-run         # inspect Rorqual submission wave
+invoke pipeline.all --slurm                   # submit to Rorqual
+invoke pipeline.resume --slurm --analysis-id=paper-...
+invoke viz.paper --panel=all --analysis-id=paper-...
 ```
 
-`pipeline.full` creates an immutable analysis, renders every cell script, and
-submits the complete dependency graph to SLURM. `--dry-run` performs the same
-planning and script generation without calling `sbatch`.
+`pipeline.all` creates an immutable paper analysis, renders every cell script,
+and executes it locally unless `--slurm` is passed explicitly. SLURM execution
+uses capacity-limited waves below the configured 1,000-job ceiling.
+`--dry-run` performs planning and script generation without executing cells or
+calling `sbatch`.
 `--stop-after=features` retains the former raw-to-feature endpoint. See
-[the output contracts](docs/figure3_output_schemas.md).
+[the output contracts](docs/paper_panels_output_schemas.md).
 The statistical definitions are summarized in
-[the corrected methods notes](docs/figure3_methods.md).
+[the corrected methods notes](docs/paper_panels_methods.md).
 
 Corrected BIDS enrichment is run-wise and provenance-aware:
 
 ```bash
 invoke pipeline.bids --subjects "04 05" --runs "02 03" --slurm
-invoke analysis.figure3-preflight --subjects "04 05" --runs "02 03"
+invoke analysis.paper-preflight --subjects "04 05" --runs "02 03"
 ```
 
 Gaussian VTC smoothing uses reflected boundaries with FWHM 9 trials. Existing
@@ -35,8 +39,8 @@ is blinded to effect direction and reports exact alignment, any-AR2-bad window
 rejection, matched anchor outcomes, four-cell counts, and 5/10-window
 modulation/coupling eligibility.
 
-Legacy Figure 3 files are not changed. Create their hash inventory with
-`invoke analysis.figure3-legacy-inventory`.
+Legacy paper outputs are not changed. Create their hash inventory with
+`invoke analysis.paper-legacy-inventory`.
 
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 
@@ -413,27 +417,27 @@ invoke pipeline.preprocess --subject=04 --runs="02"
 invoke pipeline.preprocess --subject=04 --runs="02" --crop=60 --skip-report
 
 # Exercise all three scientific workers and resumable chunks locally
-invoke analysis.figure3-phase-c-synthetic \
-  --output-dir=/tmp/saflow-figure3-phase-c
+invoke analysis.paper-synthetic \
+  --output-dir=/tmp/saflow-paper-panels
 
-# Inspect the complete raw-to-paper graph without submitting
-invoke pipeline.full --dry-run
+# Inspect the complete raw-to-paper SLURM execution plan
+invoke pipeline.all --slurm --dry-run
 
-# Submit the authoritative graph on Rorqual (the user launches this)
-invoke pipeline.full
+# Submit the first capacity-safe wave on Rorqual
+invoke pipeline.all --slurm
 
 # Render protected synthetic prototypes or complete real bundles
 invoke viz.paper --panel=all
 
 # Preview or submit only invalid cells in an immutable analysis
-invoke pipeline.resume --analysis-id=fig3-... --dry-run
-invoke pipeline.resume --analysis-id=fig3-...
+invoke pipeline.resume --slurm --analysis-id=paper-... --dry-run
+invoke pipeline.resume --slurm --analysis-id=paper-...
 
 # Monitor and repeat resume until no invalid cells remain
-invoke slurm.jobs --pattern=f3_
-invoke pipeline.resume --analysis-id=fig3-... --dry-run
+invoke slurm.jobs --pattern=paper_
+invoke pipeline.resume --slurm --analysis-id=paper-... --dry-run
 
-# dag.json includes commands, resources, job IDs, arrays, and dependencies.
+# execution_plan.json includes commands, resources, job IDs, arrays, and dependencies.
 # Real Panel 1 rendering requires the complete A-J render-array contract;
 # incomplete map-only bundles fail instead of receiving synthetic filler.
 

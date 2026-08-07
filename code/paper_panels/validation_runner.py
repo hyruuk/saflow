@@ -1,4 +1,4 @@
-"""Validate complete sensor or Schaefer feature barriers for Figure 3."""
+"""Validate complete sensor or Schaefer feature barriers for Paper panels."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from code.figure3.preflight import inspect_inputs
+from code.paper_panels.preflight import inspect_inputs
 from code.utils.config import load_config
 
 

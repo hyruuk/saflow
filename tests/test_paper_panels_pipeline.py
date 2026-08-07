@@ -1,28 +1,33 @@
-"""Phase D DAG, resume, and protected export tests."""
+"""Phase D execution plan, resume, and protected export tests."""
 
 import json
 import sys
 from argparse import Namespace
 from pathlib import Path
 
-from code.figure3.dag import (
-    bound_paper_dag,
-    build_paper_dag,
+from code.paper_panels.execution_plan import (
+    bound_execution_plan,
+    build_execution_plan,
     build_submission_plan,
 )
-from code.figure3.workflow import _invalid_cell_reason, _resume_submission_wave
-from code.figure3.workflow import export_analysis
-from code.figure3.cell_status import execute_cell
+from code.paper_panels.workflow import (
+    _capacity_limited_wave,
+    _invalid_cell_reason,
+    _resume_submission_wave,
+    build_parser,
+)
+from code.paper_panels.workflow import export_analysis
+from code.paper_panels.cell_status import execute_cell
 
 
-def test_full_dag_bounds_features_and_keeps_dependency_barriers():
-    raw = build_paper_dag(
-        "fig3-20260102T030405Z-gabc-c123456789abc",
+def test_full_plan_bounds_features_and_keeps_dependency_barriers():
+    raw = build_execution_plan(
+        "paper-20260102T030405Z-gabc-c123456789abc",
         ["04", "05"],
         ["02", "03"],
         include_exploratory=True,
     )
-    bounded = bound_paper_dag(raw, stop_after="features")
+    bounded = bound_execution_plan(raw, stop_after="features")
     names = {node["name"] for node in bounded["nodes"]}
     assert "schaefer_400_feature_validator" in names
     assert "panel1_statistics" not in names
@@ -40,31 +45,31 @@ def test_full_dag_bounds_features_and_keeps_dependency_barriers():
 
 
 def test_panel_branches_are_concurrent_after_validated_schaefer_inputs():
-    dag = bound_paper_dag(
-        build_paper_dag("analysis", ["04"], ["02"]),
+    plan = bound_execution_plan(
+        build_execution_plan("analysis", ["04"], ["02"]),
         start_at="analyses",
         stop_after="render",
     )
     workers = {
         edge["downstream"]
-        for edge in dag["edges"]
+        for edge in plan["edges"]
         if edge["upstream"] == "schaefer_400_feature_validator"
     }
     # The upstream validator is outside the bounded graph, so the three panel
     # branches have no artificial edges between one another.
     assert not workers
-    names = {node["name"] for node in dag["nodes"]}
+    names = {node["name"] for node in plan["nodes"]}
     assert {"panel1_statistics", "panel2_observed_models", "panel3_coupling"} <= names
     assert not any(
         edge["upstream"].startswith("panel1")
         and edge["downstream"].startswith(("panel2", "panel3"))
-        for edge in dag["edges"]
+        for edge in plan["edges"]
     )
 
 
 def test_submission_plan_records_resources_arrays_and_dependency_types():
-    dag = bound_paper_dag(
-        build_paper_dag("analysis", ["04", "05"], ["02", "03"]),
+    plan = bound_execution_plan(
+        build_execution_plan("analysis", ["04", "05"], ["02", "03"]),
         stop_after="features",
     )
     resources = {
@@ -72,7 +77,7 @@ def test_submission_plan_records_resources_arrays_and_dependency_types():
         "decoding": {"time": "02:00:00", "memory_gb": 16, "cpus": 4},
         "rendering": {"time": "00:30:00", "memory_gb": 4, "cpus": 1},
     }
-    plan = build_submission_plan(dag, resources)
+    plan = build_submission_plan(plan, resources)
     by_name = {record["name"]: record for record in plan}
     assert by_name["preprocessing"]["array_size"] == 4
     dependency = by_name["source_reconstruction"]["dependencies"][0]
@@ -85,8 +90,8 @@ def test_submission_plan_records_resources_arrays_and_dependency_types():
 
 
 def test_scientific_arrays_use_feature_model_and_chunk_cells():
-    dag = bound_paper_dag(
-        build_paper_dag(
+    plan = bound_execution_plan(
+        build_execution_plan(
             "analysis",
             ["04", "05"],
             ["02", "03"],
@@ -96,7 +101,7 @@ def test_scientific_arrays_use_feature_model_and_chunk_cells():
         start_at="analyses",
         stop_after="analyses",
     )
-    cells = dag["node_cells"]
+    cells = plan["node_cells"]
     assert len(cells["panel1_statistics"]) == 17
     assert len(cells["panel1_decoding_permutations"]) == 34
     assert [cell["model"] for cell in cells["panel2_observed_models"]] == [
@@ -139,7 +144,7 @@ def test_resume_reason_selects_only_invalid_cells(tmp_path: Path):
 
 
 def test_compact_export_omits_chunks_and_writes_hashed_table(tmp_path: Path):
-    analysis_id = "fig3-20260102T030405Z-gabc-c123456789abc"
+    analysis_id = "paper-20260102T030405Z-gabc-c123456789abc"
     source = tmp_path / "source" / analysis_id
     (source / "panel1" / "chunks").mkdir(parents=True)
     (source / "panel1" / "observed.json").write_text(
@@ -188,15 +193,15 @@ def test_cell_status_wrapper_records_compatible_complete_status(tmp_path: Path):
 
 
 def test_resume_defers_misaligned_aftercorr_subsets_without_valid_recompute():
-    dag = bound_paper_dag(
-        build_paper_dag("analysis", ["04", "05"], ["02"]),
+    plan = bound_execution_plan(
+        build_execution_plan("analysis", ["04", "05"], ["02"]),
         stop_after="preprocess",
     )
     invalid = [
         {
             **next(
                 cell
-                for cell in dag["expected_outputs"]
+                for cell in plan["expected_outputs"]
                 if cell["node"] == "bids_reflected_vtc"
                 and cell["cell_index"] == 0
             ),
@@ -205,13 +210,38 @@ def test_resume_defers_misaligned_aftercorr_subsets_without_valid_recompute():
         {
             **next(
                 cell
-                for cell in dag["expected_outputs"]
+                for cell in plan["expected_outputs"]
                 if cell["node"] == "preprocessing"
                 and cell["cell_index"] == 1
             ),
             "reason": "missing",
         },
     ]
-    ready, deferred = _resume_submission_wave(dag, invalid)
+    ready, deferred = _resume_submission_wave(plan, invalid)
     assert [cell["node"] for cell in ready] == ["bids_reflected_vtc"]
     assert [cell["node"] for cell in deferred] == ["preprocessing"]
+
+
+def test_submission_wave_stays_below_rorqual_capacity():
+    plan = bound_execution_plan(
+        build_execution_plan(
+            "analysis",
+            [f"{index:02d}" for index in range(1, 33)],
+            [f"{index:02d}" for index in range(1, 7)],
+        )
+    )
+    ready, deferred = _capacity_limited_wave(
+        plan, list(plan["expected_outputs"]), capacity=900
+    )
+    assert 0 < len(ready) <= 900
+    assert deferred
+    selected_nodes = {cell["node"] for cell in ready}
+    assert "input_validation" in selected_nodes
+    assert "bids_reflected_vtc" in selected_nodes
+
+
+def test_all_pipeline_requires_explicit_slurm_flag():
+    local = build_parser().parse_args(["all", "--dry-run"])
+    cluster = build_parser().parse_args(["all", "--slurm", "--dry-run"])
+    assert not local.slurm
+    assert cluster.slurm

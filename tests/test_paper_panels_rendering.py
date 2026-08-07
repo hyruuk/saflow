@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from code.figure3.render import (
+from code.paper_panels.render import (
     _assert_overwrite_allowed,
     render_paper_panels,
 )

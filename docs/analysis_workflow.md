@@ -1,8 +1,8 @@
 # Analysis workflow
 
-## Corrected Figure 3 branch
+## Corrected paper-panel branch
 
-Figure 3 is regenerated under a new immutable analysis ID. Raw VTC is filtered
+The paper panels are regenerated under a new immutable analysis ID. Raw VTC is filtered
 per run with reflected Gaussian boundaries, then every neural window is aligned
 by subject, run, onset, and its eight contributing epoch indices. A primary
 window must have eight uniformly IN or uniformly OUT trials and no bad
@@ -40,7 +40,7 @@ from Theta through Gamma 3 and excludes Delta. Panel 1 includes raw PSD, FOOOF,
 and corrected PSD; Panels 2 and 3 use only FOOOF and corrected PSD. Complexity
 is exploratory. HPC output is authoritative; compact exports reproduce local
 tables and figures. The machine-readable schemas and dry-run dependency rules
-are described in [`figure3_output_schemas.md`](figure3_output_schemas.md).
+are described in [`paper_panels_output_schemas.md`](paper_panels_output_schemas.md).
 
 ### Resumable inference
 
@@ -86,6 +86,9 @@ nonzero on incomplete inputs; scientific consumers depend on them with
 It never removes a valid chunk. If a partial recovery would make two
 `aftercorr` arrays use different index subsets, the downstream node is
 deferred to the next recovery wave rather than pairing incorrect cells.
+SLURM is selected only with `--slurm`. Each wave counts the user's current
+queued/running jobs, stays below the configured 1,000-job ceiling, and keeps a
+100-slot reserve by default. Resume refuses to duplicate an active prior wave.
 
 ### Rendering and replacement safety
 

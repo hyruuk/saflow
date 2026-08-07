@@ -10,8 +10,8 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
-from code.figure3.alignment import build_alignment_keys, validate_schaefer_400
-from code.figure3.labels import build_corrected_window_labels
+from code.paper_panels.alignment import build_alignment_keys, validate_schaefer_400
+from code.paper_panels.labels import build_corrected_window_labels
 from code.utils.behavioral import VTC_FILTER_METHOD, VTC_FILTER_VERSION
 
 CELL_ORDER = (
@@ -172,7 +172,7 @@ def _validate_feature_alignment(
     run: str,
 ) -> None:
     """Require identical keys and spatial order across every paper family."""
-    from code.figure3.alignment import require_exact_alignment
+    from code.paper_panels.alignment import require_exact_alignment
 
     reference_names: list[str] | None = None
     for path in paths.values():

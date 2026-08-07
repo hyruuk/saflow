@@ -13,10 +13,10 @@ from code.classification.run_classification import (
     get_cv_strategy,
     run_univariate_with_tmax,
 )
-from code.figure3.chunks import derive_chunk_seed
-from code.figure3.contracts import PANEL1_FEATURES
-from code.figure3.real_inputs import load_real_inputs
-from code.figure3.result_io import write_result_bundle
+from code.paper_panels.chunks import derive_chunk_seed
+from code.paper_panels.contracts import PANEL1_FEATURES
+from code.paper_panels.real_inputs import load_real_inputs
+from code.paper_panels.result_io import write_result_bundle
 from code.utils.config import load_config
 
 
@@ -25,9 +25,9 @@ def run_chunk(args: argparse.Namespace) -> Path:
     if args.feature not in PANEL1_FEATURES:
         raise ValueError(f"feature must be one of {PANEL1_FEATURES}")
     config = load_config(args.config)
-    figure3 = config.get("figure3", {})
-    total = int(figure3.get("map_permutations", 10_000))
-    size = int(figure3.get("map_chunk_size", 250))
+    paper_panels = config.get("paper_panels", {})
+    total = int(paper_panels.get("map_permutations", 10_000))
+    size = int(paper_panels.get("map_chunk_size", 250))
     start = args.chunk_index * size
     stop = min(start + size, total)
     if start >= total:
@@ -101,7 +101,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("figure3", {}).get("processed_directory", "figure3")
+        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():

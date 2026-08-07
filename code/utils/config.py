@@ -162,20 +162,26 @@ def validate_config(config: Dict[str, Any]) -> None:
     if not config["bids"]["task_runs"]:
         raise ConfigurationError("No task runs specified in bids.task_runs")
 
-    _validate_figure3_config(config.get("figure3", {}))
+    if "figure3" in config:
+        raise ConfigurationError(
+            "config key 'figure3' was renamed to 'paper_panels'; "
+            "rename that section before running the paper pipeline"
+        )
+    _validate_paper_panels_config(config.get("paper_panels", {}))
+    _validate_slurm_submission_limits(config.get("computing", {}).get("slurm", {}))
 
 
-def _validate_figure3_config(config: Dict[str, Any]) -> None:
+def _validate_paper_panels_config(config: Dict[str, Any]) -> None:
     """Validate corrected paper-panel parameters when configured."""
     if not config:
         return
     bounds = config.get("inout_percentiles")
     if bounds != [25, 75]:
-        raise ConfigurationError("figure3.inout_percentiles must be [25, 75]")
+        raise ConfigurationError("paper_panels.inout_percentiles must be [25, 75]")
     if config.get("strict_window_size") != 8:
-        raise ConfigurationError("figure3.strict_window_size must be 8")
+        raise ConfigurationError("paper_panels.strict_window_size must be 8")
     if config.get("gaussian_fwhm") != 9.0:
-        raise ConfigurationError("figure3.gaussian_fwhm must be 9 trials")
+        raise ConfigurationError("paper_panels.gaussian_fwhm must be 9 trials")
     positive = (
         "map_permutations",
         "decoding_permutations",
@@ -188,13 +194,26 @@ def _validate_figure3_config(config: Dict[str, Any]) -> None:
     invalid = [key for key in positive if int(config.get(key, 0)) <= 0]
     if invalid:
         raise ConfigurationError(
-            f"Figure 3 parameters must be positive: {', '.join(invalid)}"
+            f"Paper panels parameters must be positive: {', '.join(invalid)}"
         )
     if config["map_permutations"] % config["map_chunk_size"]:
-        raise ConfigurationError("figure3.map_chunk_size must divide map_permutations")
+        raise ConfigurationError("paper_panels.map_chunk_size must divide map_permutations")
     if config["decoding_permutations"] % config["decoding_chunk_size"]:
         raise ConfigurationError(
-            "figure3.decoding_chunk_size must divide decoding_permutations"
+            "paper_panels.decoding_chunk_size must divide decoding_permutations"
+        )
+
+
+def _validate_slurm_submission_limits(config: Dict[str, Any]) -> None:
+    """Validate scheduler-capacity settings when explicitly configured."""
+    maximum = int(config.get("max_submitted_jobs", 1_000))
+    reserve = int(config.get("submission_job_reserve", 100))
+    if maximum < 1:
+        raise ConfigurationError("computing.slurm.max_submitted_jobs must be positive")
+    if reserve < 0 or reserve >= maximum:
+        raise ConfigurationError(
+            "computing.slurm.submission_job_reserve must be between 0 and "
+            "max_submitted_jobs - 1"
         )
 
 

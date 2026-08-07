@@ -14,7 +14,7 @@ from typing import Any, Callable
 import matplotlib.pyplot as plt
 import numpy as np
 
-from code.figure3.contracts import (
+from code.paper_panels.contracts import (
     PAPER_BANDS,
     PANEL_COMPONENTS,
     PANEL1_RENDER_ARRAYS,

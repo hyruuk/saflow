@@ -27,10 +27,10 @@ paths:
   # FreeSurfer subjects directory (in data_root)
   freesurfer_subjects_dir: fs_subjects/  # Will be resolved relative to data_root
 
-# Corrected Figure 3 values are resolved into every immutable analysis folder.
-figure3:
+# Corrected Paper panels values are resolved into every immutable analysis folder.
+paper_panels:
   schema_version: "1.0.0"        # Result/manifest contract version
-  processed_directory: figure3   # Under paths.data_root/processed/
+  processed_directory: paper_panels   # Under paths.data_root/processed/
   gaussian_fwhm: 9.0             # Reflected Gaussian width, trials
   strict_window_size: 8          # Every constituent shares the IN/OUT label
   inout_percentiles: [25, 75]    # Run-specific VTC percentile bounds
@@ -423,6 +423,8 @@ computing:
     enabled: true
     account: ""  # Leave empty if not using SLURM/HPC, or set to your SLURM account name
     partition: ""  # Leave empty to use cluster default, or specify partition name
+    max_submitted_jobs: 1000  # Rorqual per-user queued/running job ceiling
+    submission_job_reserve: 100  # Leave capacity for login/QC and other work
 
     # Resource allocations per pipeline stage
     bids:

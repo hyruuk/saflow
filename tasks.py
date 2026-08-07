@@ -811,21 +811,21 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
             without submitting.
 
     Examples:
-        invoke pipeline.full                         # all subjects, sensor + schaefer_400
-        invoke pipeline.full --subject=04            # one subject end-to-end
-        invoke pipeline.full --space=sensor          # sensor features only
-        invoke pipeline.full --feature-type=psd      # PSD only at the features stage
-        invoke pipeline.full --skip=preprocess       # source-recon + atlas + features
-        invoke pipeline.full --skip=preprocess,source-recon  # atlas + features only
-        invoke pipeline.full --skip=features         # everything but features
-        invoke pipeline.full --dry-run               # preview submission graph
+        invoke pipeline.all                         # all subjects, sensor + schaefer_400
+        invoke pipeline.all --subject=04            # one subject end-to-end
+        invoke pipeline.all --space=sensor          # sensor features only
+        invoke pipeline.all --feature-type=psd      # PSD only at the features stage
+        invoke pipeline.all --skip=preprocess       # source-recon + atlas + features
+        invoke pipeline.all --skip=preprocess,source-recon  # atlas + features only
+        invoke pipeline.all --skip=features         # everything but features
+        invoke pipeline.all --dry-run               # preview submission graph
     """
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import save_job_manifest
 
     print("=" * 80)
-    print("pipeline.full | per-run preprocess → source-recon → atlas → features")
+    print("pipeline.all | per-run preprocess → source-recon → atlas → features")
     print("=" * 80)
 
     # Parse --skip into a normalized set. Accept both source-recon and
@@ -974,18 +974,18 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
 
     print("\n" + "=" * 80)
     if dry_run:
-        print(f"[DRY RUN] pipeline.full chain planned for "
+        print(f"[DRY RUN] pipeline.all chain planned for "
               f"{len(subjects)} subject(s) × {len(run_list)} run(s); "
               f"manifest: {manifest_path}")
     else:
-        print(f"✓ pipeline.full submitted: prep={prep_id}, src={src_id}, "
+        print(f"✓ pipeline.all submitted: prep={prep_id}, src={src_id}, "
               f"atlas={atlas_id}, features={feature_array_ids}")
         print(f"  manifest: {manifest_path}")
     print("=" * 80)
 
 
 @task
-def full(
+def all_pipeline(
     c,
     analysis_id=None,
     start_at=None,
@@ -995,16 +995,17 @@ def full(
     runs=None,
     spaces="sensor schaefer_400",
     include_exploratory=True,
+    slurm=False,
     dry_run=False,
     analysis_root=None,
     config="config.yaml",
 ):
-    """Submit the immutable raw-to-final-panels DAG, or render it with dry-run."""
+    """Run the complete raw-to-paper pipeline locally or with explicit SLURM."""
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.figure3.workflow",
-        "full",
+        "code.paper_panels.workflow",
+        "all",
         "--config",
         config,
         "--spaces",
@@ -1023,6 +1024,8 @@ def full(
             cmd.extend([flag, value])
     if not include_exploratory:
         cmd.append("--no-include-exploratory")
+    if slurm:
+        cmd.append("--slurm")
     if dry_run:
         cmd.append("--dry-run")
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -1030,13 +1033,14 @@ def full(
 
 @task
 def resume(
-    c, analysis_id, analysis_root=None, dry_run=False, config="config.yaml"
+    c, analysis_id, analysis_root=None, slurm=False, dry_run=False,
+    config="config.yaml"
 ):
     """Submit a dependency-safe wave containing only missing or invalid cells."""
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.figure3.workflow",
+        "code.paper_panels.workflow",
         "resume",
         "--analysis-id",
         analysis_id,
@@ -1045,6 +1049,8 @@ def resume(
     ]
     if analysis_root:
         cmd.extend(["--analysis-root", analysis_root])
+    if slurm:
+        cmd.append("--slurm")
     if dry_run:
         cmd.append("--dry-run")
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -3338,10 +3344,10 @@ def multifeature_run(c, analysis_id, analysis_root, features="all",
 
 
 @task
-def figure3_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
-                      runs=None, config="config.yaml"):
-    """Create and validate a new immutable corrected Figure 3 analysis."""
-    cmd = [get_python_executable(config), "-m", "code.figure3.workflow", "preflight",
+def paper_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
+                    runs=None, config="config.yaml"):
+    """Create and validate a new immutable paper-panel analysis."""
+    cmd = [get_python_executable(config), "-m", "code.paper_panels.workflow", "preflight",
            "--config", config]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])
@@ -3355,10 +3361,10 @@ def figure3_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
 
 
 @task
-def figure3_run(c, analysis_id, analysis_root=None, n_permutations=1000,
+def paper_run(c, analysis_id, analysis_root=None, n_permutations=1000,
                 minimum_circular_offset=24, seed=42, config="config.yaml"):
     """Configure corrected sensor and Schaefer-400 fitting/permutation inference."""
-    cmd = [get_python_executable(config), "-m", "code.figure3.workflow", "run",
+    cmd = [get_python_executable(config), "-m", "code.paper_panels.workflow", "run",
            "--analysis-id", analysis_id, "--config", config,
            "--n-permutations", str(n_permutations),
            "--minimum-circular-offset", str(minimum_circular_offset), "--seed", str(seed)]
@@ -3368,14 +3374,12 @@ def figure3_run(c, analysis_id, analysis_root=None, n_permutations=1000,
 
 
 @task
-def figure3_phase_c_synthetic(
-    c, output_dir="reports/synthetic/figure3-phase-c", seed=42
-):
+def paper_synthetic(c, output_dir="reports/synthetic/paper-panels", seed=42):
     """Run all three scientific workers with small schema-compatible data."""
     cmd = [
         get_python_executable(),
         "-m",
-        "code.figure3.synthetic_phase_c",
+        "code.paper_panels.synthetic_phase_c",
         "--output-dir",
         output_dir,
         "--seed",
@@ -3385,12 +3389,22 @@ def figure3_phase_c_synthetic(
 
 
 @task
-def figure3_dag(c, analysis_id, analysis_root=None, subjects=None, runs=None,
-                spaces="sensor schaefer_400", include_exploratory=True,
-                config="config.yaml"):
-    """Write the complete raw-to-panels DAG manifest without submission."""
-    cmd = [get_python_executable(config), "-m", "code.figure3.workflow", "dag",
-           "--analysis-id", analysis_id, "--config", config, "--spaces", spaces]
+def paper_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
+                         spaces="sensor schaefer_400",
+                         include_exploratory=True, config="config.yaml"):
+    """Write the complete raw-to-panels execution plan without submission."""
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.paper_panels.workflow",
+        "plan",
+        "--analysis-id",
+        analysis_id,
+        "--config",
+        config,
+        "--spaces",
+        spaces,
+    ]
     for flag, value in (
         ("--analysis-root", analysis_root),
         ("--subjects", subjects),
@@ -3404,17 +3418,17 @@ def figure3_dag(c, analysis_id, analysis_root=None, subjects=None, runs=None,
 
 
 @task
-def figure3_export(c, analysis_id, analysis_root, destination=None):
-    """Export Figure 3 bundles that render without subject-level features."""
+def paper_export(c, analysis_id, analysis_root, destination=None):
+    """Export paper-panel bundles without subject-level feature matrices."""
     target = destination or str(Path("reports/exports") / analysis_id)
-    cmd = [get_python_executable(), "-m", "code.figure3.workflow", "export",
+    cmd = [get_python_executable(), "-m", "code.paper_panels.workflow", "export",
            "--analysis-id", analysis_id, "--analysis-root", analysis_root,
            "--destination", target]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
-def figure3_audit(
+def paper_audit(
     c, analysis_id, analysis_root=None, reports_root="reports",
     config="config.yaml",
 ):
@@ -3422,7 +3436,7 @@ def figure3_audit(
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.figure3.workflow",
+        "code.paper_panels.workflow",
         "audit",
         "--analysis-id",
         analysis_id,
@@ -3437,27 +3451,10 @@ def figure3_audit(
 
 
 @task
-def figure3_legacy_inventory(c, source, manifest="reports/legacy/figure3.json"):
-    """Write a read-only hash inventory of existing Figure 3 outputs."""
-    cmd = [get_python_executable(), "-m", "code.figure3.workflow", "legacy-inventory",
+def paper_legacy_inventory(c, source, manifest="reports/legacy/paper-panels.json"):
+    """Write a read-only hash inventory of existing paper-panel outputs."""
+    cmd = [get_python_executable(), "-m", "code.paper_panels.workflow", "legacy-inventory",
            "--source", source, "--manifest", manifest]
-    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
-
-
-@task
-def viz_figure3(c, analysis_id, analysis_root="reports/exports"):
-    """Compatibility entry point routing to the shared paper renderer."""
-    cmd = [
-        get_python_executable(),
-        "-m",
-        "code.figure3.render",
-        "--panel",
-        "all",
-        "--analysis-id",
-        analysis_id,
-        "--analysis-root",
-        analysis_root,
-    ]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
@@ -3474,12 +3471,12 @@ def viz_paper(
         analysis_root = str(
             Path(loaded["paths"]["data_root"])
             / "processed"
-            / loaded.get("figure3", {}).get("processed_directory", "figure3")
+            / loaded.get("paper_panels", {}).get("processed_directory", "paper_panels")
         )
     cmd = [
         get_python_executable(config),
         "-m",
-        "code.figure3.render",
+        "code.paper_panels.render",
         "--panel",
         panel,
         "--analysis-root",
@@ -4010,9 +4007,8 @@ pipeline.add_task(preprocess)
 pipeline.add_task(preprocess_report, name="preprocess-report")
 pipeline.add_task(source_recon, name="source-recon")
 pipeline.add_task(atlas)
-pipeline.add_task(full)
+pipeline.add_task(all_pipeline, name="all")
 pipeline.add_task(resume)
-pipeline.add_task(full_features_legacy, name="full-features-legacy")
 pipeline.add_collection(features)  # Nested: pipeline.features.*
 
 
@@ -4156,13 +4152,13 @@ analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")
 analysis.add_task(multifeature_legacy_inventory,
                   name="multifeature-legacy-inventory")
-analysis.add_task(figure3_preflight, name="figure3-preflight")
-analysis.add_task(figure3_run, name="figure3-run")
-analysis.add_task(figure3_phase_c_synthetic, name="figure3-phase-c-synthetic")
-analysis.add_task(figure3_dag, name="figure3-dag")
-analysis.add_task(figure3_export, name="figure3-export")
-analysis.add_task(figure3_audit, name="figure3-audit")
-analysis.add_task(figure3_legacy_inventory, name="figure3-legacy-inventory")
+analysis.add_task(paper_preflight, name="paper-preflight")
+analysis.add_task(paper_run, name="paper-run")
+analysis.add_task(paper_synthetic, name="paper-synthetic")
+analysis.add_task(paper_execution_plan, name="paper-execution-plan")
+analysis.add_task(paper_export, name="paper-export")
+analysis.add_task(paper_audit, name="paper-audit")
+analysis.add_task(paper_legacy_inventory, name="paper-legacy-inventory")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection
@@ -4177,7 +4173,6 @@ viz.add_task(viz_auto, name="auto")
 viz.add_task(spectra)
 viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
-viz.add_task(viz_figure3, name="figure3")
 viz.add_task(viz_paper, name="paper")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 

@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from code.figure3.contracts import PANEL1_FEATURES
+from code.paper_panels.contracts import PANEL1_FEATURES
 from code.utils.config import load_config
 
 
@@ -74,7 +74,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
         if args.analysis_root
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("figure3", {}).get("processed_directory", "figure3")
+        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
     )
     output = root / args.analysis_id / "exploratory" / "sidekick_manifest.json"
     output.parent.mkdir(parents=True, exist_ok=True)

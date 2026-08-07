@@ -28,7 +28,7 @@ The versioned catalog covers:
 
 The machine-readable catalog is written to
 `<analysis-id>/manifests/schemas.json` during preflight. The dry-run graph is
-written to `<analysis-id>/manifests/dag.json`. Its `submission_plan` records
+written to `<analysis-id>/manifests/execution_plan.json`. Its `submission_plan` records
 the resource class, array size, stable dry-run job identifier, and typed
 dependencies for every retained node. `aftercorr` edges are rejected unless
 both arrays have the same subject/run index mapping.

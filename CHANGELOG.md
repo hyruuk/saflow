@@ -9,8 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Renamed the misleading corrected-analysis namespace from `figure3` to
+  `paper_panels`, including configuration, analysis IDs, tasks, logs, SLURM
+  jobs, templates, processed roots, tests, schemas, and methods documentation.
+- Renamed the complete endpoint to `pipeline.all`, made SLURM opt-in through
+  `--slurm`, and replaced internal/user-facing graph terminology with
+  `execution plan`.
+- Added capacity-limited Rorqual submission waves with a configurable
+  1,000-job ceiling, safety reserve, current-queue accounting, and active-wave
+  duplicate protection.
+
 ### Added
-- Production SLURM execution for the immutable 29-node paper DAG: concrete
+- Production SLURM execution for the immutable 29-node paper execution plan: concrete
   per-cell commands, status wrappers, stage-specific resources, real job IDs,
   dependency-safe arrays, and selective multi-wave resume without deleting
   valid chunks.
@@ -29,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected three-panel rendering with 600-DPI paper composites, exact
   2560×1440 standalone PNGs, editable SVGs, per-artifact JSON provenance, and
   subplot-level synthetic watermarks.
-- Bounded immutable `pipeline.full` DAG manifests, expected cell artifacts,
+- Bounded immutable `pipeline.all` execution plan manifests, expected cell artifacts,
   selective `pipeline.resume` audits, compact hashed exports/tables, and a
   real-output final analysis audit.
 - Phase C workers for Panel 1 paired/FDR maps, three-model nested Panel 2
@@ -39,14 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregation, synchronized decoding families, and a three-panel synthetic
   Phase C integration task.
 - Versioned contracts for labels, maps, decoding, factorial networks, coupling,
-  compact exports, figures, and immutable DAG manifests.
+  compact exports, figures, and immutable execution plan manifests.
 - Canonical seven-band paper policy, three named panel layout contracts, and an
-  inspectable raw-to-panels DAG with aligned arrays and validator barriers.
-- `analysis.figure3-dag` for writing a complete manifest without submission.
-- Immutable corrected Figure 3 workflow with reflected-boundary VTC filtering,
+  inspectable raw-to-panels execution plan with aligned arrays and validator barriers.
+- `analysis.paper-execution-plan` for writing a complete manifest without
+  execution or submission.
+- Immutable corrected paper-panel workflow with reflected-boundary VTC filtering,
   strict eight-trial labels, exact alignment, Schaefer-400 validation, circular
   nulls, nested LOSO, and synchronized family-wise map/decoding corrections.
-- Figure 3 preflight, run, compact export, legacy inventory, and local render
+- Paper-panel preflight, run, compact export, legacy inventory, and local render
   tasks that preserve existing commands and artifacts.
 - Corrected multifeature inference with nested LOSO ridge logistic regression,
   training-only preprocessing, within-subject permutations, standalone feature

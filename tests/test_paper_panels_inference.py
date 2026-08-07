@@ -1,17 +1,17 @@
-"""Tests for resumable Figure 3 inference infrastructure."""
+"""Tests for resumable paper-panel inference infrastructure."""
 
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from code.figure3.chunks import (
+from code.paper_panels.chunks import (
     aggregate_chunks,
     build_chunk_specs,
     derive_chunk_seed,
     write_chunk,
 )
-from code.figure3.networks import (
+from code.paper_panels.networks import (
     CELL_ORDER,
     combine_run_fisher_z,
     compute_factorial_contrasts,
@@ -19,17 +19,17 @@ from code.figure3.networks import (
     require_complete_cells,
     synchronized_sign_flip_test,
 )
-from code.figure3.labels import permute_outcomes_within_run_state
-from code.figure3.decoding import DecodingConfig
-from code.figure3.workers import (
+from code.paper_panels.labels import permute_outcomes_within_run_state
+from code.paper_panels.decoding import DecodingConfig
+from code.paper_panels.workers import (
     compute_panel1_statistics,
     compute_panel2_models,
     compute_panel3_modulation,
     compute_panel3_coupling,
     compute_mixed_effects_sensitivity,
 )
-from code.figure3.synthetic_phase_c import run_synthetic_phase_c
-from code.figure3.permutations import (
+from code.paper_panels.synthetic_phase_c import run_synthetic_phase_c
+from code.paper_panels.permutations import (
     DecodingModelInput,
     correct_decoding_families,
     run_decoding_permutation_chunk,
@@ -39,7 +39,7 @@ from code.classification.multifeature_scientific import NestedRidgeConfig
 
 def _specs():
     return build_chunk_specs(
-        analysis_id="fig3-20260102T030405Z-gabc-c123456789abc",
+        analysis_id="paper-20260102T030405Z-gabc-c123456789abc",
         endpoint="panel2",
         family="features",
         n_permutations=9,

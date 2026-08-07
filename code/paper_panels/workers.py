@@ -16,8 +16,8 @@ from code.classification.multifeature_scientific import (
     NestedRidgeConfig,
     run_primary_analysis,
 )
-from code.figure3.decoding import DecodingConfig
-from code.figure3.networks import (
+from code.paper_panels.decoding import DecodingConfig
+from code.paper_panels.networks import (
     CELL_ORDER,
     YEO7_ORDER,
     compute_factorial_contrasts,

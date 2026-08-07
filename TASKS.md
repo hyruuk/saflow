@@ -1,20 +1,20 @@
 # Saflow Pipeline Task Reference
 
-## Corrected Figure 3 workflow
+## Corrected paper-panel workflow
 
-Figure 3 uses immutable `fig3-<UTC>-g<git>-c<config>` directories and distinct
+Paper-panel analyses use immutable `paper-<UTC>-g<git>-c<config>` directories and distinct
 tasks, leaving all legacy commands unchanged:
 
 ```bash
-invoke analysis.figure3-preflight [--analysis-id=fig3-...] [--analysis-root=PATH]
+invoke analysis.paper-preflight [--analysis-id=paper-...] [--analysis-root=PATH]
   [--subjects="04 05"] [--runs="02 03"]
-invoke analysis.figure3-dag --analysis-id=fig3-... [--subjects="04 05"] \
+invoke analysis.paper-execution-plan --analysis-id=paper-... [--subjects="04 05"] \
   [--runs="02 03"] [--spaces="sensor schaefer_400"] \
   [--no-include-exploratory]
-invoke analysis.figure3-run --analysis-id=fig3-... [--analysis-root=PATH] \
+invoke analysis.paper-run --analysis-id=paper-... [--analysis-root=PATH] \
   [--n-permutations=1000] [--minimum-circular-offset=24] [--seed=42]
-invoke analysis.figure3-export --analysis-id=fig3-... --analysis-root=PATH
-invoke viz.figure3 --analysis-id=fig3-... [--analysis-root=reports/exports]
+invoke analysis.paper-export --analysis-id=paper-... --analysis-root=PATH
+invoke viz.paper --analysis-id=paper-... [--analysis-root=reports/exports]
 ```
 
 `alltrials` is Panel 1 confirmatory; broad `correct` and `lapse` selectors are
@@ -23,11 +23,12 @@ exclude raw PSD. All corrected paper PSD families use the canonical seven bands
 from Theta through Gamma 3; Delta is excluded. Complexity is an exploratory
 sidekick. Compact exports omit subject-level features and resumable chunks.
 
-`analysis.figure3-dag` writes `manifests/dag.json` and does not submit jobs.
+`analysis.paper-execution-plan` writes `manifests/execution_plan.json` and
+does not execute or submit jobs.
 Its subject-major array mapping is shared by every `aftercorr` edge. Validators
 and aggregators use `afterany` to inspect failures; scientific consumers use
 `afterok`. The Phase A schema catalog is documented in
-`docs/figure3_output_schemas.md`.
+`docs/paper_panels_output_schemas.md`.
 
 `pipeline.bids` accepts `--runs`, `--skip-valid/--no-skip-valid`, and
 `--slurm`. SLURM mode creates one subject/run array cell. Skip-valid requires
@@ -230,54 +231,58 @@ invoke pipeline.preprocess-report --subject=04
 invoke pipeline.preprocess-report --dataset
 ```
 
-### `invoke analysis.figure3-phase-c-synthetic`
+### `invoke analysis.paper-synthetic`
 
 Run all three observed scientific workers and create deterministic immutable
 permutation chunks from small schema-compatible synthetic data.
 
 ```bash
-invoke analysis.figure3-phase-c-synthetic \
-  --output-dir=/tmp/saflow-figure3-phase-c --seed=17
+invoke analysis.paper-synthetic \
+  --output-dir=/tmp/saflow-paper-panels --seed=17
 ```
 
 This checks inference I/O and resumability only; it is not publishable analysis.
 
-### `invoke pipeline.full`
+### `invoke pipeline.all`
 
-Create the immutable raw-to-final-panels DAG and submit it to SLURM. The
+Create the immutable raw-to-final-panels execution plan. Execution is local by
+default; `--slurm` explicitly selects Rorqual. The
 endpoint is `audit` by default; `--stop-after=features` retains the former
 practical boundary. Pass `--dry-run` to render every command, cell spec, array
 manifest, and dependency without calling `sbatch`.
 
 ```bash
-invoke pipeline.full --dry-run
-invoke pipeline.full --subjects="04 05" --runs="02 03" --dry-run
-invoke pipeline.full --start-at=features --stop-after=render --dry-run
-invoke pipeline.full --stop-after=features --dry-run
+invoke pipeline.all --dry-run
+invoke pipeline.all --subjects="04 05" --runs="02 03"
+invoke pipeline.all --slurm --dry-run
+invoke pipeline.all --slurm
+invoke pipeline.all --slurm --stop-after=features
 ```
 
 Key options are `--analysis-id`, `--start-at`, `--stop-after`, `--skip`,
 `--subjects`, `--runs`, `--spaces`, `--[no-]include-exploratory`, and
-`--dry-run`. The generated manifest records every array cell, dependency type,
+`--slurm` and `--dry-run`. The generated manifest records every array cell, dependency type,
 expected status artifact, exclusion, and provenance. Its `submission_plan`
 also records per-node resources, array sizes, and stable dry-run job
 identifiers, and validates every `aftercorr` index mapping.
 
-Normal execution records returned SLURM job IDs in `manifests/dag.json`.
+SLURM execution records returned job IDs in `manifests/execution_plan.json`.
+Submission waves respect `computing.slurm.max_submitted_jobs` and reserve
+`submission_job_reserve` slots. Run resume only after the current wave ends.
 Validators run with `afterany` so they can report incomplete upstream arrays;
 scientific consumers use `afterok` on those barriers.
 
 ### `invoke pipeline.resume`
 
-Audit an immutable DAG and select only missing, failed, corrupt, or
+Audit an immutable execution plan and select only missing, failed, corrupt, or
 provenance-incompatible cells. Completed chunks are never deleted. A partial
 recovery whose `aftercorr` subsets differ is split into safe waves; rerun
 `pipeline.resume` after the current wave finishes to submit the deferred
 downstream cells.
 
 ```bash
-invoke pipeline.resume --analysis-id=fig3-... --dry-run
-invoke pipeline.resume --analysis-id=fig3-...
+invoke pipeline.resume --slurm --analysis-id=paper-... --dry-run
+invoke pipeline.resume --slurm --analysis-id=paper-...
 ```
 
 ### `invoke viz.paper`
@@ -287,7 +292,7 @@ watermarked synthetic data.
 
 ```bash
 invoke viz.paper --panel=all
-invoke viz.paper --panel=panel2 --analysis-id=fig3-...
+invoke viz.paper --panel=panel2 --analysis-id=paper-...
 ```
 
 Paper composites are written at 600 DPI under `reports/figures/paper/`.
@@ -295,7 +300,7 @@ Standalone white-background 2560×1440 PNG and editable SVG components are
 written under `reports/figures/slides/`. Every artifact has a JSON sidecar.
 Synthetic rendering cannot overwrite real output.
 
-### `invoke analysis.figure3-audit`
+### `invoke analysis.paper-audit`
 
 Fail unless all three real bundles and matching real paper sidecars are
 complete and belong to the requested immutable analysis ID.

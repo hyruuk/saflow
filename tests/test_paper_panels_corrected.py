@@ -1,4 +1,4 @@
-"""Deterministic contracts for the corrected Figure 3 workflow."""
+"""Deterministic contracts for the corrected paper-panel workflow."""
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from code.figure3.alignment import build_alignment_keys, require_exact_alignment, validate_schaefer_400
-from code.figure3.contracts import (
+from code.paper_panels.alignment import build_alignment_keys, require_exact_alignment, validate_schaefer_400
+from code.paper_panels.contracts import (
     PANEL1_FEATURES,
     PANEL23_FEATURES,
     PANEL_SPECS,
@@ -15,9 +15,9 @@ from code.figure3.contracts import (
     canonical_band_key,
     schema_catalog,
 )
-from code.figure3.dag import build_paper_dag
-from code.figure3.inference import synchronized_cluster_mass_test
-from code.figure3.labels import (
+from code.paper_panels.execution_plan import build_execution_plan
+from code.paper_panels.inference import synchronized_cluster_mass_test
+from code.paper_panels.labels import (
     LABEL_MID,
     OUTCOME_COMMISSION_ERROR,
     OUTCOME_CORRECT_OMISSION,
@@ -29,9 +29,9 @@ from code.figure3.labels import (
     summarize_label_overlap,
     valid_circular_offsets,
 )
-from code.figure3.real_inputs import _band_reduce
-from code.figure3.preflight import inspect_inputs
-from code.figure3.provenance import create_analysis_id, initialize
+from code.paper_panels.real_inputs import _band_reduce
+from code.paper_panels.preflight import inspect_inputs
+from code.paper_panels.provenance import create_analysis_id, initialize
 
 
 def test_reflected_filter_is_boundary_safe():
@@ -137,8 +137,8 @@ def test_panel_and_schema_contracts_are_complete():
 
 
 def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
-    manifest = build_paper_dag(
-        "fig3-20260102T000000Z-gunknown-c123456789abc",
+    manifest = build_execution_plan(
+        "paper-20260102T000000Z-gunknown-c123456789abc",
         ["04", "05"],
         ["02", "03"],
     )

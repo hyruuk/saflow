@@ -10,21 +10,21 @@ from typing import Any
 
 import numpy as np
 
-from code.figure3.chunks import derive_chunk_seed
-from code.figure3.contracts import PANEL1_FEATURES, PANEL23_FEATURES
-from code.figure3.real_inputs import RealFigure3Inputs, load_real_inputs
-from code.figure3.observed_runner import _network_assignments
-from code.figure3.permutations import correct_decoding_families
-from code.figure3.networks import (
+from code.paper_panels.chunks import derive_chunk_seed
+from code.paper_panels.contracts import PANEL1_FEATURES, PANEL23_FEATURES
+from code.paper_panels.real_inputs import RealFigure3Inputs, load_real_inputs
+from code.paper_panels.observed_runner import _network_assignments
+from code.paper_panels.permutations import correct_decoding_families
+from code.paper_panels.networks import (
     CONTRAST_WEIGHTS,
     compute_factorial_contrasts,
     synchronized_sign_flip_test,
 )
-from code.figure3.workers import (
+from code.paper_panels.workers import (
     compute_all_network_pair_coupling,
     compute_mixed_effects_sensitivity,
 )
-from code.figure3.result_io import read_result_bundle
+from code.paper_panels.result_io import read_result_bundle
 from code.utils.config import load_config
 
 
@@ -55,9 +55,9 @@ def _aggregate_panel1(
     ]
     _require_bundle_provenance(statistics_bundles, analysis_dir)
     statistics = [bundle["result"] for bundle in statistics_bundles]
-    figure3 = config.get("figure3", {})
-    total = int(figure3.get("map_permutations", 10_000))
-    size = int(figure3.get("map_chunk_size", 250))
+    paper_panels = config.get("paper_panels", {})
+    total = int(paper_panels.get("map_permutations", 10_000))
+    size = int(paper_panels.get("map_chunk_size", 250))
     chunk_count = total // size
     observed = []
     corrected = []
@@ -310,9 +310,9 @@ def _aggregate_panel2(
                 for metrics in model["joint"]["subject_metrics"]
             ]
         )
-    figure3 = config.get("figure3", {})
-    total = int(figure3.get("decoding_permutations", 1_000))
-    size = int(figure3.get("decoding_chunk_size", 25))
+    paper_panels = config.get("paper_panels", {})
+    total = int(paper_panels.get("decoding_permutations", 1_000))
+    size = int(paper_panels.get("decoding_chunk_size", 25))
     chunks = [
         read_result_bundle(
             analysis_dir
@@ -381,9 +381,9 @@ def _aggregate_panel3(
     args: argparse.Namespace,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Combine ten feature-wise modulation and coupling results."""
-    figure3 = config.get("figure3", {})
-    permutations = int(figure3.get("map_permutations", 10_000))
-    base_seed = int(figure3.get("random_seed", 42))
+    paper_panels = config.get("paper_panels", {})
+    permutations = int(paper_panels.get("map_permutations", 10_000))
+    base_seed = int(paper_panels.get("random_seed", 42))
     modulation_bundles = [
         read_result_bundle(
             analysis_dir / "panel3" / "partials" / "modulation" / feature
@@ -626,7 +626,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("figure3", {}).get("processed_directory", "figure3")
+        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
     )
     directory = root / analysis_id
     if not directory.exists():

@@ -10,20 +10,20 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from code.figure3.alignment import (
+from code.paper_panels.alignment import (
     build_alignment_keys,
     require_exact_alignment,
     validate_schaefer_400,
 )
-from code.figure3.contracts import PAPER_BANDS, PANEL23_FEATURES
-from code.figure3.labels import (
+from code.paper_panels.contracts import PAPER_BANDS, PANEL23_FEATURES
+from code.paper_panels.labels import (
     LABEL_IN,
     LABEL_OUT,
     OUTCOME_COMMISSION_ERROR,
     OUTCOME_CORRECT_OMISSION,
     build_corrected_window_labels,
 )
-from code.figure3.preflight import (
+from code.paper_panels.preflight import (
     _events_path,
     _feature_paths,
     _validate_event_provenance,
@@ -166,7 +166,7 @@ def _load_recording(
     """Load one subject/run and derive strict labels and paper features."""
     paths = _feature_paths(config, subject, run)
     if any(path is None for path in paths.values()):
-        raise FileNotFoundError(f"missing Figure 3 features for sub-{subject} run-{run}")
+        raise FileNotFoundError(f"missing Paper panels features for sub-{subject} run-{run}")
     events = pd.read_csv(_events_path(config, subject, run), sep="\t")
     _validate_event_provenance(events)
     raw, frequencies, metadata, parcels = _load_psd(paths["welch"])

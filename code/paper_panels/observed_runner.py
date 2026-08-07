@@ -1,4 +1,4 @@
-"""Run independently schedulable observed Figure 3 scientific cells."""
+"""Run independently schedulable observed Paper panels scientific cells."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from code.figure3.contracts import PANEL1_FEATURES, PANEL23_FEATURES
-from code.figure3.decoding import DecodingConfig
-from code.figure3.real_inputs import RealFigure3Inputs, load_real_inputs
-from code.figure3.result_io import write_result_bundle
-from code.figure3.workers import (
+from code.paper_panels.contracts import PANEL1_FEATURES, PANEL23_FEATURES
+from code.paper_panels.decoding import DecodingConfig
+from code.paper_panels.real_inputs import RealFigure3Inputs, load_real_inputs
+from code.paper_panels.result_io import write_result_bundle
+from code.paper_panels.workers import (
     compute_panel1_statistics,
     compute_panel2_model,
     compute_panel3_coupling,
@@ -44,7 +44,7 @@ def _dispatch(
     analysis_dir: Path,
 ) -> tuple[dict[str, Any], Path]:
     """Dispatch a node name to its single-purpose scientific worker."""
-    figure3 = config.get("figure3", {})
+    paper_panels = config.get("paper_panels", {})
     if args.node == "panel1_statistics":
         feature = _require_member(args.feature, PANEL1_FEATURES, "feature")
         result = _run_panel1_feature(inputs, feature)
@@ -61,7 +61,7 @@ def _dispatch(
             inputs.outcomes,
             inputs.subjects,
             model=model,
-            config=_decoding_config(figure3),
+            config=_decoding_config(paper_panels),
         )
         result.update(
             {
@@ -78,7 +78,7 @@ def _dispatch(
         networks = _network_assignments(inputs.parcel_order)
         common = {
             "minimum_windows": int(
-                figure3.get(
+                paper_panels.get(
                     "minimum_coupling_windows"
                     if args.node == "panel3_coupling"
                     else "minimum_modulation_windows",
@@ -88,7 +88,7 @@ def _dispatch(
             # Authoritative synchronized families are recomputed only after
             # all ten feature cells pass aggregation.
             "n_permutations": 1,
-            "seed": int(figure3.get("random_seed", 42)) + index,
+            "seed": int(paper_panels.get("random_seed", 42)) + index,
         }
         if args.node == "panel3_coupling":
             result = compute_panel3_coupling(
@@ -226,7 +226,7 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("figure3", {}).get("processed_directory", "figure3")
+        / config.get("paper_panels", {}).get("processed_directory", "paper_panels")
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():

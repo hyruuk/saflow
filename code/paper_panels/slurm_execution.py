@@ -1,4 +1,4 @@
-"""Render and submit immutable Figure 3 DAG cells to SLURM."""
+"""Render and submit immutable Paper panels execution plan cells to SLURM."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from code.figure3.dag import stage_for_node
+from code.paper_panels.cell_status import execute_cell
+from code.paper_panels.execution_plan import stage_for_node
 from code.utils.slurm import (
     render_slurm_script,
     submit_job_array,
@@ -67,7 +68,7 @@ IMPLEMENTED_NODES = (
 )
 
 
-def submit_dag(
+def submit_execution_plan(
     manifest: dict[str, Any],
     analysis_dir: Path,
     config: dict[str, Any],
@@ -90,7 +91,7 @@ def submit_dag(
         )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     script_root = analysis_dir / "slurm" / "scripts"
-    log_root = Path(config["paths"]["logs"]) / "figure3" / analysis_dir.name
+    log_root = Path(config["paths"]["logs"]) / "paper_panels" / analysis_dir.name
     job_ids: dict[str, str] = {}
     submissions = []
     plan = {record["name"]: record for record in manifest["submission_plan"]}
@@ -152,6 +153,57 @@ def submit_dag(
     return {"job_ids": job_ids, "submissions": submissions}
 
 
+def execute_plan_locally(
+    manifest: dict[str, Any],
+    analysis_dir: Path,
+    config: dict[str, Any],
+    *,
+    dry_run: bool,
+    selected_cells: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Render and sequentially execute selected cells without SLURM."""
+    selected = _selected_indices(manifest, selected_cells)
+    retained = _topological_nodes(
+        manifest,
+        [node for node in manifest["nodes"] if selected.get(node["name"])],
+    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    script_root = analysis_dir / "local" / "scripts"
+    log_root = Path(config["paths"]["logs"]) / "paper_panels" / analysis_dir.name
+    plan = {record["name"]: record for record in manifest["submission_plan"]}
+    executions = []
+    for node in retained:
+        name = node["name"]
+        records = [
+            cell
+            for cell in manifest["node_cells"][name]
+            if cell["index"] in selected[name]
+        ]
+        for cell in records:
+            script = _render_cell(
+                manifest,
+                analysis_dir,
+                config,
+                plan[name],
+                cell,
+                script_root,
+                log_root,
+                timestamp,
+            )
+            spec = script.parent / f"cell-{cell['index']:04d}.json"
+            if not dry_run:
+                execute_cell(spec)
+            executions.append(
+                {
+                    "node": name,
+                    "cell_index": cell["index"],
+                    "spec_path": str(spec),
+                    "dry_run": dry_run,
+                }
+            )
+    return {"mode": "local", "executions": executions}
+
+
 def _write_submission_journal(
     analysis_dir: Path,
     analysis_id: str,
@@ -195,7 +247,7 @@ def _topological_nodes(
             )
         ]
         if not ready:
-            raise ValueError("DAG contains a cycle or unresolved dependency")
+            raise ValueError("execution plan contains a cycle or unresolved dependency")
         for name in ready:
             ordered.append(by_name[name])
             pending.remove(name)
@@ -260,10 +312,10 @@ def _render_cell(
     resources = _base_resources(config, plan, log_root)
     script_path = cell_dir / f"cell-{cell['index']:04d}.sh"
     render_slurm_script(
-        "figure3_cell.sh.j2",
+        "paper_panel_cell.sh.j2",
         {
             **resources,
-            "job_name": f"f3_{name[:30]}",
+            "job_name": f"paper_{name[:30]}",
             "timestamp": timestamp,
             "spec_path": shlex.quote(str(spec_path)),
             "config_path": shlex.quote(
@@ -285,7 +337,7 @@ def command_for_cell(
     subjects: Sequence[str] = (),
     runs: Sequence[str] = (),
 ) -> list[str]:
-    """Return the concrete non-shell command for one DAG cell."""
+    """Return the concrete non-shell command for one execution plan cell."""
     python = str(Path(config["paths"]["venv"]) / "bin" / "python")
     invoke = str(Path(config["paths"]["venv"]) / "bin" / "invoke")
     subject = cell.get("subject")
@@ -341,7 +393,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.figure3.validation_runner",
+            "code.paper_panels.validation_runner",
             "--space",
             node.removesuffix("_feature_validator"),
         ]
@@ -354,7 +406,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.figure3.observed_runner",
+            "code.paper_panels.observed_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -376,7 +428,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.figure3.panel1_decoding_runner",
+            "code.paper_panels.panel1_decoding_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -388,7 +440,7 @@ def command_for_cell(
             "--cell-index",
             str(cell["index"]),
             "--jobs",
-            str(config.get("figure3", {}).get("resources", {}).get(
+            str(config.get("paper_panels", {}).get("resources", {}).get(
                 "maps", {}
             ).get("cpus", 4)),
         ]
@@ -401,7 +453,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.figure3.panel2_permutation_runner",
+            "code.paper_panels.panel2_permutation_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -421,7 +473,7 @@ def command_for_cell(
         command = [
             python,
             "-m",
-            "code.figure3.aggregate_runner",
+            "code.paper_panels.aggregate_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -438,7 +490,7 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.figure3.panel_validator",
+            "code.paper_panels.panel_validator",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
@@ -447,19 +499,19 @@ def command_for_cell(
             node.removesuffix("_validator"),
         ]
     if node == "exploratory_analyses":
-        resources = config.get("figure3", {}).get("resources", {}).get(
+        resources = config.get("paper_panels", {}).get("resources", {}).get(
             "maps", {}
         )
         return [
             python,
             "-m",
-            "code.figure3.exploratory_runner",
+            "code.paper_panels.exploratory_runner",
             "--analysis-id",
             analysis_id,
             "--analysis-root",
             str(analysis_root),
             "--n-permutations",
-            str(config.get("figure3", {}).get("decoding_permutations", 1_000)),
+            str(config.get("paper_panels", {}).get("decoding_permutations", 1_000)),
             "--jobs",
             str(resources.get("cpus", 4)),
         ]
@@ -467,7 +519,7 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.figure3.workflow",
+            "code.paper_panels.workflow",
             "export",
             "--analysis-id",
             analysis_id,
@@ -480,7 +532,7 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.figure3.render",
+            "code.paper_panels.render",
             "--panel",
             "all",
             "--analysis-id",
@@ -494,7 +546,7 @@ def command_for_cell(
         return [
             python,
             "-m",
-            "code.figure3.workflow",
+            "code.paper_panels.workflow",
             "audit",
             "--analysis-id",
             analysis_id,
@@ -507,7 +559,7 @@ def command_for_cell(
         python,
         "-c",
         (
-            "raise RuntimeError('Figure 3 node adapter is not implemented: "
+            "raise RuntimeError('Paper panels node adapter is not implemented: "
             f"{node}')"
         ),
     ]
@@ -555,12 +607,12 @@ def _submit_node(
     resources = _base_resources(
         config,
         plan,
-        Path(config["paths"]["logs"]) / "figure3",
+        Path(config["paths"]["logs"]) / "paper_panels",
     )
     if node["array"]:
         return submit_job_array(
             scripts,
-            f"f3_{node['name']}",
+            f"paper_{node['name']}",
             resources,
             script_root / node["name"],
             timestamp,
@@ -584,7 +636,7 @@ def _submit_node(
 def _base_resources(
     config: dict[str, Any], plan: dict[str, Any], log_root: Path
 ) -> dict[str, Any]:
-    """Translate the Figure 3 resource contract to the shared template."""
+    """Translate the Paper panels resource contract to the shared template."""
     slurm = config["computing"]["slurm"]
     return {
         "account": slurm["account"],

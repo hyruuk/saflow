@@ -1,4 +1,4 @@
-"""Command-line orchestration for immutable corrected Figure 3 analyses."""
+"""Command-line orchestration for immutable corrected Paper panels analyses."""
 
 from __future__ import annotations
 
@@ -6,11 +6,13 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import shutil
+import subprocess
 import csv
 from pathlib import Path
 
-from code.figure3.contracts import (
+from code.paper_panels.contracts import (
     PANEL1_FEATURES,
     PANEL23_FEATURES,
     PANEL_COMPONENTS,
@@ -18,21 +20,24 @@ from code.figure3.contracts import (
     frequency_band_manifest,
     schema_catalog,
 )
-from code.figure3.dag import (
-    DEFAULT_FIGURE3_RESOURCES,
-    bound_paper_dag,
-    build_paper_dag,
+from code.paper_panels.execution_plan import (
+    DEFAULT_PAPER_PANEL_RESOURCES,
+    bound_execution_plan,
+    build_execution_plan,
     build_submission_plan,
 )
-from code.figure3.preflight import inspect_inputs, write_reports
-from code.figure3.provenance import (
+from code.paper_panels.preflight import inspect_inputs, write_reports
+from code.paper_panels.provenance import (
     config_hash,
     create_analysis_id,
     initialize,
     validate_analysis_id,
 )
-from code.figure3.slurm_execution import submit_dag
-from code.figure3.panel_validator import validate_panel
+from code.paper_panels.slurm_execution import (
+    execute_plan_locally,
+    submit_execution_plan,
+)
+from code.paper_panels.panel_validator import validate_panel
 from code.utils.logging_config import setup_logging
 from code.utils.config import load_config
 
@@ -47,7 +52,7 @@ def _load_config(path: Path) -> dict:
 def _analysis_root(config: dict, override: str | None) -> Path:
     if override:
         return Path(override)
-    directory = config.get("figure3", {}).get("processed_directory", "figure3")
+    directory = config.get("paper_panels", {}).get("processed_directory", "paper_panels")
     return Path(config["paths"]["data_root"]) / "processed" / directory
 
 
@@ -84,7 +89,7 @@ def run_preflight(args: argparse.Namespace) -> Path:
     (analysis_dir / "manifests" / "schemas.json").write_text(
         json.dumps(schema_catalog(), indent=2) + "\n"
     )
-    LOGGER.info("Figure 3 preflight initialized %s", analysis_dir)
+    LOGGER.info("Paper panels preflight initialized %s", analysis_dir)
     return analysis_dir
 
 
@@ -100,7 +105,7 @@ def run_analysis(args: argparse.Namespace) -> Path:
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
     preflight = analysis_dir / "preflight_report.json"
     if not preflight.exists() or json.loads(preflight.read_text()).get("status") != "passed":
-        raise RuntimeError("a passing figure3-preflight report is required")
+        raise RuntimeError("a passing paper_panels-preflight report is required")
     manifest = {
         "analysis_id": args.analysis_id,
         "n_permutations": args.n_permutations,
@@ -117,8 +122,8 @@ def run_analysis(args: argparse.Namespace) -> Path:
     return path
 
 
-def plan_dag(args: argparse.Namespace) -> Path:
-    """Write a complete inspectable DAG without submitting any jobs."""
+def plan_execution(args: argparse.Namespace) -> Path:
+    """Write a complete inspectable execution plan without submitting any jobs."""
     validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
@@ -127,22 +132,22 @@ def plan_dag(args: argparse.Namespace) -> Path:
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     spaces = args.spaces.split()
-    manifest = build_paper_dag(
+    manifest = build_execution_plan(
         args.analysis_id,
         subjects,
         runs,
         spaces,
         include_exploratory=args.include_exploratory,
     )
-    path = analysis_dir / "manifests" / "dag.json"
+    path = analysis_dir / "manifests" / "execution_plan.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n")
     return path
 
 
-def run_full_pipeline(args: argparse.Namespace) -> Path:
-    """Create and submit the bounded DAG, or render it completely in dry-run."""
+def run_all_pipeline(args: argparse.Namespace) -> Path:
+    """Create and execute the bounded plan locally or through explicit SLURM."""
     config = _load_config(Path(args.config))
-    if not args.dry_run and shutil.which("sbatch") is None:
+    if args.slurm and not args.dry_run and shutil.which("sbatch") is None:
         raise RuntimeError(
             "SLURM submission requires sbatch; use --dry-run on non-SLURM hosts"
         )
@@ -155,25 +160,25 @@ def run_full_pipeline(args: argparse.Namespace) -> Path:
     initialize(root, analysis_id, config, vars(args), Path.cwd())
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
-    figure3_config = config.get("figure3", {})
-    graph = build_paper_dag(
+    paper_panels_config = config.get("paper_panels", {})
+    graph = build_execution_plan(
         analysis_id,
         subjects,
         runs,
         args.spaces.split(),
         include_exploratory=args.include_exploratory,
         map_chunk_count=_chunk_count(
-            figure3_config, "map_permutations", "map_chunk_size", 10_000, 250
+            paper_panels_config, "map_permutations", "map_chunk_size", 10_000, 250
         ),
         decoding_chunk_count=_chunk_count(
-            figure3_config,
+            paper_panels_config,
             "decoding_permutations",
             "decoding_chunk_size",
             1_000,
             25,
         ),
     )
-    graph = bound_paper_dag(
+    graph = bound_execution_plan(
         graph,
         start_at=args.start_at,
         stop_after=args.stop_after,
@@ -192,21 +197,39 @@ def run_full_pipeline(args: argparse.Namespace) -> Path:
     )
     graph["submission_plan"] = build_submission_plan(
         graph,
-        figure3_config.get("resources", DEFAULT_FIGURE3_RESOURCES),
+        paper_panels_config.get("resources", DEFAULT_PAPER_PANEL_RESOURCES),
         config.get("computing", {}).get("slurm", {}),
     )
-    path = analysis_dir / "manifests" / "dag.json"
+    path = analysis_dir / "manifests" / "execution_plan.json"
     path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
-    submission = submit_dag(
-        graph,
-        analysis_dir,
-        config,
-        dry_run=bool(args.dry_run),
-    )
+    if args.slurm:
+        invalid = list(graph["expected_outputs"])
+        capacity = _available_submission_capacity(config, dry_run=args.dry_run)
+        ready, deferred = _capacity_limited_wave(graph, invalid, capacity)
+        submission = submit_execution_plan(
+            graph,
+            analysis_dir,
+            config,
+            dry_run=bool(args.dry_run),
+            selected_cells=ready,
+        )
+        submission["capacity"] = capacity
+        submission["deferred_cell_count"] = len(deferred)
+    else:
+        submission = execute_plan_locally(
+            graph,
+            analysis_dir,
+            config,
+            dry_run=bool(args.dry_run),
+        )
+        deferred = []
     graph["scheduler"] = submission
-    graph["provenance"]["submitted"] = not args.dry_run
+    graph["provenance"]["execution_mode"] = "slurm" if args.slurm else "local"
+    graph["provenance"]["submitted"] = bool(args.slurm and not args.dry_run)
     graph["provenance"]["submission_status"] = (
-        "dry_run" if args.dry_run else "submitted"
+        "dry_run"
+        if args.dry_run
+        else ("wave_submitted" if deferred else "submitted")
     )
     path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
     LOGGER.info("Full pipeline manifest ready: %s", path)
@@ -225,19 +248,26 @@ def _chunk_count(
 
 
 def resume_pipeline(args: argparse.Namespace) -> Path:
-    """Audit an immutable DAG and submit a dependency-safe invalid-cell wave."""
+    """Audit an immutable execution plan and submit a dependency-safe invalid-cell wave."""
     validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
-    dag_path = analysis_dir / "manifests" / "dag.json"
-    if not dag_path.exists():
-        raise FileNotFoundError(f"immutable DAG manifest not found: {dag_path}")
-    dag = json.loads(dag_path.read_text())
+    if args.slurm and not args.dry_run:
+        active = _active_submission_jobs(analysis_dir)
+        if active:
+            raise RuntimeError(
+                "previous submission wave is still active; wait before resume: "
+                + ", ".join(active)
+            )
+    plan_path = analysis_dir / "manifests" / "execution_plan.json"
+    if not plan_path.exists():
+        raise FileNotFoundError(f"immutable execution plan manifest not found: {plan_path}")
+    plan = json.loads(plan_path.read_text())
     selected = []
     complete = []
-    for expected in dag.get("expected_outputs", []):
+    for expected in plan.get("expected_outputs", []):
         status_path = analysis_dir / expected["status_path"]
-        reason = _invalid_cell_reason(status_path, expected, dag["provenance"])
+        reason = _invalid_cell_reason(status_path, expected, plan["provenance"])
         record = {**expected, "reason": reason}
         (selected if reason else complete).append(record)
     resume = {
@@ -249,16 +279,31 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
         "completed_cells": complete,
         "deletes_completed_chunks": False,
     }
-    ready, deferred = _resume_submission_wave(dag, selected)
+    ready, deferred = _resume_submission_wave(plan, selected)
+    capacity = None
+    if args.slurm:
+        capacity = _available_submission_capacity(config, dry_run=args.dry_run)
+        ready, capacity_deferred = _capacity_limited_wave(plan, ready, capacity)
+        deferred.extend(capacity_deferred)
     resume["cells_submitted_this_wave"] = ready
     resume["cells_deferred_to_next_wave"] = deferred
-    submission = submit_dag(
-        dag,
-        analysis_dir,
-        config,
-        dry_run=bool(args.dry_run),
-        selected_cells=ready,
-    )
+    if args.slurm:
+        submission = submit_execution_plan(
+            plan,
+            analysis_dir,
+            config,
+            dry_run=bool(args.dry_run),
+            selected_cells=ready,
+        )
+        submission["capacity"] = capacity
+    else:
+        submission = execute_plan_locally(
+            plan,
+            analysis_dir,
+            config,
+            dry_run=bool(args.dry_run),
+            selected_cells=ready,
+        )
     resume["scheduler"] = submission
     path = analysis_dir / "manifests" / "resume.json"
     path.write_text(json.dumps(resume, indent=2, sort_keys=True) + "\n")
@@ -266,7 +311,7 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
 
 
 def _resume_submission_wave(
-    dag: dict, invalid_cells: list[dict]
+    plan: dict, invalid_cells: list[dict]
 ) -> tuple[list[dict], list[dict]]:
     """Select a dependency-safe recovery wave without recomputing valid cells."""
     by_node: dict[str, list[dict]] = {}
@@ -276,7 +321,7 @@ def _resume_submission_wave(
     changed = True
     while changed:
         changed = False
-        for edge in dag["edges"]:
+        for edge in plan["edges"]:
             upstream = edge["upstream"]
             downstream = edge["downstream"]
             upstream_cells = by_node.get(upstream, [])
@@ -306,6 +351,124 @@ def _resume_submission_wave(
         cell for cell in invalid_cells if cell["node"] in deferred_nodes
     ]
     return ready, deferred
+
+
+def _capacity_limited_wave(
+    plan: dict, invalid_cells: list[dict], capacity: int
+) -> tuple[list[dict], list[dict]]:
+    """Select a dependency-safe prefix that fits the scheduler job ceiling."""
+    if capacity < 1:
+        raise RuntimeError("no SLURM submission capacity is currently available")
+    by_node: dict[str, list[dict]] = {}
+    for cell in invalid_cells:
+        by_node.setdefault(cell["node"], []).append(cell)
+    incoming = {
+        node["name"]: [
+            edge for edge in plan["edges"] if edge["downstream"] == node["name"]
+        ]
+        for node in plan["nodes"]
+    }
+    selected: list[dict] = []
+    selected_by_node: dict[str, list[dict]] = {}
+    for node in _ordered_execution_nodes(plan):
+        name = node["name"]
+        candidates = by_node.get(name, [])
+        if not candidates:
+            continue
+        upstream_incomplete = [
+            edge
+            for edge in incoming[name]
+            if by_node.get(edge["upstream"])
+            and len(selected_by_node.get(edge["upstream"], []))
+            != len(by_node[edge["upstream"]])
+        ]
+        if upstream_incomplete:
+            continue
+        remaining = capacity - len(selected)
+        if remaining < 1:
+            break
+        has_recovering_aftercorr = any(
+            edge["dependency"] == "aftercorr"
+            and by_node.get(edge["upstream"])
+            for edge in incoming[name]
+        )
+        chosen = candidates
+        if len(chosen) > remaining:
+            if has_recovering_aftercorr:
+                continue
+            chosen = candidates[:remaining]
+        selected.extend(chosen)
+        selected_by_node[name] = chosen
+    selected_keys = {
+        (cell["node"], int(cell["cell_index"])) for cell in selected
+    }
+    deferred = [
+        cell
+        for cell in invalid_cells
+        if (cell["node"], int(cell["cell_index"])) not in selected_keys
+    ]
+    return selected, deferred
+
+
+def _ordered_execution_nodes(plan: dict) -> list[dict]:
+    """Return plan nodes only after all their upstream nodes."""
+    by_name = {node["name"]: node for node in plan["nodes"]}
+    pending = list(by_name)
+    ordered = []
+    while pending:
+        ready = [
+            name
+            for name in pending
+            if all(
+                edge["upstream"] not in pending
+                for edge in plan["edges"]
+                if edge["downstream"] == name
+            )
+        ]
+        if not ready:
+            raise ValueError("execution plan contains a dependency cycle")
+        for name in ready:
+            ordered.append(by_name[name])
+            pending.remove(name)
+    return ordered
+
+
+def _available_submission_capacity(config: dict, *, dry_run: bool) -> int:
+    """Return safe new-cell capacity below the configured 1,000-job limit."""
+    slurm = config.get("computing", {}).get("slurm", {})
+    maximum = int(slurm.get("max_submitted_jobs", 1_000))
+    reserve = int(slurm.get("submission_job_reserve", 100))
+    current = 0 if dry_run else _current_slurm_job_count()
+    return maximum - reserve - current
+
+
+def _current_slurm_job_count() -> int:
+    """Count the user's currently queued/running SLURM array elements."""
+    result = subprocess.run(
+        ["squeue", "-h", "-r", "-u", os.environ.get("USER", ""), "-o", "%i"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return len([line for line in result.stdout.splitlines() if line.strip()])
+
+
+def _active_submission_jobs(analysis_dir: Path) -> list[str]:
+    """Return still-active job IDs from the most recent submission wave."""
+    journal = analysis_dir / "manifests" / "submission_journal.json"
+    if not journal.exists() or shutil.which("squeue") is None:
+        return []
+    job_ids = list(json.loads(journal.read_text()).get("job_ids", {}).values())
+    real_ids = [job_id for job_id in job_ids if not str(job_id).startswith("dry-")]
+    if not real_ids:
+        return []
+    result = subprocess.run(
+        ["squeue", "-h", "-j", ",".join(real_ids), "-o", "%A"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return sorted(set(result.stdout.split()))
 
 
 def _split_stages(value: str | None) -> list[str]:
@@ -346,7 +509,7 @@ def export_analysis(args: argparse.Namespace) -> Path:
     if destination.exists():
         raise FileExistsError(f"export destination exists: {destination}")
     if not (source / "preflight_report.json").exists():
-        raise ValueError("source is not a Figure 3 analysis")
+        raise ValueError("source is not a Paper panels analysis")
     destination.mkdir(parents=True)
     excluded = {"chunks", "partials", "subject_features", "inputs", "slurm"}
     copied = []
@@ -497,8 +660,8 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                             "component": component,
                         }
                     )
-    dag_path = analysis_dir / "manifests" / "dag.json"
-    if dag_path.exists() and json.loads(dag_path.read_text()).get(
+    plan_path = analysis_dir / "manifests" / "execution_plan.json"
+    if plan_path.exists() and json.loads(plan_path.read_text()).get(
         "include_exploratory"
     ):
         exploratory = analysis_dir / "exploratory" / "sidekick_manifest.json"
@@ -522,7 +685,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
 
 
 def inventory_legacy(args: argparse.Namespace) -> Path:
-    """Hash legacy Figure 3 outputs without moving, deleting, or modifying them."""
+    """Hash legacy Paper panels outputs without moving, deleting, or modifying them."""
     entries = []
     source = Path(args.source)
     for path in sorted(source.rglob("*")) if source.exists() else []:
@@ -537,7 +700,7 @@ def inventory_legacy(args: argparse.Namespace) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the Figure 3 workflow parser."""
+    """Build the Paper panels workflow parser."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser("preflight")
@@ -553,36 +716,38 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--n-permutations", type=int, default=1000)
     run.add_argument("--minimum-circular-offset", type=int, default=24)
     run.add_argument("--seed", type=int, default=42)
-    dag = commands.add_parser("dag")
-    dag.add_argument("--config", default="config.yaml")
-    dag.add_argument("--analysis-id", required=True)
-    dag.add_argument("--analysis-root")
-    dag.add_argument("--subjects")
-    dag.add_argument("--runs")
-    dag.add_argument("--spaces", default="sensor schaefer_400")
-    dag.add_argument(
+    plan = commands.add_parser("plan")
+    plan.add_argument("--config", default="config.yaml")
+    plan.add_argument("--analysis-id", required=True)
+    plan.add_argument("--analysis-root")
+    plan.add_argument("--subjects")
+    plan.add_argument("--runs")
+    plan.add_argument("--spaces", default="sensor schaefer_400")
+    plan.add_argument(
         "--include-exploratory", action=argparse.BooleanOptionalAction, default=True
     )
-    full = commands.add_parser("full")
-    full.add_argument("--config", default="config.yaml")
-    full.add_argument("--analysis-id")
-    full.add_argument("--analysis-root")
-    full.add_argument("--start-at")
-    full.add_argument("--stop-after")
-    full.add_argument("--skip")
-    full.add_argument("--subjects")
-    full.add_argument("--runs")
-    full.add_argument("--spaces", default="sensor schaefer_400")
-    full.add_argument(
+    all_pipeline = commands.add_parser("all")
+    all_pipeline.add_argument("--config", default="config.yaml")
+    all_pipeline.add_argument("--analysis-id")
+    all_pipeline.add_argument("--analysis-root")
+    all_pipeline.add_argument("--start-at")
+    all_pipeline.add_argument("--stop-after")
+    all_pipeline.add_argument("--skip")
+    all_pipeline.add_argument("--subjects")
+    all_pipeline.add_argument("--runs")
+    all_pipeline.add_argument("--spaces", default="sensor schaefer_400")
+    all_pipeline.add_argument(
         "--include-exploratory",
         action=argparse.BooleanOptionalAction,
         default=True,
     )
-    full.add_argument("--dry-run", action="store_true")
+    all_pipeline.add_argument("--slurm", action="store_true")
+    all_pipeline.add_argument("--dry-run", action="store_true")
     resume = commands.add_parser("resume")
     resume.add_argument("--config", default="config.yaml")
     resume.add_argument("--analysis-id", required=True)
     resume.add_argument("--analysis-root")
+    resume.add_argument("--slurm", action="store_true")
     resume.add_argument("--dry-run", action="store_true")
     audit = commands.add_parser("audit")
     audit.add_argument("--config", default="config.yaml")
@@ -600,15 +765,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run the selected Figure 3 workflow command."""
+    """Run the selected Paper panels workflow command."""
     args = build_parser().parse_args()
-    setup_logging("figure3", log_file="figure3.log",
+    setup_logging("paper_panels", log_file="paper_panels.log",
                   config={"paths": {"logs": "logs"}, "logging": {"level": "INFO"}})
     functions = {
         "preflight": run_preflight,
         "run": run_analysis,
-        "dag": plan_dag,
-        "full": run_full_pipeline,
+        "plan": plan_execution,
+        "all": run_all_pipeline,
         "resume": resume_pipeline,
         "audit": audit_analysis,
         "export": export_analysis,

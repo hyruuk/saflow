@@ -1,4 +1,4 @@
-"""Execute one immutable DAG cell and atomically record its status."""
+"""Execute one immutable execution plan cell and atomically record its status."""
 
 from __future__ import annotations
 
