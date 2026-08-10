@@ -54,7 +54,9 @@ def reconstruct_strict_labels(
     """
     indices = np.asarray(contributing_epoch_indices)
     if indices.ndim != 2 or indices.shape[1] != window_size:
-        raise ValueError(f"contributing_epoch_indices must have shape (n, {window_size})")
+        raise ValueError(
+            f"contributing_epoch_indices must have shape (n, {window_size})"
+        )
     if not np.issubdtype(indices.dtype, np.integer):
         raise ValueError("contributing epoch indices must be integers")
     values = np.asarray(vtc, dtype=float)
@@ -65,6 +67,48 @@ def reconstruct_strict_labels(
     labels = np.full(indices.shape[0], LABEL_MID, dtype=np.int8)
     labels[np.all(constituents == LABEL_IN, axis=1)] = LABEL_IN
     labels[np.all(constituents == LABEL_OUT, axis=1)] = LABEL_OUT
+    return labels
+
+
+def reconstruct_opposite_free_labels(
+    vtc: np.ndarray,
+    contributing_epoch_indices: np.ndarray,
+    contributing_bad_flags: np.ndarray,
+    *,
+    bounds: tuple[float, float] = (25.0, 75.0),
+    window_size: int = 8,
+) -> np.ndarray:
+    """Label clean windows containing one extreme and no opposite extreme.
+
+    IN/MID mixtures become IN and OUT/MID mixtures become OUT. Windows that
+    are entirely MID, contain both IN and OUT, or contain any bad trial remain
+    MID. This relaxed definition is reserved for the network-coupling analysis.
+
+    Args:
+        vtc: Run-level filtered VTC values.
+        contributing_epoch_indices: Trial indices for every neural window.
+        contributing_bad_flags: Artifact flags aligned to contributing indices.
+        bounds: Run-specific percentile bounds used to classify trials.
+        window_size: Required number of contributing trials per window.
+
+    Returns:
+        One IN, MID, or OUT label per window.
+    """
+    indices = np.asarray(contributing_epoch_indices)
+    bad = np.asarray(contributing_bad_flags, dtype=bool)
+    if indices.ndim != 2 or indices.shape[1] != window_size:
+        raise ValueError(
+            f"contributing_epoch_indices must have shape (n, {window_size})"
+        )
+    if bad.shape != indices.shape:
+        raise ValueError(f"contributing_bad_flags must have shape (n, {window_size})")
+    trial_labels = classify_vtc(np.asarray(vtc, dtype=float), bounds)[indices]
+    has_in = np.any(trial_labels == LABEL_IN, axis=1)
+    has_out = np.any(trial_labels == LABEL_OUT, axis=1)
+    clean = ~np.any(bad, axis=1)
+    labels = np.full(len(indices), LABEL_MID, dtype=np.int8)
+    labels[clean & has_in & ~has_out] = LABEL_IN
+    labels[clean & has_out & ~has_in] = LABEL_OUT
     return labels
 
 
@@ -151,10 +195,13 @@ def draw_circular_shifts(
     run_lengths: Sequence[int], minimum_offset: int, rng: np.random.Generator
 ) -> np.ndarray:
     """Draw one valid deterministic shift for every run."""
-    return np.asarray([
-        rng.choice(valid_circular_offsets(length, minimum_offset))
-        for length in run_lengths
-    ], dtype=int)
+    return np.asarray(
+        [
+            rng.choice(valid_circular_offsets(length, minimum_offset))
+            for length in run_lengths
+        ],
+        dtype=int,
+    )
 
 
 def shift_and_rebuild_labels(
@@ -181,10 +228,7 @@ def permute_outcomes_within_run_state(
     run_values = np.asarray(runs)
     state_values = np.asarray(states)
     if not (
-        values.shape
-        == subject_values.shape
-        == run_values.shape
-        == state_values.shape
+        values.shape == subject_values.shape == run_values.shape == state_values.shape
     ):
         raise ValueError("outcomes, subjects, runs, and states must align")
     for subject in np.unique(subject_values):
@@ -203,17 +247,24 @@ def permute_outcomes_within_run_state(
     return values
 
 
-def summarize_label_overlap(old: np.ndarray, corrected: np.ndarray) -> dict[str, object]:
+def summarize_label_overlap(
+    old: np.ndarray, corrected: np.ndarray
+) -> dict[str, object]:
     """Summarize old/corrected counts, transitions, and retained windows."""
     old_labels = np.asarray(old, dtype=int)
     new_labels = np.asarray(corrected, dtype=int)
     if old_labels.shape != new_labels.shape:
         raise ValueError("old and corrected labels must have identical shape")
     order = np.asarray([LABEL_IN, LABEL_MID, LABEL_OUT])
-    transition = np.asarray([
-        [np.sum((old_labels == source) & (new_labels == target)) for target in order]
-        for source in order
-    ])
+    transition = np.asarray(
+        [
+            [
+                np.sum((old_labels == source) & (new_labels == target))
+                for target in order
+            ]
+            for source in order
+        ]
+    )
     old_selected = old_labels != LABEL_MID
     new_selected = new_labels != LABEL_MID
     union = np.sum(old_selected | new_selected)

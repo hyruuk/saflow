@@ -242,7 +242,7 @@ def compute_network_coupling(
     n_permutations: int,
     seed: int,
 ) -> dict[str, object]:
-    """Estimate weighted within-cell DMN–DAN Fisher-z coupling."""
+    """Estimate run-centered, pooled within-cell DMN–DAN coupling."""
     values = np.asarray(parcel_values, dtype=float)
     labels = np.asarray(cell_labels)
     subject_values = np.asarray(subjects)
@@ -261,38 +261,25 @@ def compute_network_coupling(
     counts = np.zeros((len(unique_subjects), len(CELL_ORDER)), dtype=int)
     for subject_index, subject in enumerate(unique_subjects):
         for cell_index, cell in enumerate(CELL_ORDER):
-            run_estimates: list[list[float]] = []
-            run_counts = []
             subject_cell = (subject_values == subject) & (labels == cell)
             counts[subject_index, cell_index] = subject_cell.sum()
-            for run in np.unique(run_values[subject_values == subject]):
-                selector = subject_cell & (run_values == run)
-                count = int(selector.sum())
-                if count < 3:
-                    continue
-                default = np.nanmean(values[selector][:, default_mask], axis=1)
-                attention = np.nanmean(
-                    values[selector][:, attention_mask], axis=1
-                )
-                run_estimates.append(
-                    [
-                        fisher_z_correlation(default[:, index], attention[:, index])
-                        for index in range(values.shape[2])
-                    ]
-                )
-                run_counts.append(count)
-            if run_estimates:
-                estimates = np.asarray(run_estimates)
-                coupling[subject_index, cell_index] = [
-                    combine_run_fisher_z(estimates[:, index], run_counts)
-                    for index in range(values.shape[2])
-                ]
+            if not subject_cell.any():
+                continue
+            cell_runs = run_values[subject_cell]
+            default = np.nanmean(values[subject_cell][:, default_mask], axis=1)
+            attention = np.nanmean(values[subject_cell][:, attention_mask], axis=1)
+            default = _center_features_within_runs(default, cell_runs)
+            attention = _center_features_within_runs(attention, cell_runs)
+            coupling[subject_index, cell_index] = [
+                fisher_z_correlation(default[:, index], attention[:, index])
+                for index in range(values.shape[2])
+            ]
     complete, report = require_complete_cells(counts, minimum_windows)
     complete &= np.all(np.isfinite(coupling), axis=(1, 2))
     for index, included in enumerate(complete):
         report[index]["included"] = bool(included)
         if not included and report[index]["reason"] is None:
-            report[index]["reason"] = "non-estimable within-run DMN-DAN association"
+            report[index]["reason"] = "non-estimable run-centered pooled DMN-DAN association"
     if complete.sum() < 2:
         raise ValueError("network-dynamics analysis coupling requires at least two complete subjects")
     contrasts = compute_factorial_contrasts(coupling[complete])
@@ -301,6 +288,7 @@ def compute_network_coupling(
     )
     return {
         "network_pair": ("Default Mode", "Dorsal Attention"),
+        "estimator": "within-run-centered pooled Pearson correlation",
         "cell_order": CELL_ORDER,
         "subject_order": unique_subjects,
         "cell_counts": counts,
@@ -310,6 +298,16 @@ def compute_network_coupling(
         "contrasts": contrasts,
         "inference": inference,
     }
+
+
+def _center_features_within_runs(values: np.ndarray, runs: np.ndarray) -> np.ndarray:
+    """Remove run-specific feature means before pooling observations."""
+    centered = np.full_like(np.asarray(values, dtype=float), np.nan)
+    run_values = np.asarray(runs)
+    for run in np.unique(run_values):
+        selector = run_values == run
+        centered[selector] = values[selector] - np.nanmean(values[selector], axis=0)
+    return centered
 
 
 def compute_all_network_pair_coupling(

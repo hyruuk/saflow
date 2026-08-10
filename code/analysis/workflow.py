@@ -55,7 +55,9 @@ def _load_config(path: Path) -> dict:
 def _analysis_root(config: dict, override: str | None) -> Path:
     if override:
         return Path(override)
-    directory = config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
+    directory = config.get("analysis_workflow", {}).get(
+        "processed_directory", "analysis_workflow"
+    )
     return Path(config["paths"]["data_root"]) / "processed" / directory
 
 
@@ -64,7 +66,11 @@ def run_preflight(args: argparse.Namespace) -> Path:
     config = _load_config(Path(args.config))
     analysis_id = args.analysis_id or create_analysis_id(config, Path.cwd())
     analysis_dir = initialize(
-        _analysis_root(config, args.analysis_root), analysis_id, config, vars(args), Path.cwd()
+        _analysis_root(config, args.analysis_root),
+        analysis_id,
+        config,
+        vars(args),
+        Path.cwd(),
     )
     requirements = {
         "spaces": ["sensor", "schaefer_400"],
@@ -78,6 +84,7 @@ def run_preflight(args: argparse.Namespace) -> Path:
         "frequency_bands": frequency_band_manifest(),
         "panels": PANEL_SPECS,
         "label_definition": "reflected-gaussian-filtered-vtc_strict-eight-trial",
+        "coupling_label_definition": "opposite-state-free-with-mid",
         "primary_rejection": "any-bad-constituent",
     }
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
@@ -85,7 +92,9 @@ def run_preflight(args: argparse.Namespace) -> Path:
     input_report = inspect_inputs(config, subjects, runs)
     report = {"analysis_id": analysis_id, **requirements, **input_report}
     write_reports(report, analysis_dir / "qc")
-    (analysis_dir / "preflight_report.json").write_text(json.dumps(report, indent=2) + "\n")
+    (analysis_dir / "preflight_report.json").write_text(
+        json.dumps(report, indent=2) + "\n"
+    )
     (analysis_dir / "manifests" / "feature_families.json").write_text(
         json.dumps(requirements["feature_families"], indent=2) + "\n"
     )
@@ -107,7 +116,10 @@ def run_analysis(args: argparse.Namespace) -> Path:
     config = _load_config(Path(args.config))
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
     preflight = analysis_dir / "preflight_report.json"
-    if not preflight.exists() or json.loads(preflight.read_text()).get("status") != "passed":
+    if (
+        not preflight.exists()
+        or json.loads(preflight.read_text()).get("status") != "passed"
+    ):
         raise RuntimeError("a passing analysis_workflow-preflight report is required")
     manifest = {
         "analysis_id": args.analysis_id,
@@ -156,9 +168,7 @@ def plan_execution(args: argparse.Namespace) -> Path:
             1_000,
             25,
         ),
-        map_chunks_per_job=int(
-            analysis_workflow_config.get("map_chunks_per_job", 5)
-        ),
+        map_chunks_per_job=int(analysis_workflow_config.get("map_chunks_per_job", 5)),
         decoding_chunks_per_job=int(
             analysis_workflow_config.get("decoding_chunks_per_job", 5)
         ),
@@ -200,9 +210,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
             1_000,
             25,
         ),
-        map_chunks_per_job=int(
-            analysis_workflow_config.get("map_chunks_per_job", 5)
-        ),
+        map_chunks_per_job=int(analysis_workflow_config.get("map_chunks_per_job", 5)),
         decoding_chunks_per_job=int(
             analysis_workflow_config.get("decoding_chunks_per_job", 5)
         ),
@@ -276,9 +284,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
     graph["provenance"]["execution_mode"] = "slurm" if args.slurm else "local"
     graph["provenance"]["submitted"] = bool(args.slurm and not args.dry_run)
     graph["provenance"]["submission_status"] = (
-        "dry_run"
-        if args.dry_run
-        else ("wave_submitted" if deferred else "submitted")
+        "dry_run" if args.dry_run else ("wave_submitted" if deferred else "submitted")
     )
     path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
     LOGGER.info("Full pipeline manifest ready: %s", path)
@@ -316,7 +322,9 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
             )
     plan_path = analysis_dir / "manifests" / "execution_plan.json"
     if not plan_path.exists():
-        raise FileNotFoundError(f"immutable execution plan manifest not found: {plan_path}")
+        raise FileNotFoundError(
+            f"immutable execution plan manifest not found: {plan_path}"
+        )
     plan = json.loads(plan_path.read_text())
     plan["submission_plan"] = build_submission_plan(
         plan,
@@ -409,22 +417,16 @@ def _resume_submission_wave(
                 continue
             if edge["dependency"] == "aftercorr" and upstream_cells:
                 upstream_indices = {
-                    (cell.get("subject"), cell.get("run"))
-                    for cell in upstream_cells
+                    (cell.get("subject"), cell.get("run")) for cell in upstream_cells
                 }
                 downstream_indices = {
-                    (cell.get("subject"), cell.get("run"))
-                    for cell in downstream_cells
+                    (cell.get("subject"), cell.get("run")) for cell in downstream_cells
                 }
                 if upstream_indices != downstream_indices:
                     deferred_nodes.add(downstream)
                     changed = True
-    ready = [
-        cell for cell in invalid_cells if cell["node"] not in deferred_nodes
-    ]
-    deferred = [
-        cell for cell in invalid_cells if cell["node"] in deferred_nodes
-    ]
+    ready = [cell for cell in invalid_cells if cell["node"] not in deferred_nodes]
+    deferred = [cell for cell in invalid_cells if cell["node"] in deferred_nodes]
     return ready, deferred
 
 
@@ -463,8 +465,7 @@ def _capacity_limited_wave(
         if remaining < 1:
             break
         has_recovering_aftercorr = any(
-            edge["dependency"] == "aftercorr"
-            and by_node.get(edge["upstream"])
+            edge["dependency"] == "aftercorr" and by_node.get(edge["upstream"])
             for edge in incoming[name]
         )
         chosen = candidates
@@ -474,9 +475,7 @@ def _capacity_limited_wave(
             chosen = candidates[:remaining]
         selected.extend(chosen)
         selected_by_node[name] = chosen
-    selected_keys = {
-        (cell["node"], int(cell["cell_index"])) for cell in selected
-    }
+    selected_keys = {(cell["node"], int(cell["cell_index"])) for cell in selected}
     deferred = [
         cell
         for cell in invalid_cells
@@ -554,9 +553,7 @@ def _split_stages(value: str | None) -> list[str]:
     return value.replace(",", " ").split() if value else []
 
 
-def _invalid_cell_reason(
-    path: Path, expected: dict, provenance: dict
-) -> str | None:
+def _invalid_cell_reason(path: Path, expected: dict, provenance: dict) -> str | None:
     """Return why a cell must be resubmitted, or None when compatible."""
     if not path.exists():
         return "missing"
@@ -695,7 +692,11 @@ def audit_analysis(args: argparse.Namespace) -> Path:
         bundle = analysis_dir / analysis / "observed.json"
         composite = reports_root / "figures" / "paper" / spec["composite_filename"]
         sidecar = composite.with_name(f"{composite.name}.json")
-        for kind, path in (("bundle", bundle), ("composite", composite), ("sidecar", sidecar)):
+        for kind, path in (
+            ("bundle", bundle),
+            ("composite", composite),
+            ("sidecar", sidecar),
+        ):
             if not path.exists():
                 findings.append({"panel": panel, "kind": kind, "status": "missing"})
         if sidecar.exists():
@@ -705,12 +706,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                 findings.append(
                     {"panel": panel, "kind": "sidecar", "status": "wrong_analysis_id"}
                 )
-        slide_directory = (
-            reports_root
-            / "figures"
-            / "slides"
-            / spec["slide_directory"]
-        )
+        slide_directory = reports_root / "figures" / "slides" / spec["slide_directory"]
         for index, component in enumerate(PANEL_COMPONENTS[panel], start=1):
             stem = f"{index:02d}_{component}"
             for suffix in (".png", ".svg"):
@@ -770,11 +766,24 @@ def inventory_legacy(args: argparse.Namespace) -> Path:
     for path in sorted(source.rglob("*")) if source.exists() else []:
         if path.is_file():
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            entries.append({"path": str(path), "size_bytes": path.stat().st_size, "sha256": digest})
+            entries.append(
+                {"path": str(path), "size_bytes": path.stat().st_size, "sha256": digest}
+            )
     manifest = Path(args.manifest)
     manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(json.dumps({"read_only": True, "moved": False, "deleted": False,
-                                    "source": str(source), "files": entries}, indent=2) + "\n")
+    manifest.write_text(
+        json.dumps(
+            {
+                "read_only": True,
+                "moved": False,
+                "deleted": False,
+                "source": str(source),
+                "files": entries,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     return manifest
 
 
@@ -846,8 +855,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Run the selected Saflow analysis workflow command."""
     args = build_parser().parse_args()
-    setup_logging("analysis_pipeline", log_file="analysis_pipeline.log",
-                  config={"paths": {"logs": "logs"}, "logging": {"level": "INFO"}})
+    setup_logging(
+        "analysis_pipeline",
+        log_file="analysis_pipeline.log",
+        config={"paths": {"logs": "logs"}, "logging": {"level": "INFO"}},
+    )
     functions = {
         "preflight": run_preflight,
         "run": run_analysis,

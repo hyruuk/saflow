@@ -202,7 +202,7 @@ def test_panel3_aggregates_complete_subjects_and_all_contrasts():
     )
 
 
-def test_network_coupling_is_within_run_fisher_z_and_complete_case():
+def test_network_coupling_is_run_centered_pooled_and_complete_case():
     generator = np.random.default_rng(18)
     subjects = np.repeat(np.arange(3), 4 * 12)
     cells = np.tile(np.repeat(CELL_ORDER, 12), 3)
@@ -223,8 +223,29 @@ def test_network_coupling_is_within_run_fisher_z_and_complete_case():
         seed=4,
     )
     assert result["complete_case"].all()
+    assert result["estimator"] == "within-run-centered pooled Pearson correlation"
     assert np.nanmean(result["fisher_z"]) > 1
     assert result["inference"]["p_values_fwer"].shape == (5, 2)
+
+
+def test_network_coupling_removes_run_offsets_before_pooling():
+    within_run = np.asarray([-2.0, -1.0, 1.0, 2.0])
+    default = np.tile(np.r_[within_run, within_run + 100.0], 4)
+    attention = np.tile(np.r_[-within_run, -within_run + 100.0], 4)
+    cells = np.repeat(CELL_ORDER, 8)
+    runs = np.tile(np.repeat(["02", "03"], 4), 4)
+    values = np.tile(np.stack([default, attention], axis=1)[:, :, None], (2, 1, 1))
+    result = compute_network_coupling(
+        values,
+        np.tile(cells, 2),
+        np.repeat(["04", "05"], len(cells)),
+        np.tile(runs, 2),
+        np.asarray(["Default Mode", "Dorsal Attention"]),
+        minimum_windows=5,
+        n_permutations=3,
+        seed=4,
+    )
+    assert np.all(result["fisher_z"] < 0)
 
 
 def test_all_available_mixed_effects_is_explicitly_secondary():

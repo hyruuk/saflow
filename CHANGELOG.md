@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Define network-coupling windows as clean, opposite-state-free IN/MID or
+  OUT/MID mixtures and require five windows per state × outcome cell. Strict
+  eight-trial labels remain unchanged for feature modulation and multifeature
+  decoding. Center DMN and DAN values within run, then pool windows across runs
+  for each subject/cell correlation.
+
 - Refresh scheduler-only resource requests during analysis recovery waves so
   old immutable manifests do not repeat known OOM or wall-time failures.
 - Add full-cohort per-node defaults: 64 GB for observed feature/network maps

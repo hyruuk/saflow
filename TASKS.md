@@ -319,6 +319,13 @@ invoke pipeline.resume --slurm --analysis-id=analysis-...
 `pipeline.resume` is therefore a failure-recovery command, not a routine
 continuation step.
 
+Network coupling uses a five-window minimum in every state × matched-outcome
+cell. Its state labels admit clean IN/MID or OUT/MID mixtures but exclude
+all-MID windows, windows containing both IN and OUT, and windows containing an
+AR2-bad trial. Feature modulation and multifeature decoding continue to use
+strict eight-trial IN/OUT windows. DMN and DAN values are centered within run
+and pooled across runs before estimating one subject/cell correlation.
+
 ### `invoke viz.panels`
 
 Render one or all panels from complete real bundles, otherwise use protected

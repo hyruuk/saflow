@@ -43,8 +43,11 @@ invoke analysis.preflight --subjects "04 05" --runs "02 03"
 Gaussian VTC smoothing uses reflected boundaries with FWHM 9 trials. Existing
 events are skipped only when their method, version, and FWHM match. Preflight
 is blinded to effect direction and reports exact alignment, any-AR2-bad window
-rejection, matched anchor outcomes, four-cell counts, and 5/10-window
-modulation/coupling eligibility.
+rejection, matched anchor outcomes, four-cell counts, and five-window
+modulation/coupling eligibility. Coupling alone uses clean opposite-state-free
+IN/MID or OUT/MID windows; other primary analyses retain strict eight-trial
+state labels. Coupling removes run-specific network means and pools the
+remaining windows across runs before estimating subject-level correlations.
 
 Legacy paper outputs are not changed. Create their hash inventory with
 `invoke analysis.legacy-inventory`.

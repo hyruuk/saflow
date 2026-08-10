@@ -46,7 +46,7 @@ analysis_workflow:
   c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0] # Inner grouped ridge tuning
   inner_splits: 5                # Subject-grouped inner folds, training only
   minimum_modulation_windows: 5  # Required in every state × outcome cell
-  minimum_coupling_windows: 10   # Required in every coupling cell
+  minimum_coupling_windows: 5    # Required pooled across runs per relaxed cell
   spaces: [sensor, schaefer_400] # Sensor QC plus primary parcel space
   include_exploratory: true      # Complexity and legacy-selection sidekicks
   resources:

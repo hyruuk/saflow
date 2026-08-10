@@ -48,7 +48,10 @@ def _dispatch(
     if args.node == "feature_modulation_statistics":
         feature = _require_member(args.feature, FEATURE_MODULATION_FEATURES, "feature")
         result = _run_feature_modulation(inputs, feature)
-        return result, analysis_dir / "feature_modulation" / "partials" / "statistics" / feature
+        return (
+            result,
+            analysis_dir / "feature_modulation" / "partials" / "statistics" / feature,
+        )
     if args.node == "multifeature_decoding_models":
         model = _require_member(
             args.model,
@@ -70,7 +73,10 @@ def _dispatch(
                 "parcel_order": inputs.parcel_order,
             }
         )
-        return result, analysis_dir / "multifeature_decoding" / "partials" / "observed" / model
+        return (
+            result,
+            analysis_dir / "multifeature_decoding" / "partials" / "observed" / model,
+        )
     if args.node in {"network_factorial_modulation", "network_coupling"}:
         feature = _require_member(args.feature, CORRECTED_FEATURES, "feature")
         index = CORRECTED_FEATURES.index(feature)
@@ -82,7 +88,7 @@ def _dispatch(
                     "minimum_coupling_windows"
                     if args.node == "network_coupling"
                     else "minimum_modulation_windows",
-                    10 if args.node == "network_coupling" else 5,
+                    5,
                 )
             ),
             # Authoritative synchronized families are recomputed only after
@@ -93,12 +99,14 @@ def _dispatch(
         if args.node == "network_coupling":
             result = compute_network_coupling(
                 values,
-                inputs.cells,
+                inputs.coupling_cells,
                 inputs.subjects,
                 inputs.runs,
                 networks,
                 **common,
             )
+            result["window_label_policy"] = "opposite_state_free_with_mid"
+            result["minimum_windows_per_cell"] = common["minimum_windows"]
             branch = "coupling"
         else:
             result = compute_network_modulation(
@@ -114,9 +122,7 @@ def _dispatch(
     raise ValueError(f"unsupported observed node: {args.node}")
 
 
-def _run_feature_modulation(
-    inputs: AnalysisInputs, feature: str
-) -> dict[str, Any]:
+def _run_feature_modulation(inputs: AnalysisInputs, feature: str) -> dict[str, Any]:
     """Compute one subject-level paired spatial map for feature-modulation analysis."""
     index = FEATURE_MODULATION_FEATURES.index(feature)
     inside, outside, included = _subject_state_means(
@@ -165,7 +171,9 @@ def _subject_state_means(
             outside.append(np.nanmean(out_runs, axis=0))
             included.append(subject)
     if len(included) < 2:
-        raise ValueError("feature-modulation analysis paired inference requires at least two subjects")
+        raise ValueError(
+            "feature-modulation analysis paired inference requires at least two subjects"
+        )
     return np.stack(inside), np.stack(outside), np.asarray(included)
 
 
@@ -208,9 +216,7 @@ def _decoding_config(config: dict[str, Any]) -> DecodingConfig:
     return DecodingConfig(
         c_grid=tuple(
             float(value)
-            for value in config.get(
-                "c_grid", (0.001, 0.01, 0.1, 1.0, 10.0, 100.0)
-            )
+            for value in config.get("c_grid", (0.001, 0.01, 0.1, 1.0, 10.0, 100.0))
         ),
         inner_splits=int(config.get("inner_splits", 5)),
         seed=int(config.get("random_seed", 42)),
@@ -226,7 +232,9 @@ def _analysis_directory(
         if override
         else Path(config["paths"]["data_root"])
         / "processed"
-        / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
+        / config.get("analysis_workflow", {}).get(
+            "processed_directory", "analysis_workflow"
+        )
     )
     directory = root / analysis_id
     if not (directory / "provenance.json").exists():
@@ -234,9 +242,7 @@ def _analysis_directory(
     return directory
 
 
-def _provenance(
-    analysis_dir: Path, node: str, cell_index: int
-) -> dict[str, Any]:
+def _provenance(analysis_dir: Path, node: str, cell_index: int) -> dict[str, Any]:
     """Build a compact cell provenance record from immutable analysis state."""
     analysis = json.loads((analysis_dir / "provenance.json").read_text())
     return {

@@ -7,7 +7,8 @@ reflected boundaries and FWHM 9 trials
 (`sigma = FWHM / sqrt(8 ln 2)`). IN and OUT thresholds are the run-specific
 25th and 75th percentiles. A neural window is assigned a state only when all
 eight contributing trials have that state; mixed windows and windows
-containing any final AR2 bad-trial flag are excluded. This boundary correction
+containing any final AR2 bad-trial flag are excluded from feature modulation
+and multifeature decoding. This boundary correction
 may change labels close to run boundaries relative to historical zero-padded
 outputs.
 
@@ -63,9 +64,20 @@ corrected-PSD families are corrected separately across contrasts, features,
 and Yeo-7 networks with synchronized sign flips. The all-available
 random-intercept state×outcome model is secondary.
 
-DMN–DAN association is estimated within subject/run/cell, Fisher-z
-transformed, and combined across runs with `n-3` weights. Primary coupling
-requires ten windows per cell and is corrected across ten features and all
+For coupling only, clean windows use an opposite-state-free definition:
+IN/MID mixtures containing at least one IN and no OUT are IN, while OUT/MID
+mixtures containing at least one OUT and no IN are OUT. All-MID windows,
+windows containing both extremes, and windows containing any AR2-bad trial
+are excluded. This retains the directional state distinction without requiring
+all eight trials to be extreme; it yielded 30/32 subjects with at least five
+windows in every cell in the diagnostic cohort snapshot.
+
+For every subject/cell, DMN and DAN values are mean-centered separately within
+run and then pooled across runs. One Pearson association is estimated from the
+pooled residuals and Fisher-z transformed. Run centering prevents between-run
+baseline differences from inducing the pooled association while allowing rare
+outcomes distributed across runs to contribute. Primary coupling requires five
+pooled windows per cell and is corrected across ten features and all
 prespecified contrasts. All other Yeo-7 pairs are exploratory.
 
 ## Reproducibility

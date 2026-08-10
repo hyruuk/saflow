@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from code.analysis.alignment import build_alignment_keys, require_exact_alignment, validate_schaefer_400
+from code.analysis.alignment import (
+    build_alignment_keys,
+    require_exact_alignment,
+    validate_schaefer_400,
+)
 from code.analysis.contracts import (
     FEATURE_MODULATION_FEATURES,
     CORRECTED_FEATURES,
@@ -25,6 +29,7 @@ from code.analysis.labels import (
     draw_circular_shifts,
     filter_vtc_reflect,
     label_matched_rare_outcomes,
+    reconstruct_opposite_free_labels,
     reconstruct_strict_labels,
     summarize_label_overlap,
     valid_circular_offsets,
@@ -44,9 +49,27 @@ def test_reflected_filter_is_boundary_safe():
 def test_strict_eight_trial_labels():
     values = np.arange(40.0)
     indices = np.asarray([np.arange(8), np.arange(16, 24), np.arange(32, 40)])
-    np.testing.assert_array_equal(reconstruct_strict_labels(values, indices), [-1, 0, 1])
+    np.testing.assert_array_equal(
+        reconstruct_strict_labels(values, indices), [-1, 0, 1]
+    )
     with pytest.raises(ValueError, match="shape"):
         reconstruct_strict_labels(values, indices[:, :7])
+
+
+def test_opposite_free_labels_allow_mid_but_reject_opposites_and_bad_trials():
+    values = np.arange(40.0)
+    indices = np.asarray(
+        [
+            [0, 1, 10, 11, 12, 13, 14, 15],
+            [24, 25, 26, 27, 28, 29, 30, 31],
+            [0, 1, 20, 21, 22, 23, 38, 39],
+            [0, 1, 10, 11, 12, 13, 14, 15],
+        ]
+    )
+    bad = np.zeros((4, 8), dtype=bool)
+    bad[3, 2] = True
+    labels = reconstruct_opposite_free_labels(values, indices, bad)
+    np.testing.assert_array_equal(labels, [-1, 1, 0, 0])
 
 
 def test_matched_anchor_outcome_and_any_bad_rejection():
@@ -100,16 +123,24 @@ def test_synchronized_cluster_family_is_deterministic():
     values = np.random.default_rng(4).normal(size=(10, 2, 4))
     values[:, 0, :2] += 2
     adjacency = [[1], [0, 2], [1, 3], [2]]
-    first = synchronized_cluster_mass_test(values, adjacency, n_permutations=19, cluster_threshold=2, seed=8)
-    second = synchronized_cluster_mass_test(values, adjacency, n_permutations=19, cluster_threshold=2, seed=8)
-    np.testing.assert_array_equal(first["null_max_cluster_mass"], second["null_max_cluster_mass"])
+    first = synchronized_cluster_mass_test(
+        values, adjacency, n_permutations=19, cluster_threshold=2, seed=8
+    )
+    second = synchronized_cluster_mass_test(
+        values, adjacency, n_permutations=19, cluster_threshold=2, seed=8
+    )
+    np.testing.assert_array_equal(
+        first["null_max_cluster_mass"], second["null_max_cluster_mass"]
+    )
 
 
 def test_label_qc_and_immutable_id(tmp_path: Path):
     summary = summarize_label_overlap(np.asarray([-1, 0, 1]), np.asarray([-1, 1, 0]))
     assert summary["retained"] == 1 and summary["gained"] == 1 and summary["lost"] == 1
     config = {"paths": {"data_root": str(tmp_path)}}
-    analysis_id = create_analysis_id(config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc))
+    analysis_id = create_analysis_id(
+        config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc)
+    )
     initialize(tmp_path, analysis_id, config, {}, Path.cwd())
     with pytest.raises(FileExistsError, match="immutable"):
         initialize(tmp_path, analysis_id, config, {}, Path.cwd())
@@ -117,22 +148,42 @@ def test_label_qc_and_immutable_id(tmp_path: Path):
 
 def test_band_and_feature_contract_excludes_delta():
     assert CANONICAL_BAND_KEYS == (
-        "theta", "alpha", "lobeta", "hibeta", "gamma1", "gamma2", "gamma3"
+        "theta",
+        "alpha",
+        "lobeta",
+        "hibeta",
+        "gamma1",
+        "gamma2",
+        "gamma3",
     )
     assert canonical_band_key("low_beta") == "lobeta"
-    assert not any("delta" in feature for feature in (*FEATURE_MODULATION_FEATURES, *CORRECTED_FEATURES))
+    assert not any(
+        "delta" in feature
+        for feature in (*FEATURE_MODULATION_FEATURES, *CORRECTED_FEATURES)
+    )
     with pytest.raises(ValueError, match="not a canonical"):
         canonical_band_key("delta")
 
 
 def test_panel_and_schema_contracts_are_complete():
     assert set(PANEL_SPECS) == {"panel1", "panel2", "panel3"}
-    assert PANEL_SPECS["panel1"]["composite_filename"] == "panel1_feature_modulation.png"
-    assert PANEL_SPECS["panel2"]["composite_filename"] == "panel2_multifeature_decoding.png"
+    assert (
+        PANEL_SPECS["panel1"]["composite_filename"] == "panel1_feature_modulation.png"
+    )
+    assert (
+        PANEL_SPECS["panel2"]["composite_filename"]
+        == "panel2_multifeature_decoding.png"
+    )
     assert PANEL_SPECS["panel3"]["composite_filename"] == "panel3_network_dynamics.png"
     assert set(schema_catalog()) == {
-        "labels", "maps", "decoding", "factorial_networks", "coupling",
-        "compact_export", "figure", "dag_manifest",
+        "labels",
+        "maps",
+        "decoding",
+        "factorial_networks",
+        "coupling",
+        "compact_export",
+        "figure",
+        "dag_manifest",
     }
 
 
@@ -155,7 +206,11 @@ def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
     assert ("run_preprocessing", "run_source", "aftercorr") in edges
     assert ("run_source", "run_features", "aftercorr") in edges
     assert ("run_features", "schaefer_400_feature_validator", "afterany") in edges
-    assert ("schaefer_400_feature_validator", "feature_modulation_statistics", "afterok") in edges
+    assert (
+        "schaefer_400_feature_validator",
+        "feature_modulation_statistics",
+        "afterok",
+    ) in edges
     assert ("feature_modulation_validator", "analysis_export", "afterok") in edges
     assert ("panel_generation", "analysis_audit", "afterok") in edges
 
@@ -174,18 +229,22 @@ def test_preflight_reads_corrected_events_and_exact_window_metadata(tmp_path: Pa
     outcomes[7] = "correct_omission"
     outcomes[23] = "commission_error"
     import pandas as pd
-    pd.DataFrame({
-        "onset": np.arange(24.0),
-        "trial_type": ["Rare" if value != "correct_commission" else "Freq" for value in outcomes],
-        "trial_idx": np.arange(24),
-        "VTC_raw": np.repeat([0.0, 1.0, 2.0], 8),
-        "VTC_filtered": np.repeat([0.0, 1.0, 2.0], 8),
-        "task": outcomes,
-        "VTC_filter_method": "gaussian_reflect",
-        "VTC_filter_version": "1.0.0",
-    }).to_csv(
-        event_dir / "sub-04_task-gradCPT_run-02_events.tsv", sep="\t", index=False
-    )
+
+    pd.DataFrame(
+        {
+            "onset": np.arange(24.0),
+            "trial_type": [
+                "Rare" if value != "correct_commission" else "Freq"
+                for value in outcomes
+            ],
+            "trial_idx": np.arange(24),
+            "VTC_raw": np.repeat([0.0, 1.0, 2.0], 8),
+            "VTC_filtered": np.repeat([0.0, 1.0, 2.0], 8),
+            "task": outcomes,
+            "VTC_filter_method": "gaussian_reflect",
+            "VTC_filter_version": "1.0.0",
+        }
+    ).to_csv(event_dir / "sub-04_task-gradCPT_run-02_events.tsv", sep="\t", index=False)
     features_root = tmp_path / "features"
     config["paths"]["features"] = str(features_root)
     indices = np.asarray([np.arange(8), np.arange(8, 16), np.arange(16, 24)])
@@ -197,12 +256,9 @@ def test_preflight_reads_corrected_events_and_exact_window_metadata(tmp_path: Pa
     }
     names = np.asarray([f"7Networks_LH_Parcel_{index:03d}" for index in range(400)])
     files = {
-        "welch_psds_schaefer_400":
-            "sub-04_ses-recording_task-gradCPT_run-02_space-schaefer_400_desc-welchw8_psds.npz",
-        "fooof_schaefer_400":
-            "sub-04_ses-recording_task-gradCPT_run-02_space-schaefer_400_desc-fooofw8.npz",
-        "welch_psds_corrected_schaefer_400":
-            "sub-04_ses-recording_task-gradCPT_run-02_space-schaefer_400_desc-welch-corrw8_psds.npz",
+        "welch_psds_schaefer_400": "sub-04_ses-recording_task-gradCPT_run-02_space-schaefer_400_desc-welchw8_psds.npz",
+        "fooof_schaefer_400": "sub-04_ses-recording_task-gradCPT_run-02_space-schaefer_400_desc-fooofw8.npz",
+        "welch_psds_corrected_schaefer_400": "sub-04_ses-recording_task-gradCPT_run-02_space-schaefer_400_desc-welch-corrw8_psds.npz",
     }
     for directory, filename in files.items():
         feature_dir = features_root / directory / "sub-04"

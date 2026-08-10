@@ -22,6 +22,8 @@ from code.analysis.labels import (
     OUTCOME_COMMISSION_ERROR,
     OUTCOME_CORRECT_OMISSION,
     build_corrected_window_labels,
+    four_cell_labels,
+    reconstruct_opposite_free_labels,
 )
 from code.analysis.preflight import (
     _events_path,
@@ -39,6 +41,7 @@ class AnalysisInputs:
     states: np.ndarray
     outcomes: np.ndarray
     cells: np.ndarray
+    coupling_cells: np.ndarray
     subjects: np.ndarray
     runs: np.ndarray
     alignment_keys: np.ndarray
@@ -121,6 +124,9 @@ def load_real_inputs(
         states=np.concatenate([recording["states"] for recording in recordings]),
         outcomes=np.concatenate([recording["outcomes"] for recording in recordings]),
         cells=np.concatenate([recording["cells"] for recording in recordings]),
+        coupling_cells=np.concatenate(
+            [recording["coupling_cells"] for recording in recordings]
+        ),
         subjects=np.concatenate([recording["subjects"] for recording in recordings]),
         runs=np.concatenate([recording["runs"] for recording in recordings]),
         alignment_keys=np.concatenate(
@@ -149,9 +155,7 @@ def load_real_inputs(
         ),
         run_label_contexts=tuple(contexts),
         input_inventory=tuple(
-            item
-            for recording in recordings
-            for item in recording["input_inventory"]
+            item for recording in recordings for item in recording["input_inventory"]
         ),
     )
 
@@ -166,12 +170,14 @@ def _load_recording(
     """Load one subject/run and derive strict labels and analysis features."""
     paths = _feature_paths(config, subject, run)
     if any(path is None for path in paths.values()):
-        raise FileNotFoundError(f"missing Saflow analysis features for sub-{subject} run-{run}")
+        raise FileNotFoundError(
+            f"missing Saflow analysis features for sub-{subject} run-{run}"
+        )
     events = pd.read_csv(_events_path(config, subject, run), sep="\t")
     _validate_event_provenance(events)
     raw, frequencies, metadata, parcels = _load_psd(paths["welch"])
-    corrected, corrected_frequencies, corrected_metadata, corrected_parcels = (
-        _load_psd(paths["corrected_psd"])
+    corrected, corrected_frequencies, corrected_metadata, corrected_parcels = _load_psd(
+        paths["corrected_psd"]
     )
     fooof, fooof_metadata, fooof_parcels = _load_fooof(paths["fooof"])
     validate_schaefer_400(parcels)
@@ -188,16 +194,26 @@ def _load_recording(
     if not np.array_equal(frequencies, corrected_frequencies):
         raise ValueError("raw and corrected PSD frequency grids differ")
     labels, keys = _build_labels(events, metadata, subject, run)
+    coupling_states = reconstruct_opposite_free_labels(
+        trials_vtc(events),
+        np.asarray(list(metadata["included_epoch_indices"]), dtype=int),
+        np.asarray(list(metadata["included_bad_ar2"]), dtype=bool),
+    )
     feature_tensor = np.concatenate(
         [fooof, _band_reduce(corrected, frequencies)], axis=2
     )
-    raw_bands = np.log10(np.maximum(_band_reduce(raw, frequencies), np.finfo(float).tiny))
+    raw_bands = np.log10(
+        np.maximum(_band_reduce(raw, frequencies), np.finfo(float).tiny)
+    )
     return {
         "feature_tensor": feature_tensor,
-        "feature_modulation_tensor": np.concatenate([raw_bands, feature_tensor], axis=2),
+        "feature_modulation_tensor": np.concatenate(
+            [raw_bands, feature_tensor], axis=2
+        ),
         "states": _state_names(labels["state"]),
         "outcomes": _outcome_names(labels["outcome"]),
         "cells": labels["cell"],
+        "coupling_cells": four_cell_labels(coupling_states, labels["outcome"]),
         "subjects": np.repeat(subject, len(feature_tensor)),
         "runs": np.repeat(run, len(feature_tensor)),
         "alignment_keys": keys,
@@ -294,9 +310,7 @@ def _require_recording_alignment(
         raise ValueError("feature families have incompatible parcel order")
 
 
-def _metadata_keys(
-    metadata: dict[str, Any], subject: str, run: str
-) -> np.ndarray:
+def _metadata_keys(metadata: dict[str, Any], subject: str, run: str) -> np.ndarray:
     """Build stable alignment keys from embedded window metadata."""
     indices = np.asarray(list(metadata["included_epoch_indices"]), dtype=int)
     return build_alignment_keys(
@@ -355,9 +369,7 @@ def _band_reduce(psd: np.ndarray, frequencies: np.ndarray) -> np.ndarray:
     return np.stack(bands, axis=2)
 
 
-def _state_spectrum(
-    psd: np.ndarray, states: np.ndarray, target: int
-) -> np.ndarray:
+def _state_spectrum(psd: np.ndarray, states: np.ndarray, target: int) -> np.ndarray:
     """Return run-level parcel spectra averaged across valid windows."""
     selected = np.asarray(states) == target
     if not selected.any():
@@ -391,9 +403,7 @@ def _optional_state_features(
 ) -> np.ndarray:
     """Retain state-level FOOOF fits only for feature-modulation analysis spectral rendering."""
     return (
-        _state_spatial_features(values, states, target)
-        if include
-        else np.empty((0, 0))
+        _state_spatial_features(values, states, target) if include else np.empty((0, 0))
     )
 
 
