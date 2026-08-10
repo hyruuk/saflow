@@ -7,6 +7,10 @@
   eight-trial labels remain unchanged for feature modulation and multifeature
   decoding. Center DMN and DAN values within run, then pool windows across runs
   for each subject/cell correlation.
+- Allow recovery waves to run beside active jobs from disjoint analysis nodes,
+  while continuing to reject same-node duplicate submissions.
+- Preserve the real submission journal during SLURM dry runs so duplicate-job
+  detection always sees the last actual submission.
 
 - Refresh scheduler-only resource requests during analysis recovery waves so
   old immutable manifests do not repeat known OOM or wall-time failures.

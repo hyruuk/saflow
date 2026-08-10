@@ -313,13 +313,6 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
     validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
     analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
-    if args.slurm and not args.dry_run:
-        active = _active_submission_jobs(analysis_dir)
-        if active:
-            raise RuntimeError(
-                "previous submission wave is still active; wait before resume: "
-                + ", ".join(active)
-            )
     plan_path = analysis_dir / "manifests" / "execution_plan.json"
     if not plan_path.exists():
         raise FileNotFoundError(
@@ -352,7 +345,12 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
         "deletes_completed_chunks": False,
         "scheduler_resources_refreshed": True,
     }
-    ready, deferred = _resume_submission_wave(plan, selected)
+    active = _active_submission_nodes(analysis_dir) if args.slurm else {}
+    active_blocked = _downstream_nodes(plan, set(active))
+    available = [cell for cell in selected if cell["node"] not in active_blocked]
+    active_deferred = [cell for cell in selected if cell["node"] in active_blocked]
+    ready, deferred = _resume_submission_wave(plan, available)
+    deferred.extend(active_deferred)
     capacity = None
     if args.slurm:
         capacity = _available_submission_capacity(config, dry_run=args.dry_run)
@@ -530,22 +528,44 @@ def _current_slurm_job_count() -> int:
     return len([line for line in result.stdout.splitlines() if line.strip()])
 
 
-def _active_submission_jobs(analysis_dir: Path) -> list[str]:
-    """Return still-active job IDs from the most recent submission wave."""
+def _active_submission_nodes(analysis_dir: Path) -> dict[str, str]:
+    """Return node-to-job mappings still active from prior submissions."""
     journal = analysis_dir / "manifests" / "submission_journal.json"
     if not journal.exists() or shutil.which("squeue") is None:
-        return []
-    job_ids = list(json.loads(journal.read_text()).get("job_ids", {}).values())
-    real_ids = [job_id for job_id in job_ids if not str(job_id).startswith("dry-")]
+        return {}
+    job_ids = json.loads(journal.read_text()).get("job_ids", {})
+    real_ids = [
+        str(job_id)
+        for job_id in job_ids.values()
+        if not str(job_id).startswith("dry-")
+    ]
     if not real_ids:
-        return []
+        return {}
     result = subprocess.run(
         ["squeue", "-h", "-j", ",".join(real_ids), "-o", "%A"],
         check=True,
         capture_output=True,
         text=True,
     )
-    return sorted(set(result.stdout.split()))
+    active_ids = set(result.stdout.split())
+    return {
+        node: str(job_id)
+        for node, job_id in job_ids.items()
+        if str(job_id) in active_ids
+    }
+
+
+def _downstream_nodes(plan: dict, sources: set[str]) -> set[str]:
+    """Return active source nodes and all transitively dependent nodes."""
+    blocked = set(sources)
+    changed = True
+    while changed:
+        changed = False
+        for edge in plan["edges"]:
+            if edge["upstream"] in blocked and edge["downstream"] not in blocked:
+                blocked.add(edge["downstream"])
+                changed = True
+    return blocked
 
 
 def _split_stages(value: str | None) -> list[str]:

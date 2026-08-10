@@ -311,6 +311,11 @@ recovery whose `aftercorr` subsets differ is split into safe waves; rerun
 `pipeline.resume` after the current wave finishes to submit the deferred
 downstream cells.
 
+Recovery may run concurrently with an older submission wave when their node
+sets are disjoint. For example, active multifeature jobs do not block failed
+network-coupling cells. An active job for the same node still blocks recovery,
+preventing duplicate arrays.
+
 ```bash
 invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run
 invoke pipeline.resume --slurm --analysis-id=analysis-...

@@ -28,6 +28,8 @@ configuration while preserving the immutable scientific plan. Full-cohort
 observed map and network cells default to 64 GB, and long multifeature and
 exploratory cells default to a three-day wall time. Valid cells and immutable
 permutation chunks are reused by `invoke pipeline.resume`.
+Recovery can submit disjoint failed nodes while another branch remains active;
+same-node overlaps are rejected to prevent duplicate arrays.
 `--stop-after=features` retains the former raw-to-feature endpoint. See
 [the output contracts](docs/analysis_output_schemas.md).
 The statistical definitions are summarized in

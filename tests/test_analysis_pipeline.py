@@ -16,8 +16,10 @@ from code.analysis.execution_plan import (
 )
 from code.analysis.workflow import (
     SLURM_JOB_CEILING,
+    _active_submission_nodes,
     _available_submission_capacity,
     _capacity_limited_wave,
+    _downstream_nodes,
     _invalid_cell_reason,
     _resume_submission_wave,
     build_parser,
@@ -341,6 +343,40 @@ def test_submission_capacity_counts_existing_jobs_and_never_exceeds_900(
     assert SLURM_JOB_CEILING == 900
     assert _available_submission_capacity(config, dry_run=False) == 748
     assert _available_submission_capacity(config, dry_run=True) == 875
+
+
+def test_active_submission_nodes_preserve_node_identity(tmp_path, monkeypatch):
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    (manifests / "submission_journal.json").write_text(
+        json.dumps(
+            {
+                "job_ids": {
+                    "multifeature_decoding_models": "101",
+                    "network_coupling": "202",
+                    "dry_node": "dry-example",
+                }
+            }
+        )
+    )
+    monkeypatch.setattr("code.analysis.workflow.shutil.which", lambda _: "/usr/bin/squeue")
+    monkeypatch.setattr(
+        "code.analysis.workflow.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "101\n", ""),
+    )
+    assert _active_submission_nodes(tmp_path) == {
+        "multifeature_decoding_models": "101"
+    }
+
+
+def test_active_branch_blocks_only_its_downstream_nodes():
+    plan = build_execution_plan("analysis", ["04"], ["02"])
+    blocked = _downstream_nodes(plan, {"multifeature_decoding_models"})
+    assert "multifeature_decoding_results" in blocked
+    assert "multifeature_decoding_validator" in blocked
+    assert "analysis_export" in blocked
+    assert "network_coupling" not in blocked
+    assert "network_dynamics_results" not in blocked
 
 
 def test_four_subject_pipeline_fits_in_one_complete_submission():

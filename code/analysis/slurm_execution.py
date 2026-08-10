@@ -138,12 +138,13 @@ def submit_execution_plan(
                 "dry_run": dry_run,
             }
         )
-        _write_submission_journal(
-            analysis_dir,
-            manifest["analysis_id"],
-            job_ids,
-            submissions,
-        )
+        if not dry_run:
+            _write_submission_journal(
+                analysis_dir,
+                manifest["analysis_id"],
+                job_ids,
+                submissions,
+            )
     return {"job_ids": job_ids, "submissions": submissions}
 
 
