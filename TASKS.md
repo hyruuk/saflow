@@ -262,10 +262,19 @@ invoke pipeline.all --slurm --stop-after=features
 
 Key options are `--analysis-id`, `--start-at`, `--stop-after`, `--skip`,
 `--subjects`, `--runs`, `--spaces`, `--[no-]include-exploratory`, and
-`--slurm` and `--dry-run`. The generated manifest records every array cell, dependency type,
-expected status artifact, exclusion, and provenance. Its `submission_plan`
-also records per-node resources, array sizes, and stable dry-run job
-identifiers, and validates every `aftercorr` index mapping.
+`--slurm` and `--dry-run`. The generated manifest records every array cell,
+dependency type, expected status artifact, exclusion, and provenance. Its
+`submission_plan` also records per-node resources, array sizes, and stable
+dry-run job identifiers, and validates every `aftercorr` index mapping.
+
+`invoke pipeline.resume --analysis-id=<ID> --analysis-root=<ROOT> --slurm`
+audits cell-status manifests and submits only missing, failed, or incompatible
+cells. On every resume wave, scheduler resources are refreshed from
+`analysis_workflow.resources` and optional
+`analysis_workflow.node_resources`; scientific parameters and completed
+outputs remain immutable. The full-cohort defaults allocate 64 GB to observed
+feature/network statistics and three days to multifeature-model and
+exploratory cells.
 
 SLURM execution records returned job IDs in `manifests/execution_plan.json`.
 The complete plan uses three resource-homogeneous arrays per run:

@@ -46,6 +46,8 @@ def execute_cell(spec_path: Path) -> Path:
             "git_commit",
         )
     }
+    if "execution_git_commit" in spec:
+        payload["execution_git_commit"] = spec["execution_git_commit"]
     payload.update(
         {
             "status": "complete" if return_code == 0 else "failed",

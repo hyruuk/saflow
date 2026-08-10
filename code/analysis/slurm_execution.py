@@ -10,6 +10,7 @@ from typing import Any, Sequence
 
 from code.analysis.cell_status import execute_cell
 from code.analysis.execution_plan import stage_for_node
+from code.classification.multifeature_provenance import git_state
 from code.utils.slurm import (
     render_slurm_script,
     submit_job_array,
@@ -299,6 +300,7 @@ def _render_cell(
         "cell_index": cell["index"],
         "config_hash": manifest["provenance"]["config_hash"],
         "git_commit": manifest["provenance"]["git_commit"],
+        "execution_git_commit": git_state(PROJECT_ROOT)["commit"],
         "status_path": str(analysis_dir / expected["status_path"]),
         "commands": commands,
     }

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Refresh scheduler-only resource requests during analysis recovery waves so
+  old immutable manifests do not repeat known OOM or wall-time failures.
+- Add full-cohort per-node defaults: 64 GB for observed feature/network maps
+  and three-day limits for multifeature-model and exploratory cells.
+- Document selective `pipeline.resume` recovery without recomputing valid
+  cells or completed immutable permutation chunks.
+- Record the recovery execution commit separately from the immutable analysis
+  commit in every newly executed cell-status sidecar.
+
 - Reserved `panel1`/`panel2`/`panel3` naming for final publication rendering.
   Scientific workers, scheduler nodes, result directories, exports, validation,
   provenance, and configuration now use `feature_modulation`,

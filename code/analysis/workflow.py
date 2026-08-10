@@ -23,6 +23,7 @@ from code.analysis.contracts import (
 )
 from code.analysis.execution_plan import (
     DEFAULT_ANALYSIS_RESOURCES,
+    DEFAULT_NODE_RESOURCES,
     bound_execution_plan,
     build_execution_plan,
     build_submission_plan,
@@ -244,6 +245,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         graph,
         analysis_resources,
         config.get("computing", {}).get("slurm", {}),
+        _node_resources(analysis_workflow_config),
     )
     path = analysis_dir / "manifests" / "execution_plan.json"
     path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
@@ -316,6 +318,15 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
     if not plan_path.exists():
         raise FileNotFoundError(f"immutable execution plan manifest not found: {plan_path}")
     plan = json.loads(plan_path.read_text())
+    plan["submission_plan"] = build_submission_plan(
+        plan,
+        {
+            **DEFAULT_ANALYSIS_RESOURCES,
+            **config.get("analysis_workflow", {}).get("resources", {}),
+        },
+        config.get("computing", {}).get("slurm", {}),
+        _node_resources(config.get("analysis_workflow", {})),
+    )
     selected = []
     complete = []
     for expected in plan.get("expected_outputs", []):
@@ -331,6 +342,7 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
         "cells_to_resubmit": selected,
         "completed_cells": complete,
         "deletes_completed_chunks": False,
+        "scheduler_resources_refreshed": True,
     }
     ready, deferred = _resume_submission_wave(plan, selected)
     capacity = None
@@ -363,6 +375,14 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
     path = analysis_dir / "manifests" / "resume.json"
     path.write_text(json.dumps(resume, indent=2, sort_keys=True) + "\n")
     return path
+
+
+def _node_resources(analysis_workflow_config: dict) -> dict:
+    """Merge safe per-node scheduler defaults with user overrides."""
+    return {
+        **DEFAULT_NODE_RESOURCES,
+        **analysis_workflow_config.get("node_resources", {}),
+    }
 
 
 def _resume_submission_wave(

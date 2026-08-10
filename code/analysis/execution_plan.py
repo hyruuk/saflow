@@ -30,6 +30,33 @@ DEFAULT_ANALYSIS_RESOURCES = {
     },
     "rendering": {"time": "01:00:00", "memory_gb": 8, "cpus": 2},
 }
+DEFAULT_NODE_RESOURCES = {
+    "feature_modulation_statistics": {
+        "time": "12:00:00",
+        "memory_gb": 64,
+        "cpus": 4,
+    },
+    "network_factorial_modulation": {
+        "time": "12:00:00",
+        "memory_gb": 64,
+        "cpus": 4,
+    },
+    "network_coupling": {
+        "time": "12:00:00",
+        "memory_gb": 64,
+        "cpus": 4,
+    },
+    "multifeature_decoding_models": {
+        "time": "3-00:00:00",
+        "memory_gb": 32,
+        "cpus": 4,
+    },
+    "exploratory_analyses": {
+        "time": "3-00:00:00",
+        "memory_gb": 32,
+        "cpus": 4,
+    },
+}
 BUNDLE_MINIMUM_RESOURCES = {
     "run_preprocessing": {"time": "18:00:00", "mem": "64G", "cpus": 12},
     "run_source": {"time": "05:00:00", "mem": "256G", "cpus": 1},
@@ -313,6 +340,7 @@ def build_submission_plan(
     manifest: dict[str, Any],
     resources: dict[str, Any],
     stage_resources: dict[str, Any] | None = None,
+    node_resources: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Resolve node resources and dependency expressions in topological order.
 
@@ -341,7 +369,10 @@ def build_submission_plan(
                 "job_id": f"dry-{name}",
                 "array_size": len(manifest["node_cells"][name]),
                 "resources": _resources_for_node(
-                    name, resources, stage_resources or {}
+                    name,
+                    resources,
+                    stage_resources or {},
+                    node_resources or DEFAULT_NODE_RESOURCES,
                 ),
                 "dependencies": dependencies,
             }
@@ -354,8 +385,17 @@ def _resources_for_node(
     name: str,
     resources: dict[str, Any],
     stage_resources: dict[str, Any],
+    node_resources: dict[str, Any],
 ) -> dict[str, Any]:
     """Choose a configured resource class for one scientific endpoint."""
+    if name in node_resources:
+        selected = node_resources[name]
+        return {
+            "class": f"node:{name}",
+            "time": selected["time"],
+            "mem": f"{selected['memory_gb']}G",
+            "cpus": selected["cpus"],
+        }
     raw_key = _raw_resource_key(name)
     if raw_key and raw_key in stage_resources:
         selected = stage_resources[raw_key]

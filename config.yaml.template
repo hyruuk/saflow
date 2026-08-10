@@ -54,6 +54,14 @@ analysis_workflow:
     decoding: {time: "12:00:00", memory_gb: 24, cpus: 4} # Per decoding chunk
     permutation_batches: {time: "3-00:00:00", memory_gb: 24, cpus: 4} # Five chunks
     rendering: {time: "01:00:00", memory_gb: 8, cpus: 2} # Export and panels
+  # Optional per-node overrides. These defaults reflect observed full-cohort
+  # usage and take precedence over the broad resource classes above.
+  node_resources:
+    feature_modulation_statistics: {time: "12:00:00", memory_gb: 64, cpus: 4}
+    network_factorial_modulation: {time: "12:00:00", memory_gb: 64, cpus: 4}
+    network_coupling: {time: "12:00:00", memory_gb: 64, cpus: 4}
+    multifeature_decoding_models: {time: "3-00:00:00", memory_gb: 32, cpus: 4}
+    exploratory_analyses: {time: "3-00:00:00", memory_gb: 32, cpus: 4}
 
 # =============================================================================
 # BIDS Configuration

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from code.analysis.execution_plan import (
+    DEFAULT_NODE_RESOURCES,
     bound_execution_plan,
     build_execution_plan,
     build_submission_plan,
@@ -92,6 +93,43 @@ def test_submission_plan_records_resources_arrays_and_dependency_types():
         "job_id": "dry-run_preprocessing",
     }
     assert by_name["sensor_feature_validator"]["array_size"] == 1
+
+
+def test_expensive_analysis_nodes_have_recovery_sized_resources():
+    plan = bound_execution_plan(
+        build_execution_plan("analysis", ["04"], ["02"]),
+        start_at="analyses",
+        stop_after="analyses",
+    )
+    resources = {
+        "maps": {"time": "01:00:00", "memory_gb": 8, "cpus": 2},
+        "decoding": {"time": "02:00:00", "memory_gb": 16, "cpus": 4},
+        "permutation_batches": {
+            "time": "3-00:00:00",
+            "memory_gb": 24,
+            "cpus": 4,
+        },
+        "rendering": {"time": "00:30:00", "memory_gb": 4, "cpus": 1},
+    }
+    by_name = {
+        record["name"]: record
+        for record in build_submission_plan(
+            plan, resources, node_resources=DEFAULT_NODE_RESOURCES
+        )
+    }
+    assert by_name["feature_modulation_statistics"]["resources"] == {
+        "class": "node:feature_modulation_statistics",
+        "time": "12:00:00",
+        "mem": "64G",
+        "cpus": 4,
+    }
+    assert by_name["network_coupling"]["resources"]["mem"] == "64G"
+    assert by_name["multifeature_decoding_models"]["resources"]["time"] == (
+        "3-00:00:00"
+    )
+    assert by_name["multifeature_decoding_permutations"]["resources"]["mem"] == (
+        "24G"
+    )
 
 
 def test_scientific_arrays_use_feature_model_and_chunk_cells():
@@ -187,6 +225,7 @@ def test_cell_status_wrapper_records_compatible_complete_status(tmp_path: Path):
                 "cell_index": 0,
                 "config_hash": "config",
                 "git_commit": "commit",
+                "execution_git_commit": "recovery-commit",
                 "status_path": str(status),
                 "command": [sys.executable, "-c", "raise SystemExit(0)"],
             }
@@ -197,6 +236,7 @@ def test_cell_status_wrapper_records_compatible_complete_status(tmp_path: Path):
     assert payload["status"] == "complete"
     assert payload["return_code"] == 0
     assert payload["analysis_id"] == "analysis"
+    assert payload["execution_git_commit"] == "recovery-commit"
 
 
 def test_cell_status_stops_bundle_after_first_failed_step(tmp_path: Path):

@@ -22,6 +22,12 @@ counts array elements and existing queued/running jobs, and never lets the
 total exceed the 900-job Rorqual safety ceiling.
 `--dry-run` performs planning and script generation without executing cells or
 calling `sbatch`.
+
+Recovery submissions refresh scheduler-only resources from the current
+configuration while preserving the immutable scientific plan. Full-cohort
+observed map and network cells default to 64 GB, and long multifeature and
+exploratory cells default to a three-day wall time. Valid cells and immutable
+permutation chunks are reused by `invoke pipeline.resume`.
 `--stop-after=features` retains the former raw-to-feature endpoint. See
 [the output contracts](docs/analysis_output_schemas.md).
 The statistical definitions are summarized in
