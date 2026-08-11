@@ -273,8 +273,8 @@ cells. On every resume wave, scheduler resources are refreshed from
 `analysis_workflow.resources` and optional
 `analysis_workflow.node_resources`; scientific parameters and completed
 outputs remain immutable. The full-cohort defaults allocate 64 GB to observed
-feature/network statistics and three days to multifeature-model and
-exploratory cells.
+feature/network statistics and their aggregation cells, and three days to
+multifeature-model and exploratory cells.
 
 SLURM execution records returned job IDs in `manifests/execution_plan.json`.
 The complete plan uses three resource-homogeneous arrays per run:

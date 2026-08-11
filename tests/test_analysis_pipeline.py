@@ -126,6 +126,8 @@ def test_expensive_analysis_nodes_have_recovery_sized_resources():
         "cpus": 4,
     }
     assert by_name["network_coupling"]["resources"]["mem"] == "64G"
+    assert by_name["feature_modulation_results"]["resources"]["mem"] == "64G"
+    assert by_name["network_dynamics_results"]["resources"]["mem"] == "64G"
     assert by_name["multifeature_decoding_models"]["resources"]["time"] == (
         "3-00:00:00"
     )

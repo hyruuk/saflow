@@ -25,7 +25,7 @@ calling `sbatch`.
 
 Recovery submissions refresh scheduler-only resources from the current
 configuration while preserving the immutable scientific plan. Full-cohort
-observed map and network cells default to 64 GB, and long multifeature and
+observed map and aggregation cells default to 64 GB, and long multifeature and
 exploratory cells default to a three-day wall time. Valid cells and immutable
 permutation chunks are reused by `invoke pipeline.resume`.
 Recovery can submit disjoint failed nodes while another branch remains active;

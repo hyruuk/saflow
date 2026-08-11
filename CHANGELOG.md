@@ -11,6 +11,8 @@
   while continuing to reject same-node duplicate submissions.
 - Preserve the real submission journal during SLURM dry runs so duplicate-job
   detection always sees the last actual submission.
+- Raise feature-modulation and network-dynamics aggregation defaults from
+  16 GB to 64 GB after both full-cohort aggregators were OOM-killed.
 
 - Refresh scheduler-only resource requests during analysis recovery waves so
   old immutable manifests do not repeat known OOM or wall-time failures.

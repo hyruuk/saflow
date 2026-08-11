@@ -58,8 +58,10 @@ analysis_workflow:
   # usage and take precedence over the broad resource classes above.
   node_resources:
     feature_modulation_statistics: {time: "12:00:00", memory_gb: 64, cpus: 4}
+    feature_modulation_results: {time: "12:00:00", memory_gb: 64, cpus: 4}
     network_factorial_modulation: {time: "12:00:00", memory_gb: 64, cpus: 4}
     network_coupling: {time: "12:00:00", memory_gb: 64, cpus: 4}
+    network_dynamics_results: {time: "12:00:00", memory_gb: 64, cpus: 4}
     multifeature_decoding_models: {time: "3-00:00:00", memory_gb: 32, cpus: 4}
     exploratory_analyses: {time: "3-00:00:00", memory_gb: 32, cpus: 4}
 

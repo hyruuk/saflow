@@ -36,12 +36,22 @@ DEFAULT_NODE_RESOURCES = {
         "memory_gb": 64,
         "cpus": 4,
     },
+    "feature_modulation_results": {
+        "time": "12:00:00",
+        "memory_gb": 64,
+        "cpus": 4,
+    },
     "network_factorial_modulation": {
         "time": "12:00:00",
         "memory_gb": 64,
         "cpus": 4,
     },
     "network_coupling": {
+        "time": "12:00:00",
+        "memory_gb": 64,
+        "cpus": 4,
+    },
+    "network_dynamics_results": {
         "time": "12:00:00",
         "memory_gb": 64,
         "cpus": 4,
