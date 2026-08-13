@@ -2,19 +2,21 @@
 
 ## Corrected analysis workflow
 
-Scientific analyses use immutable `analysis-<UTC>-g<git>-c<config>` directories and distinct
-tasks, leaving all legacy commands unchanged:
+Scientific analyses use one active `main/` directory. A generated analysis ID
+remains in provenance and deterministic seeds without creating a new
+top-level directory on every run:
 
 ```bash
-invoke analysis.preflight [--analysis-id=analysis-...] [--analysis-root=PATH]
+invoke analysis.preflight [--analysis-root=PATH] [--force]
   [--subjects="04 05"] [--runs="02 03"]
 invoke analysis.execution-plan --analysis-id=analysis-... [--subjects="04 05"] \
   [--runs="02 03"] [--spaces="sensor schaefer_400"] \
   [--no-include-exploratory]
-invoke analysis.run --analysis-id=analysis-... [--analysis-root=PATH] \
-  [--n-permutations=1000] [--minimum-circular-offset=24] [--seed=42]
-invoke analysis.export --analysis-id=analysis-... --analysis-root=PATH
-invoke viz.panels --analysis-id=analysis-... [--analysis-root=reports/exports]
+invoke pipeline.all [--analysis-root=PATH] [--force] [--analyses="..."]
+invoke pipeline.resume [--analysis-root=PATH]
+invoke analysis.export --analysis-root=PATH
+invoke viz.panel1-legacy [--analysis-root=PATH] \
+  [--weighting=equal_window|equal_run]
 ```
 
 `alltrials` is feature-modulation confirmatory; broad `correct` and `lapse` selectors are
@@ -22,7 +24,12 @@ exploratory. The feature-modulation analysis includes raw PSD, FOOOF, and
 corrected PSD. Multifeature decoding and network dynamics exclude raw PSD.
 All corrected PSD families use the canonical seven bands
 from Theta through Gamma 3; Delta is excluded. Complexity is an exploratory
-sidekick. Compact exports omit subject-level features and resumable chunks.
+sidekick. Compact exports omit subject-level feature matrices and resumable
+chunks. Feature-modulation bundles retain only selected per-subject spectral
+curves needed to reproduce Panel 1 mean and SEM ribbons.
+Both equal-window (primary) and equal-run feature-modulation maps and selected
+spectra are retained. Primary masks use a two-sided, surface-adjacency
+cluster-mass sign-flip test; per-feature BH-FDR is retained for sensitivity.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.
@@ -258,9 +265,12 @@ invoke pipeline.all --subjects="04 05" --runs="02 03"
 invoke pipeline.all --slurm --dry-run
 invoke pipeline.all --slurm
 invoke pipeline.all --slurm --stop-after=features
+invoke pipeline.all --slurm --force --analyses=feature_modulation \
+  --start-at=analyses --stop-after=analyses --no-include-exploratory
 ```
 
 Key options are `--analysis-id`, `--start-at`, `--stop-after`, `--skip`,
+`--analyses`,
 `--subjects`, `--runs`, `--spaces`, `--[no-]include-exploratory`, and
 `--slurm` and `--dry-run`. The generated manifest records every array cell,
 dependency type, expected status artifact, exclusion, and provenance. Its

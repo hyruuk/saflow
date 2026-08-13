@@ -75,6 +75,21 @@ def test_panel_branches_are_concurrent_after_validated_schaefer_inputs():
     )
 
 
+def test_execution_plan_can_target_panel1_analysis_only():
+    plan = bound_execution_plan(
+        build_execution_plan(
+            "analysis", ["04"], ["02"],
+            analyses=("feature_modulation",), include_exploratory=False,
+        ),
+        start_at="analyses", stop_after="analyses",
+    )
+    names = {node["name"] for node in plan["nodes"]}
+    assert "feature_modulation_statistics" in names
+    assert "feature_modulation_results" in names
+    assert not any(name.startswith("multifeature") for name in names)
+    assert not any(name.startswith("network_") for name in names)
+
+
 def test_submission_plan_records_resources_arrays_and_dependency_types():
     plan = bound_execution_plan(
         build_execution_plan("analysis", ["04", "05"], ["02", "03"]),

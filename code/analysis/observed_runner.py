@@ -13,6 +13,7 @@ from code.analysis.contracts import FEATURE_MODULATION_FEATURES, CORRECTED_FEATU
 from code.analysis.decoding import DecodingConfig
 from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.result_io import write_result_bundle
+from code.analysis.provenance import resolve_analysis_directory
 from code.analysis.workers import (
     compute_feature_modulation_statistics,
     compute_multifeature_model,
@@ -21,6 +22,7 @@ from code.analysis.workers import (
 )
 from code.utils.config import load_config
 from code.utils.yeo_networks import get_network_assignments
+from code.statistics.run_group_statistics import build_atlas_adjacency
 
 
 def run_observed_cell(args: argparse.Namespace) -> Path:
@@ -47,7 +49,7 @@ def _dispatch(
     analysis_workflow = config.get("analysis_workflow", {})
     if args.node == "feature_modulation_statistics":
         feature = _require_member(args.feature, FEATURE_MODULATION_FEATURES, "feature")
-        result = _run_feature_modulation(inputs, feature)
+        result = _run_feature_modulation(inputs, feature, analysis_workflow)
         return (
             result,
             analysis_dir / "feature_modulation" / "partials" / "statistics" / feature,
@@ -122,26 +124,53 @@ def _dispatch(
     raise ValueError(f"unsupported observed node: {args.node}")
 
 
-def _run_feature_modulation(inputs: AnalysisInputs, feature: str) -> dict[str, Any]:
-    """Compute one subject-level paired spatial map for feature-modulation analysis."""
+def _run_feature_modulation(
+    inputs: AnalysisInputs, feature: str, workflow: dict[str, Any]
+) -> dict[str, Any]:
+    """Compute both prespecified run-weighting variants for one paired map."""
     index = FEATURE_MODULATION_FEATURES.index(feature)
-    inside, outside, included = _subject_state_means(
-        inputs.feature_modulation_tensor[:, :, index],
-        inputs.states,
-        inputs.subjects,
-        inputs.runs,
-    )
-    result = compute_feature_modulation_statistics(
-        inside[:, None, :],
-        outside[:, None, :],
-        feature_order=(feature,),
-    )
-    result["feature"] = feature
-    result["subject_order"] = included
-    result["window_counts"] = _subject_state_counts(
-        inputs.states, inputs.subjects, included
-    )
+    adjacency = _parcel_adjacency(inputs.parcel_order)
+    common = {
+        "feature_order": (feature,),
+        "adjacency": adjacency,
+        "n_permutations": int(workflow.get("cluster_permutations", 10_000)),
+        "cluster_threshold": float(workflow.get("cluster_forming_threshold", 2.0)),
+        "seed": int(workflow.get("random_seed", 42)) + index,
+    }
+    variants = {}
+    included_by_weighting = {}
+    for weighting in ("equal_window", "equal_run"):
+        inside, outside, included = _subject_state_means(
+            inputs.feature_modulation_tensor[:, :, index],
+            inputs.states,
+            inputs.subjects,
+            inputs.runs,
+            weighting=weighting,
+        )
+        variants[weighting] = compute_feature_modulation_statistics(
+            inside[:, None, :], outside[:, None, :], **common
+        )
+        included_by_weighting[weighting] = included
+    result = {
+        **variants,
+        "feature": feature,
+        "primary_weighting": "equal_window",
+        "subject_order_equal_window": included_by_weighting["equal_window"],
+        "subject_order_equal_run": included_by_weighting["equal_run"],
+        "window_counts": _subject_state_counts(
+            inputs.states, inputs.subjects, included_by_weighting["equal_window"]
+        ),
+    }
     return result
+
+
+def _parcel_adjacency(parcel_order: tuple[str, ...]) -> list[list[int]]:
+    """Return Schaefer-400 surface neighbors in the input parcel order."""
+    resolved = build_atlas_adjacency("schaefer_400", list(parcel_order), {})
+    if resolved is None:
+        raise RuntimeError("Schaefer-400 adjacency is required for primary cluster inference")
+    matrix, _ = resolved
+    return [matrix.getrow(index).indices.tolist() for index in range(matrix.shape[0])]
 
 
 def _subject_state_means(
@@ -149,32 +178,46 @@ def _subject_state_means(
     states: np.ndarray,
     subjects: np.ndarray,
     runs: np.ndarray,
+    *,
+    weighting: str = "equal_run",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Average windows within run, then runs within paired subjects."""
+    """Average state windows with equal-run or equal-window weighting."""
+    if weighting not in {"equal_run", "equal_window"}:
+        raise ValueError(f"unknown feature-modulation weighting: {weighting}")
     inside = []
     outside = []
     included = []
     for subject in np.unique(subjects):
         subject_mask = subjects == subject
-        in_runs = []
-        out_runs = []
+        in_runs, out_runs = [], []
+        in_counts, out_counts = [], []
         for run in np.unique(runs[subject_mask]):
             run_mask = subject_mask & (runs == run)
             in_mask = run_mask & (states == "IN")
             out_mask = run_mask & (states == "OUT")
             if in_mask.any():
                 in_runs.append(np.nanmean(values[in_mask], axis=0))
+                in_counts.append(int(in_mask.sum()))
             if out_mask.any():
                 out_runs.append(np.nanmean(values[out_mask], axis=0))
+                out_counts.append(int(out_mask.sum()))
         if in_runs and out_runs:
-            inside.append(np.nanmean(in_runs, axis=0))
-            outside.append(np.nanmean(out_runs, axis=0))
+            inside.append(_combine_run_means(in_runs, in_counts, weighting))
+            outside.append(_combine_run_means(out_runs, out_counts, weighting))
             included.append(subject)
     if len(included) < 2:
         raise ValueError(
             "feature-modulation analysis paired inference requires at least two subjects"
         )
     return np.stack(inside), np.stack(outside), np.asarray(included)
+
+
+def _combine_run_means(
+    run_means: list[np.ndarray], counts: list[int], weighting: str
+) -> np.ndarray:
+    """Combine run means equally or in proportion to retained windows."""
+    weights = None if weighting == "equal_run" else np.asarray(counts, dtype=float)
+    return np.average(np.stack(run_means), axis=0, weights=weights)
 
 
 def _subject_state_counts(
@@ -236,7 +279,7 @@ def _analysis_directory(
             "processed_directory", "analysis_workflow"
         )
     )
-    directory = root / analysis_id
+    directory = resolve_analysis_directory(root, analysis_id)
     if not (directory / "provenance.json").exists():
         raise FileNotFoundError(f"analysis provenance not found: {directory}")
     return directory
@@ -246,7 +289,7 @@ def _provenance(analysis_dir: Path, node: str, cell_index: int) -> dict[str, Any
     """Build a compact cell provenance record from immutable analysis state."""
     analysis = json.loads((analysis_dir / "provenance.json").read_text())
     return {
-        "analysis_id": analysis_dir.name,
+        "analysis_id": analysis["analysis_id"],
         "data_mode": "real",
         "node": node,
         "cell_index": cell_index,

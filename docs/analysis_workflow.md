@@ -2,7 +2,8 @@
 
 ## Corrected analysis branch
 
-The paper panels are regenerated under a new immutable analysis ID. Raw VTC is filtered
+The paper panels are regenerated in the single active `main/` analysis. A
+generated immutable analysis ID remains in provenance and random seeds. Raw VTC is filtered
 per run with reflected Gaussian boundaries, then every neural window is aligned
 by subject, run, onset, and its eight contributing epoch indices. A primary
 window must have eight uniformly IN or uniformly OUT trials and no bad
@@ -74,7 +75,16 @@ Every other Yeo-7 network pair is exported as exploratory Fisher-z coupling.
 Every array cell runs through a status wrapper that records its exact command,
 analysis ID, Git/config compatibility, timestamps, return code, and SLURM IDs.
 Cells export `SAFLOW_CONFIG=<analysis>/resolved_config.yaml`, so later edits to
-the user-facing `config.yaml` cannot change an in-flight immutable analysis.
+the user-facing `config.yaml` cannot silently change an in-flight active
+analysis. Use `pipeline.all --force` to intentionally replace `main/` after
+reviewing configuration changes.
+Feature modulation computes two subject summaries from the same strictly
+retained windows: pooled windows across runs (`equal_window`, primary) and
+equally averaged run means (`equal_run`, sensitivity). Both variants use
+paired OUT-minus-IN t statistics and Schaefer-400 surface-adjacency
+cluster-mass sign-flip correction; FDR-BH maps are retained as sensitivity
+outputs. Panel 1 defaults to equal-window and accepts
+`--weighting=equal_run`.
 After each successful submission, `manifests/submission_journal.json` records
 the issued job ID before any downstream node is attempted.
 Raw-to-feature arrays share an identical subject/run order and therefore use

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -14,6 +15,7 @@ import yaml
 from code.classification.multifeature_provenance import environment_snapshot, git_state
 
 ID_PATTERN = re.compile(r"^analysis-(\d{8}T\d{6}Z)-g([0-9a-f]+|unknown)-c([0-9a-f]{12})$")
+ACTIVE_ANALYSIS_DIRECTORY = "main"
 
 
 def config_hash(config: Mapping[str, Any]) -> str:
@@ -37,12 +39,17 @@ def validate_analysis_id(analysis_id: str) -> None:
 
 
 def initialize(root: Path, analysis_id: str, config: Mapping[str, Any],
-               arguments: Mapping[str, Any], project_root: Path) -> Path:
-    """Create a new analysis directory; existing IDs are immutable."""
+               arguments: Mapping[str, Any], project_root: Path,
+               *, active: bool = False, force: bool = False) -> Path:
+    """Create an analysis directory, optionally replacing the active analysis."""
     validate_analysis_id(analysis_id)
-    destination = root / analysis_id
+    destination = root / (ACTIVE_ANALYSIS_DIRECTORY if active else analysis_id)
     if destination.exists():
-        raise FileExistsError(f"immutable analysis already exists: {destination}")
+        if not force:
+            raise FileExistsError(f"analysis already exists: {destination}")
+        if not active or destination.name != ACTIVE_ANALYSIS_DIRECTORY:
+            raise ValueError("force replacement is restricted to the active main analysis")
+        shutil.rmtree(destination)
     destination.mkdir(parents=True)
     state = git_state(project_root)
     software = environment_snapshot()
@@ -73,3 +80,28 @@ def initialize(root: Path, analysis_id: str, config: Mapping[str, Any],
     for folder in ("manifests", "qc", "statistics", "classification", "sensitivity", "tables", "figures"):
         (destination / folder).mkdir()
     return destination
+
+
+def resolve_analysis_directory(root: Path, analysis_id: str | None = None) -> Path:
+    """Resolve the active ``main`` directory or a legacy ID directory."""
+    active = root / ACTIVE_ANALYSIS_DIRECTORY
+    provenance = active / "provenance.json"
+    if provenance.exists():
+        recorded = json.loads(provenance.read_text()).get("analysis_id")
+        if analysis_id is None or analysis_id == recorded:
+            return active
+    if analysis_id is None:
+        raise FileNotFoundError(f"active analysis not found: {active}")
+    if Path(analysis_id).name != analysis_id or analysis_id in {".", ".."}:
+        raise ValueError(f"unsafe legacy analysis directory: {analysis_id!r}")
+    return root / analysis_id
+
+
+def active_analysis_id(root: Path) -> str:
+    """Return the provenance ID stored inside the active analysis."""
+    directory = resolve_analysis_directory(root)
+    analysis_id = json.loads((directory / "provenance.json").read_text()).get(
+        "analysis_id"
+    )
+    validate_analysis_id(str(analysis_id))
+    return str(analysis_id)

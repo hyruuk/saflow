@@ -26,6 +26,7 @@ from code.analysis.labels import (
 )
 from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.result_io import write_result_bundle
+from code.analysis.provenance import resolve_analysis_directory
 from code.utils.config import load_config
 
 MODEL_ORDER = ("state", "lapse_within_IN", "lapse_within_OUT")
@@ -260,7 +261,7 @@ def _analysis_directory(
         / "processed"
         / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
-    directory = root / analysis_id
+    directory = resolve_analysis_directory(root, analysis_id)
     if not (directory / "provenance.json").exists():
         raise FileNotFoundError(f"analysis provenance not found: {directory}")
     return directory

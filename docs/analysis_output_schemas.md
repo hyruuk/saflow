@@ -1,6 +1,6 @@
 # Paper-panel output contracts
 
-The corrected paper workflow uses schema version `1.0.0`. Real and synthetic
+The corrected paper workflow uses schema version `1.1.0`. Real and synthetic
 bundles obey the same schemas; `data_mode` is always either `real` or
 `synthetic`. Every artifact also records the immutable analysis ID, Git state,
 configuration hash, inputs, and software environment.
@@ -27,8 +27,8 @@ The versioned catalog covers:
 - `dag_manifest`: immutable nodes, dependencies, array cells, and provenance.
 
 The machine-readable catalog is written to
-`<analysis-id>/manifests/schemas.json` during preflight. The dry-run graph is
-written to `<analysis-id>/manifests/execution_plan.json`. Its `submission_plan` records
+`main/manifests/schemas.json` during preflight. The dry-run graph is written
+to `main/manifests/execution_plan.json`. Its `submission_plan` records
 the resource class, array size, stable dry-run job identifier, and typed
 dependencies for every retained node. `aftercorr` edges are rejected unless
 both arrays have the same subject/run index mapping.
@@ -45,3 +45,9 @@ preserves the established narrative:
 A/B raw PSD, C–F raw/aperiodic/corrected/periodic spectra, G/H FOOOF, and I/J
 corrected PSD. A map-only result is not considered render-ready and cannot be
 labeled as a real composite.
+The bundle stores both `equal_window` and `equal_run` subject-level map and
+spectral summaries. Unsuffixed arrays are the primary equal-window result;
+equal-run alternatives use the `_equal_run` suffix. Each modulation family
+contains primary cluster-mass FWER p-values and BH-FDR sensitivity p-values.
+Spectral parcel selection is repeated independently for each weighting using
+its own significant FOOOF-exponent cluster map.

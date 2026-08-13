@@ -100,6 +100,9 @@ def build_execution_plan(
     spaces: Sequence[str] = ("sensor", "schaefer_400"),
     *,
     include_exploratory: bool = True,
+    analyses: Sequence[str] = (
+        "feature_modulation", "multifeature_decoding", "network_dynamics"
+    ),
     map_chunk_count: int = 40,
     decoding_chunk_count: int = 40,
     map_chunks_per_job: int = 5,
@@ -125,7 +128,7 @@ def build_execution_plan(
         ExecutionDependency(feature_upstream, "run_features", "aftercorr")
     )
     _add_feature_validators(nodes, edges, spaces)
-    _add_analysis_branches(nodes, edges, include_exploratory)
+    _add_analysis_branches(nodes, edges, include_exploratory, analyses)
     cells = [
         {"index": index, "subject": subject, "run": run}
         for index, (subject, run) in enumerate(product(subjects, runs))
@@ -137,6 +140,7 @@ def build_execution_plan(
         "array_cells": cells,
         "spaces": list(spaces),
         "include_exploratory": include_exploratory,
+        "analyses": list(analyses),
         "provenance": {"status": "planned", "submitted": False},
     }
     manifest["node_cells"] = _build_node_cells(
@@ -541,7 +545,8 @@ def _add_feature_validators(
 
 
 def _add_analysis_branches(
-    nodes: list[ExecutionNode], edges: list[ExecutionDependency], include_exploratory: bool
+    nodes: list[ExecutionNode], edges: list[ExecutionDependency],
+    include_exploratory: bool, selected_analyses: Sequence[str],
 ) -> None:
     """Add concurrent scientific analyses, export, render, and audit barriers."""
     source = "schaefer_400_feature_validator"
@@ -558,6 +563,13 @@ def _add_analysis_branches(
             "network_factorial_modulation",
             "network_coupling",
         ),
+    }
+    unknown = set(selected_analyses) - set(analysis_workers)
+    if unknown:
+        raise ValueError(f"unknown analyses: {sorted(unknown)}")
+    analysis_workers = {
+        name: workers for name, workers in analysis_workers.items()
+        if name in selected_analyses
     }
     for analysis, worker_names in analysis_workers.items():
         validator = f"{analysis}_validator"

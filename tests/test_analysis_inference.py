@@ -121,16 +121,20 @@ def test_synchronized_network_family_is_deterministic():
     assert first["p_values_fwer"].shape == (2, 3)
 
 
-def test_panel1_uses_subject_paired_out_minus_in_and_per_feature_fdr():
+def test_panel1_uses_paired_out_minus_in_cluster_primary_and_fdr_sensitivity():
     inside = np.zeros((6, 2, 4))
     outside = inside.copy()
     outside[:, 0, 0] = np.arange(1, 7)
     result = compute_feature_modulation_statistics(
-        inside, outside, feature_order=("raw_theta", "exponent")
+        inside, outside, feature_order=("raw_theta", "exponent"),
+        adjacency=[[1], [0, 2], [1, 3], [2]],
+        n_permutations=19,
+        cluster_threshold=1.0,
     )
     assert result["contrast"] == "OUT_minus_IN"
     assert result["effect_size_dz"][0, 0] > 1
     assert result["significant_fdr"][0, 0]
+    assert result["p_values_cluster"].shape == (2, 4)
 
 
 def _decoding_fixture():

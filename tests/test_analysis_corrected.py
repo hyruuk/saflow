@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
@@ -36,7 +37,16 @@ from code.analysis.labels import (
 )
 from code.analysis.real_inputs import _band_reduce
 from code.analysis.preflight import inspect_inputs
-from code.analysis.provenance import create_analysis_id, initialize
+from code.analysis.provenance import (
+    active_analysis_id,
+    create_analysis_id,
+    initialize,
+    resolve_analysis_directory,
+)
+from code.analysis.aggregate_runner import _subject_selected_spectra
+from code.analysis.real_inputs import RunLabelContext
+from code.analysis.observed_runner import _subject_state_means
+from code.visualization.panel1_bundle import PANEL_NAMES, _select_weighting, _spectral_rows
 
 
 def test_reflected_filter_is_boundary_safe():
@@ -144,6 +154,112 @@ def test_label_qc_and_immutable_id(tmp_path: Path):
     initialize(tmp_path, analysis_id, config, {}, Path.cwd())
     with pytest.raises(FileExistsError, match="immutable"):
         initialize(tmp_path, analysis_id, config, {}, Path.cwd())
+
+
+def test_active_main_analysis_reuses_metadata_id_and_force_replaces(tmp_path: Path):
+    config = {"paths": {"data_root": str(tmp_path)}}
+    first_id = create_analysis_id(
+        config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc)
+    )
+    active = initialize(
+        tmp_path, first_id, config, {}, Path.cwd(), active=True
+    )
+    assert active == tmp_path / "main"
+    assert resolve_analysis_directory(tmp_path) == active
+    assert active_analysis_id(tmp_path) == first_id
+    with pytest.raises(FileExistsError, match="already exists"):
+        initialize(tmp_path, first_id, config, {}, Path.cwd(), active=True)
+    second_id = create_analysis_id(
+        config, Path.cwd(), datetime(2026, 1, 3, tzinfo=timezone.utc)
+    )
+    initialize(
+        tmp_path, second_id, config, {}, Path.cwd(), active=True, force=True
+    )
+    assert active_analysis_id(tmp_path) == second_id
+
+
+def test_selected_subject_spectra_average_runs_then_parcels():
+    contexts = tuple(
+        RunLabelContext(
+            start=index, stop=index + 1, subject=subject, run=run,
+            vtc=np.empty(0), contributing_indices=np.empty((0, 8), dtype=int),
+            contributing_bad_flags=np.empty((0, 8), dtype=bool),
+        )
+        for index, (subject, run) in enumerate(
+            (("04", "02"), ("04", "03"), ("05", "02"))
+        )
+    )
+    inputs = type(
+        "Inputs", (),
+        {"run_label_contexts": contexts, "states": np.asarray(["IN"] * 3)},
+    )()
+    values = np.asarray([
+        [[1.0, 3.0], [3.0, 5.0]],
+        [[3.0, 5.0], [5.0, 7.0]],
+        [[9.0, 11.0], [11.0, 13.0]],
+    ])
+    observed = _subject_selected_spectra(values, np.asarray([0, 1]), inputs)
+    np.testing.assert_array_equal(observed, [[3.0, 5.0], [10.0, 12.0]])
+
+
+def test_feature_modulation_retains_equal_window_and_equal_run_weighting():
+    values = np.asarray([[0.0], [10.0], [20.0], [20.0], [20.0], [30.0]])
+    states = np.asarray(["IN", "IN", "IN", "IN", "IN", "OUT"])
+    subjects = np.asarray(["04"] * 6)
+    runs = np.asarray(["02", "03", "03", "03", "03", "02"])
+    # Add a second paired subject so the production guard is satisfied.
+    values = np.concatenate([values, values + 1])
+    states = np.tile(states, 2)
+    subjects = np.concatenate([subjects, np.asarray(["05"] * 6)])
+    runs = np.tile(runs, 2)
+    window_in, _, _ = _subject_state_means(
+        values, states, subjects, runs, weighting="equal_window"
+    )
+    run_in, _, _ = _subject_state_means(
+        values, states, subjects, runs, weighting="equal_run"
+    )
+    assert window_in[0, 0] == pytest.approx(14.0)
+    assert run_in[0, 0] == pytest.approx(8.75)
+
+
+def test_panel1_spectral_pairs_share_main_and_difference_y_axes():
+    frequency = np.linspace(2.0, 120.0, 20)
+    arrays = {"frequency": frequency}
+    for prefix in ("", "aperiodic_", "corrected_", "periodic_"):
+        baseline = -np.log10(frequency)
+        arrays[f"subject_{prefix}spectrum_in"] = np.stack(
+            [baseline, baseline + 0.01]
+        )
+        arrays[f"subject_{prefix}spectrum_out"] = np.stack(
+            [baseline - 0.1, baseline - 0.09]
+        )
+        arrays[f"{prefix}spectrum_in"] = baseline
+        arrays[f"{prefix}spectrum_out"] = baseline - 0.1
+    figure = plt.figure()
+    groups = _spectral_rows(figure, figure.add_gridspec(6, 8), arrays)
+    for left, right in ((PANEL_NAMES[2], PANEL_NAMES[3]),
+                        (PANEL_NAMES[4], PANEL_NAMES[5])):
+        assert groups[left][0].get_shared_y_axes().joined(
+            groups[left][0], groups[right][0]
+        )
+        assert groups[left][1].get_shared_y_axes().joined(
+            groups[left][1], groups[right][1]
+        )
+    plt.close(figure)
+
+
+def test_panel1_defaults_to_equal_window_and_can_select_equal_run():
+    arrays = {
+        "raw_psd_modulation": np.asarray([1.0]),
+        "raw_psd_modulation_equal_run": np.asarray([2.0]),
+    }
+    metadata = {"summary": {"available_weightings": ["equal_window", "equal_run"]}}
+    assert _select_weighting(arrays, metadata, "equal_window")[
+        "raw_psd_modulation"
+    ] == 1.0
+    assert _select_weighting(arrays, metadata, "equal_run")[
+        "raw_psd_modulation"
+    ] == 2.0
 
 
 def test_band_and_feature_contract_excludes_delta():

@@ -30,9 +30,12 @@ from code.analysis.execution_plan import (
 )
 from code.analysis.preflight import inspect_inputs, write_reports
 from code.analysis.provenance import (
+    ACTIVE_ANALYSIS_DIRECTORY,
+    active_analysis_id,
     config_hash,
     create_analysis_id,
     initialize,
+    resolve_analysis_directory,
     validate_analysis_id,
 )
 from code.analysis.slurm_execution import (
@@ -62,15 +65,20 @@ def _analysis_root(config: dict, override: str | None) -> Path:
 
 
 def run_preflight(args: argparse.Namespace) -> Path:
-    """Initialize an immutable ID and record required input checks."""
+    """Initialize the active analysis and record required input checks."""
     config = _load_config(Path(args.config))
+    root = _analysis_root(config, args.analysis_root)
+    if (root / ACTIVE_ANALYSIS_DIRECTORY).exists() and not getattr(args, "force", False):
+        return resolve_analysis_directory(root)
     analysis_id = args.analysis_id or create_analysis_id(config, Path.cwd())
     analysis_dir = initialize(
-        _analysis_root(config, args.analysis_root),
+        root,
         analysis_id,
         config,
         vars(args),
         Path.cwd(),
+        active=True,
+        force=bool(getattr(args, "force", False)),
     )
     requirements = {
         "spaces": ["sensor", "schaefer_400"],
@@ -185,12 +193,27 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         raise RuntimeError(
             "SLURM submission requires sbatch; use --dry-run on non-SLURM hosts"
         )
+    root = _analysis_root(config, args.analysis_root)
+    active = root / ACTIVE_ANALYSIS_DIRECTORY
+    if active.exists() and args.dry_run and getattr(args, "force", False):
+        raise ValueError(
+            "--force --dry-run cannot replace the active analysis; "
+            "inspect the reusable plan without --force or run --force explicitly"
+        )
+    if active.exists() and not getattr(args, "force", False):
+        existing_id = active_analysis_id(root)
+        LOGGER.info("Reusing active analysis %s (%s)", active, existing_id)
+        resume_args = argparse.Namespace(
+            analysis_id=existing_id,
+            analysis_root=args.analysis_root,
+            config=args.config,
+            slurm=args.slurm,
+            dry_run=args.dry_run,
+        )
+        return resume_pipeline(resume_args)
     analysis_id = args.analysis_id or create_analysis_id(config, Path.cwd())
     validate_analysis_id(analysis_id)
-    root = _analysis_root(config, args.analysis_root)
-    analysis_dir = root / analysis_id
-    if analysis_dir.exists():
-        raise FileExistsError(f"immutable analysis already exists: {analysis_dir}")
+    analysis_dir = active
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     analysis_workflow_config = config.get("analysis_workflow", {})
@@ -199,6 +222,7 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
         subjects,
         runs,
         args.spaces.split(),
+        analyses=args.analyses.split(),
         include_exploratory=args.include_exploratory,
         map_chunk_count=_chunk_count(
             analysis_workflow_config, "map_permutations", "map_chunk_size", 10_000, 250
@@ -233,7 +257,10 @@ def run_all_pipeline(args: argparse.Namespace) -> Path:
                 f"least {required - capacity} queued/running jobs to finish, "
                 "then rerun pipeline.all"
             )
-    initialize(root, analysis_id, config, vars(args), Path.cwd())
+    initialize(
+        root, analysis_id, config, vars(args), Path.cwd(),
+        active=True, force=bool(getattr(args, "force", False)),
+    )
     provenance = json.loads((analysis_dir / "provenance.json").read_text())
     graph["provenance"].update(
         {
@@ -309,10 +336,12 @@ def _chunk_count(
 
 
 def resume_pipeline(args: argparse.Namespace) -> Path:
-    """Audit an immutable execution plan and submit a dependency-safe invalid-cell wave."""
-    validate_analysis_id(args.analysis_id)
+    """Audit the active plan and submit a dependency-safe invalid-cell wave."""
     config = _load_config(Path(args.config))
-    analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
+    root = _analysis_root(config, args.analysis_root)
+    analysis_id = args.analysis_id or active_analysis_id(root)
+    validate_analysis_id(analysis_id)
+    analysis_dir = resolve_analysis_directory(root, analysis_id)
     plan_path = analysis_dir / "manifests" / "execution_plan.json"
     if not plan_path.exists():
         raise FileNotFoundError(
@@ -336,7 +365,7 @@ def resume_pipeline(args: argparse.Namespace) -> Path:
         record = {**expected, "reason": reason}
         (selected if reason else complete).append(record)
     resume = {
-        "analysis_id": args.analysis_id,
+        "analysis_id": analysis_id,
         "dry_run": bool(args.dry_run),
         "completed_cell_count": len(complete),
         "resubmit_cell_count": len(selected),
@@ -598,11 +627,15 @@ def _invalid_cell_reason(path: Path, expected: dict, provenance: dict) -> str | 
 
 def export_analysis(args: argparse.Namespace) -> Path:
     """Copy only compact bundles, metadata, tables, and figures."""
-    validate_analysis_id(args.analysis_id)
-    source = Path(args.analysis_root) / args.analysis_id
+    root = Path(args.analysis_root)
+    analysis_id = args.analysis_id or active_analysis_id(root)
+    validate_analysis_id(analysis_id)
+    source = resolve_analysis_directory(root, analysis_id)
     destination = Path(args.destination)
     if destination.exists():
-        raise FileExistsError(f"export destination exists: {destination}")
+        if not getattr(args, "force", False):
+            raise FileExistsError(f"export destination exists: {destination}")
+        shutil.rmtree(destination)
     if not (source / "preflight_report.json").exists():
         raise ValueError("source is not a Saflow analysis analysis")
     destination.mkdir(parents=True)
@@ -631,7 +664,7 @@ def export_analysis(args: argparse.Namespace) -> Path:
     (destination / "export_manifest.json").write_text(
         json.dumps(
             {
-                "analysis_id": args.analysis_id,
+                "analysis_id": analysis_id,
                 "files": files,
                 "omitted": [
                     "chunks",
@@ -685,9 +718,11 @@ def _scalar_items(value: object, prefix: str = "") -> list[tuple[str, object]]:
 
 def audit_analysis(args: argparse.Namespace) -> Path:
     """Audit complete bundles and rendered composite/slide provenance."""
-    validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
-    analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
+    root = _analysis_root(config, args.analysis_root)
+    analysis_id = args.analysis_id or active_analysis_id(root)
+    validate_analysis_id(analysis_id)
+    analysis_dir = resolve_analysis_directory(root, analysis_id)
     reports_root = Path(args.reports_root)
     findings = []
     modes = set()
@@ -696,7 +731,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
         try:
             validate_analysis_result(
                 args.config,
-                args.analysis_id,
+                analysis_id,
                 str(_analysis_root(config, args.analysis_root)),
                 analysis,
             )
@@ -710,7 +745,11 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                 }
             )
         bundle = analysis_dir / analysis / "observed.json"
-        composite = reports_root / "figures" / "paper" / spec["composite_filename"]
+        composite = (
+            reports_root / "figures"
+            / spec.get("composite_directory", "paper")
+            / spec["composite_filename"]
+        )
         sidecar = composite.with_name(f"{composite.name}.json")
         for kind, path in (
             ("bundle", bundle),
@@ -722,14 +761,15 @@ def audit_analysis(args: argparse.Namespace) -> Path:
         if sidecar.exists():
             metadata = json.loads(sidecar.read_text())
             modes.add(metadata.get("data_mode"))
-            if metadata.get("analysis_id") != args.analysis_id:
+            if metadata.get("analysis_id") != analysis_id:
                 findings.append(
                     {"panel": panel, "kind": "sidecar", "status": "wrong_analysis_id"}
                 )
         slide_directory = reports_root / "figures" / "slides" / spec["slide_directory"]
         for index, component in enumerate(PANEL_COMPONENTS[panel], start=1):
             stem = f"{index:02d}_{component}"
-            for suffix in (".png", ".svg"):
+            suffixes = (".png",) if panel == "panel1" else (".png", ".svg")
+            for suffix in suffixes:
                 slide = slide_directory / f"{stem}{suffix}"
                 slide_sidecar = slide.with_name(f"{slide.name}.json")
                 if not slide.exists() or not slide_sidecar.exists():
@@ -744,7 +784,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                     continue
                 slide_metadata = json.loads(slide_sidecar.read_text())
                 if (
-                    slide_metadata.get("analysis_id") != args.analysis_id
+                    slide_metadata.get("analysis_id") != analysis_id
                     or slide_metadata.get("data_mode") != "real"
                 ):
                     findings.append(
@@ -766,7 +806,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
             )
     status = "passed" if not findings and modes == {"real"} else "failed"
     report = {
-        "analysis_id": args.analysis_id,
+        "analysis_id": analysis_id,
         "status": status,
         "required_data_mode": "real",
         "observed_data_modes": sorted(str(mode) for mode in modes),
@@ -817,6 +857,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--analysis-root")
     preflight.add_argument("--subjects")
     preflight.add_argument("--runs")
+    preflight.add_argument("--force", action="store_true")
     run = commands.add_parser("run")
     run.add_argument("--config", default="config.yaml")
     run.add_argument("--analysis-id", required=True)
@@ -845,27 +886,33 @@ def build_parser() -> argparse.ArgumentParser:
     all_pipeline.add_argument("--runs")
     all_pipeline.add_argument("--spaces", default="sensor schaefer_400")
     all_pipeline.add_argument(
+        "--analyses",
+        default="feature_modulation multifeature_decoding network_dynamics",
+    )
+    all_pipeline.add_argument(
         "--include-exploratory",
         action=argparse.BooleanOptionalAction,
         default=True,
     )
     all_pipeline.add_argument("--slurm", action="store_true")
     all_pipeline.add_argument("--dry-run", action="store_true")
+    all_pipeline.add_argument("--force", action="store_true")
     resume = commands.add_parser("resume")
     resume.add_argument("--config", default="config.yaml")
-    resume.add_argument("--analysis-id", required=True)
+    resume.add_argument("--analysis-id")
     resume.add_argument("--analysis-root")
     resume.add_argument("--slurm", action="store_true")
     resume.add_argument("--dry-run", action="store_true")
     audit = commands.add_parser("audit")
     audit.add_argument("--config", default="config.yaml")
-    audit.add_argument("--analysis-id", required=True)
+    audit.add_argument("--analysis-id")
     audit.add_argument("--analysis-root")
     audit.add_argument("--reports-root", default="reports")
     export = commands.add_parser("export")
-    export.add_argument("--analysis-id", required=True)
+    export.add_argument("--analysis-id")
     export.add_argument("--analysis-root", required=True)
     export.add_argument("--destination", required=True)
+    export.add_argument("--force", action="store_true")
     legacy = commands.add_parser("legacy-inventory")
     legacy.add_argument("--source", required=True)
     legacy.add_argument("--manifest", required=True)

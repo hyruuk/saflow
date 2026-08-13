@@ -22,6 +22,7 @@ from code.analysis.contracts import (
     PANEL_ANALYSES,
     SCHEMA_VERSION,
 )
+from code.analysis.provenance import active_analysis_id, resolve_analysis_directory
 
 COMPOSITE_DPI = 600
 SLIDE_DPI = 160
@@ -53,9 +54,12 @@ def render_panels(
     selected = tuple(PANEL_SPECS) if panel == "all" else (panel,)
     if any(name not in PANEL_SPECS for name in selected):
         raise ValueError(f"panel must be all or one of {tuple(PANEL_SPECS)}")
-    analysis_dir = (
-        analysis_root / analysis_id if analysis_root is not None and analysis_id else None
-    )
+    if analysis_root is not None:
+        resolved_id = analysis_id or active_analysis_id(analysis_root)
+        analysis_dir = resolve_analysis_directory(analysis_root, resolved_id)
+        analysis_id = resolved_id
+    else:
+        analysis_dir = None
     analysis_provenance = _analysis_provenance(analysis_dir)
     context = RenderContext(
         analysis_id=analysis_id or "synthetic-fallback",

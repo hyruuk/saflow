@@ -994,9 +994,11 @@ def all_pipeline(
     subjects=None,
     runs=None,
     spaces="sensor schaefer_400",
+    analyses="feature_modulation multifeature_decoding network_dynamics",
     include_exploratory=True,
     slurm=False,
     dry_run=False,
+    force=False,
     analysis_root=None,
     config="config.yaml",
 ):
@@ -1010,6 +1012,8 @@ def all_pipeline(
         config,
         "--spaces",
         spaces,
+        "--analyses",
+        analyses,
     ]
     for flag, value in (
         ("--analysis-id", analysis_id),
@@ -1028,12 +1032,14 @@ def all_pipeline(
         cmd.append("--slurm")
     if dry_run:
         cmd.append("--dry-run")
+    if force:
+        cmd.append("--force")
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
 def resume(
-    c, analysis_id, analysis_root=None, slurm=False, dry_run=False,
+    c, analysis_id=None, analysis_root=None, slurm=False, dry_run=False,
     config="config.yaml"
 ):
     """Submit a dependency-safe wave containing only missing or invalid cells."""
@@ -1042,11 +1048,11 @@ def resume(
         "-m",
         "code.analysis.workflow",
         "resume",
-        "--analysis-id",
-        analysis_id,
         "--config",
         config,
     ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
     if analysis_root:
         cmd.extend(["--analysis-root", analysis_root])
     if slurm:
@@ -3345,7 +3351,7 @@ def multifeature_run(c, analysis_id, analysis_root, features="all",
 
 @task
 def analysis_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
-                    runs=None, config="config.yaml"):
+                    runs=None, force=False, config="config.yaml"):
     """Create and validate a new immutable final analysis."""
     cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "preflight",
            "--config", config]
@@ -3357,6 +3363,8 @@ def analysis_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
         cmd.extend(["--subjects", subjects])
     if runs:
         cmd.extend(["--runs", runs])
+    if force:
+        cmd.append("--force")
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
@@ -3418,12 +3426,16 @@ def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, r
 
 
 @task
-def analysis_export(c, analysis_id, analysis_root, destination=None):
+def analysis_export(c, analysis_root, analysis_id=None, destination=None, force=False):
     """Export analysis bundles without subject-level feature matrices."""
-    target = destination or str(Path("reports/exports") / analysis_id)
+    target = destination or str(Path("reports/exports") / "main")
     cmd = [get_python_executable(), "-m", "code.analysis.workflow", "export",
-           "--analysis-id", analysis_id, "--analysis-root", analysis_root,
+           "--analysis-root", analysis_root,
            "--destination", target]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
+    if force:
+        cmd.append("--force")
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
@@ -3486,6 +3498,41 @@ def viz_panels(
     ]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def panel1_legacy(
+    c, bundle_directory=None, analysis_root=None, reports_root="reports",
+    weighting="equal_window", config="config.yaml",
+):
+    """Render corrected Panel 1 data with the established manuscript layout."""
+    if bundle_directory is None:
+        from code.analysis.provenance import resolve_analysis_directory
+        from code.utils.config import load_config
+
+        loaded = load_config(config)
+        root = Path(analysis_root) if analysis_root else (
+            Path(loaded["paths"]["data_root"])
+            / "processed"
+            / loaded.get("analysis_workflow", {}).get(
+                "processed_directory", "analysis_workflow"
+            )
+        )
+        bundle_directory = str(
+            resolve_analysis_directory(root) / "feature_modulation"
+        )
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.visualization.panel1_bundle",
+        "--bundle-directory",
+        bundle_directory,
+        "--reports-root",
+        reports_root,
+        "--weighting",
+        weighting,
+    ]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
@@ -4174,6 +4221,7 @@ viz.add_task(spectra)
 viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
 viz.add_task(viz_panels, name="panels")
+viz.add_task(panel1_legacy, name="panel1-legacy")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

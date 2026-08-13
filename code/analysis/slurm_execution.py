@@ -520,15 +520,14 @@ def command_for_cell(
             "--analysis-root",
             str(analysis_root),
             "--destination",
-            str(Path(config["paths"]["reports"]) / "exports" / analysis_id),
+            str(Path(config["paths"]["reports"]) / "exports" / "main"),
+            "--force",
         ]
     if node == "panel_generation":
         return [
             python,
             "-m",
-            "code.analysis.render",
-            "--panel",
-            "all",
+            "code.analysis.publication_render",
             "--analysis-id",
             analysis_id,
             "--analysis-root",

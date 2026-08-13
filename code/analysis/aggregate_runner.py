@@ -25,6 +25,7 @@ from code.analysis.workers import (
     compute_mixed_effects_sensitivity,
 )
 from code.analysis.result_io import read_result_bundle
+from code.analysis.provenance import resolve_analysis_directory
 from code.utils.config import load_config
 
 
@@ -54,7 +55,11 @@ def _aggregate_feature_modulation(
         for feature in FEATURE_MODULATION_FEATURES
     ]
     _require_bundle_provenance(statistics_bundles, analysis_dir)
-    statistics = [bundle["result"] for bundle in statistics_bundles]
+    statistics_by_weighting = {
+        weighting: [bundle["result"][weighting] for bundle in statistics_bundles]
+        for weighting in ("equal_window", "equal_run")
+    }
+    statistics = statistics_by_weighting["equal_window"]
     analysis_workflow = config.get("analysis_workflow", {})
     total = int(analysis_workflow.get("map_permutations", 10_000))
     size = int(analysis_workflow.get("map_chunk_size", 250))
@@ -92,7 +97,10 @@ def _aggregate_feature_modulation(
     t_values = np.stack(
         [np.asarray(result["t_values"]).reshape(-1) for result in statistics]
     )
-    statistics_p = np.stack(
+    statistics_p_cluster = np.stack(
+        [np.asarray(result["p_values_cluster"]).reshape(-1) for result in statistics]
+    )
+    statistics_p_fdr = np.stack(
         [np.asarray(result["p_values_fdr"]).reshape(-1) for result in statistics]
     )
     mean_difference = np.stack(
@@ -111,13 +119,23 @@ def _aggregate_feature_modulation(
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     inputs = load_real_inputs(config, subjects, runs, include_spectra=True)
-    exponent_p = np.asarray(statistics[7]["p_values_fdr"]).reshape(-1)
+    exponent_p = np.asarray(statistics[7]["p_values_cluster"]).reshape(-1)
     exponent_t = np.asarray(statistics[7]["t_values"]).reshape(-1)
     selected_parcels = np.flatnonzero(exponent_p < 0.05)
-    selection_rule = "FDR-significant FOOOF exponent parcels"
+    selection_rule = "cluster-FWER-significant FOOOF exponent parcels"
     if selected_parcels.size == 0:
         selected_parcels = np.asarray([int(np.nanargmax(np.abs(exponent_t)))])
         selection_rule = "fallback maximum-|t| FOOOF exponent parcel"
+    equal_run_statistics = statistics_by_weighting["equal_run"]
+    equal_run_exponent_p = np.asarray(
+        equal_run_statistics[7]["p_values_cluster"]
+    ).reshape(-1)
+    equal_run_exponent_t = np.asarray(equal_run_statistics[7]["t_values"]).reshape(-1)
+    equal_run_selected = np.flatnonzero(equal_run_exponent_p < 0.05)
+    equal_run_selection_rule = "cluster-FWER-significant FOOOF exponent parcels"
+    if equal_run_selected.size == 0:
+        equal_run_selected = np.asarray([int(np.nanargmax(np.abs(equal_run_exponent_t)))])
+        equal_run_selection_rule = "fallback maximum-|t| FOOOF exponent parcel"
     log_frequency = np.log10(inputs.frequencies)
     aperiodic_in = (
         inputs.fooof_state_in[:, selected_parcels, 1, None]
@@ -127,58 +145,87 @@ def _aggregate_feature_modulation(
         inputs.fooof_state_out[:, selected_parcels, 1, None]
         - inputs.fooof_state_out[:, selected_parcels, 0, None] * log_frequency
     )
-    corrected_in = np.nanmean(
-        _subject_average_recordings(
-            inputs.corrected_spectrum_in[:, selected_parcels], inputs
-        ),
-        axis=(0, 1),
+    subject_raw_in = _subject_selected_spectra(
+        inputs.raw_spectrum_in, selected_parcels, inputs, state="IN",
+        weighting="equal_window",
     )
-    corrected_out = np.nanmean(
-        _subject_average_recordings(
-            inputs.corrected_spectrum_out[:, selected_parcels], inputs
-        ),
-        axis=(0, 1),
+    subject_raw_out = _subject_selected_spectra(
+        inputs.raw_spectrum_out, selected_parcels, inputs, state="OUT",
+        weighting="equal_window",
     )
+    subject_aperiodic_in = _subject_selected_spectra(
+        aperiodic_in, np.arange(selected_parcels.size), inputs, state="IN",
+        weighting="equal_window",
+    )
+    subject_aperiodic_out = _subject_selected_spectra(
+        aperiodic_out, np.arange(selected_parcels.size), inputs, state="OUT",
+        weighting="equal_window",
+    )
+    subject_corrected_in = _subject_selected_spectra(
+        inputs.corrected_spectrum_in, selected_parcels, inputs, state="IN",
+        weighting="equal_window",
+    )
+    subject_corrected_out = _subject_selected_spectra(
+        inputs.corrected_spectrum_out, selected_parcels, inputs, state="OUT",
+        weighting="equal_window",
+    )
+    equal_run_aperiodic_in = (
+        inputs.fooof_state_in[:, equal_run_selected, 1, None]
+        - inputs.fooof_state_in[:, equal_run_selected, 0, None] * log_frequency
+    )
+    equal_run_aperiodic_out = (
+        inputs.fooof_state_out[:, equal_run_selected, 1, None]
+        - inputs.fooof_state_out[:, equal_run_selected, 0, None] * log_frequency
+    )
+    equal_run_spectra = _selected_spectral_variants(
+        inputs, equal_run_selected, equal_run_aperiodic_in,
+        equal_run_aperiodic_out, "equal_run"
+    )
+    subject_periodic_in = np.maximum(subject_corrected_in, 0)
+    subject_periodic_out = np.maximum(subject_corrected_out, 0)
     arrays = {
         "raw_psd_modulation": t_values[:7],
         "raw_psd_auc": auc[:7],
-        "raw_psd_p_fdr": statistics_p[:7],
+        "raw_psd_p_cluster": statistics_p_cluster[:7],
+        "raw_psd_p_fdr": statistics_p_fdr[:7],
         "frequency": inputs.frequencies,
-        "spectrum_in": np.nanmean(
-            _subject_average_recordings(
-                inputs.raw_spectrum_in[:, selected_parcels], inputs
-            ),
-            axis=(0, 1),
+        "spectrum_in": np.nanmean(subject_raw_in, axis=0),
+        "spectrum_out": np.nanmean(subject_raw_out, axis=0),
+        "aperiodic_spectrum_in": np.nanmean(subject_aperiodic_in, axis=0),
+        "aperiodic_spectrum_out": np.nanmean(subject_aperiodic_out, axis=0),
+        "corrected_spectrum_in": np.nanmean(subject_corrected_in, axis=0),
+        "corrected_spectrum_out": np.nanmean(subject_corrected_out, axis=0),
+        "periodic_spectrum_in": np.maximum(
+            np.nanmean(subject_corrected_in, axis=0), 0
         ),
-        "spectrum_out": np.nanmean(
-            _subject_average_recordings(
-                inputs.raw_spectrum_out[:, selected_parcels], inputs
-            ),
-            axis=(0, 1),
+        "periodic_spectrum_out": np.maximum(
+            np.nanmean(subject_corrected_out, axis=0), 0
         ),
-        "aperiodic_spectrum_in": np.nanmean(
-            _subject_average_recordings(aperiodic_in, inputs), axis=(0, 1)
-        ),
-        "aperiodic_spectrum_out": np.nanmean(
-            _subject_average_recordings(aperiodic_out, inputs), axis=(0, 1)
-        ),
-        "corrected_spectrum_in": corrected_in,
-        "corrected_spectrum_out": corrected_out,
-        "periodic_spectrum_in": np.maximum(corrected_in, 0),
-        "periodic_spectrum_out": np.maximum(corrected_out, 0),
+        "subject_spectrum_in": subject_raw_in,
+        "subject_spectrum_out": subject_raw_out,
+        "subject_aperiodic_spectrum_in": subject_aperiodic_in,
+        "subject_aperiodic_spectrum_out": subject_aperiodic_out,
+        "subject_corrected_spectrum_in": subject_corrected_in,
+        "subject_corrected_spectrum_out": subject_corrected_out,
+        "subject_periodic_spectrum_in": subject_periodic_in,
+        "subject_periodic_spectrum_out": subject_periodic_out,
+        "spectral_subject_order": np.unique(inputs.subjects),
         "fooof_modulation": t_values[7:10],
         "fooof_auc": auc[7:10],
-        "fooof_p_fdr": statistics_p[7:10],
+        "fooof_p_cluster": statistics_p_cluster[7:10],
+        "fooof_p_fdr": statistics_p_fdr[7:10],
         "corrected_psd_modulation": t_values[10:],
         "corrected_psd_auc": auc[10:],
-        "corrected_psd_p_fdr": statistics_p[10:],
+        "corrected_psd_p_cluster": statistics_p_cluster[10:],
+        "corrected_psd_p_fdr": statistics_p_fdr[10:],
         "decoding_p_tmax": np.stack(corrected),
         "confusion_matrices": np.stack(confusion),
         "parcel_order": np.asarray(inputs.parcel_order),
         "mean_difference": mean_difference,
         "effect_size_dz": effect_size,
         "p_values_uncorrected": p_uncorrected,
-        "p_values_fdr": statistics_p,
+        "p_values_cluster": statistics_p_cluster,
+        "p_values_fdr": statistics_p_fdr,
         "subject_n": np.stack(
             [np.asarray(result["subject_n"]).reshape(-1) for result in statistics]
         ),
@@ -186,33 +233,146 @@ def _aggregate_feature_modulation(
             [np.asarray(result["window_counts"]) for result in statistics]
         ),
     }
+    arrays.update(_weighting_map_arrays(statistics_by_weighting["equal_run"], "equal_run"))
+    arrays.update({f"{name}_equal_run": value for name, value in equal_run_spectra.items()})
     summary = {
         "feature_order": list(FEATURE_MODULATION_FEATURES),
         "subject_n_by_feature": [
             int(np.nanmax(result["subject_n"])) for result in statistics
         ],
-        "map_correction": "Benjamini-Hochberg FDR within each feature",
+        "primary_weighting": "equal_window",
+        "available_weightings": ["equal_window", "equal_run"],
+        "map_correction": "cluster-mass permutation FWER within each feature",
+        "sensitivity_correction": "Benjamini-Hochberg FDR within each feature",
         "decoding_correction": "shared-permutation maximum across 400 parcels",
         "decoding_permutations": total,
         "spectral_selection_rule": selection_rule,
         "spectral_selection_parcel_indices": selected_parcels.tolist(),
+        "spectral_selection_rule_equal_run": equal_run_selection_rule,
+        "spectral_selection_parcel_indices_equal_run": equal_run_selected.tolist(),
     }
     return arrays, summary
 
 
 def _subject_average_recordings(
-    values: np.ndarray, inputs: AnalysisInputs
+    values: np.ndarray, inputs: AnalysisInputs, *, state: str,
+    weighting: str,
 ) -> np.ndarray:
-    """Average runs within subject before group-level spectral summaries."""
+    """Average recordings within subject using the requested state weighting."""
+    if weighting not in {"equal_run", "equal_window"}:
+        raise ValueError(f"unknown spectral weighting: {weighting}")
     recording_subjects = np.asarray(
         [context.subject for context in inputs.run_label_contexts]
     )
+    target = state.upper()
+    counts = np.asarray([
+        np.sum(inputs.states[context.start:context.stop] == target)
+        for context in inputs.run_label_contexts
+    ])
     return np.stack(
         [
-            np.nanmean(values[recording_subjects == subject], axis=0)
+            np.average(
+                values[(recording_subjects == subject) & (counts > 0)], axis=0,
+                weights=(None if weighting == "equal_run" else
+                         counts[(recording_subjects == subject) & (counts > 0)]),
+            )
             for subject in np.unique(recording_subjects)
         ]
     )
+
+
+def _subject_selected_spectra(
+    values: np.ndarray,
+    selected_parcels: np.ndarray,
+    inputs: AnalysisInputs,
+    *,
+    state: str = "IN",
+    weighting: str = "equal_run",
+) -> np.ndarray:
+    """Return one selected-parcel mean spectrum per subject."""
+    subject_recordings = _subject_average_recordings(
+        values[:, selected_parcels], inputs, state=state, weighting=weighting
+    )
+    return np.nanmean(subject_recordings, axis=1)
+
+
+def _selected_spectral_variants(
+    inputs: AnalysisInputs, selected: np.ndarray, aperiodic_in: np.ndarray,
+    aperiodic_out: np.ndarray, weighting: str,
+) -> dict[str, np.ndarray]:
+    """Build one complete selected-spectrum payload for a weighting rule."""
+    raw_in = _subject_selected_spectra(
+        inputs.raw_spectrum_in, selected, inputs, state="IN", weighting=weighting
+    )
+    raw_out = _subject_selected_spectra(
+        inputs.raw_spectrum_out, selected, inputs, state="OUT", weighting=weighting
+    )
+    ap_in = _subject_selected_spectra(
+        aperiodic_in, np.arange(selected.size), inputs,
+        state="IN", weighting=weighting,
+    )
+    ap_out = _subject_selected_spectra(
+        aperiodic_out, np.arange(selected.size), inputs,
+        state="OUT", weighting=weighting,
+    )
+    corrected_in = _subject_selected_spectra(
+        inputs.corrected_spectrum_in, selected, inputs,
+        state="IN", weighting=weighting,
+    )
+    corrected_out = _subject_selected_spectra(
+        inputs.corrected_spectrum_out, selected, inputs,
+        state="OUT", weighting=weighting,
+    )
+    return _spectral_payload(raw_in, raw_out, ap_in, ap_out, corrected_in, corrected_out)
+
+
+def _spectral_payload(
+    raw_in: np.ndarray, raw_out: np.ndarray, ap_in: np.ndarray,
+    ap_out: np.ndarray, corrected_in: np.ndarray, corrected_out: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Return group and subject spectral arrays for one weighting rule."""
+    return {
+        "spectrum_in": np.nanmean(raw_in, axis=0),
+        "spectrum_out": np.nanmean(raw_out, axis=0),
+        "aperiodic_spectrum_in": np.nanmean(ap_in, axis=0),
+        "aperiodic_spectrum_out": np.nanmean(ap_out, axis=0),
+        "corrected_spectrum_in": np.nanmean(corrected_in, axis=0),
+        "corrected_spectrum_out": np.nanmean(corrected_out, axis=0),
+        "periodic_spectrum_in": np.maximum(np.nanmean(corrected_in, axis=0), 0),
+        "periodic_spectrum_out": np.maximum(np.nanmean(corrected_out, axis=0), 0),
+        "subject_spectrum_in": raw_in,
+        "subject_spectrum_out": raw_out,
+        "subject_aperiodic_spectrum_in": ap_in,
+        "subject_aperiodic_spectrum_out": ap_out,
+        "subject_corrected_spectrum_in": corrected_in,
+        "subject_corrected_spectrum_out": corrected_out,
+        "subject_periodic_spectrum_in": np.maximum(corrected_in, 0),
+        "subject_periodic_spectrum_out": np.maximum(corrected_out, 0),
+    }
+
+
+def _weighting_map_arrays(
+    statistics: list[dict[str, Any]], suffix: str
+) -> dict[str, np.ndarray]:
+    """Flatten one weighting variant into explicitly suffixed map arrays."""
+    t_values = np.stack([np.asarray(item["t_values"]).reshape(-1) for item in statistics])
+    cluster = np.stack([np.asarray(item["p_values_cluster"]).reshape(-1) for item in statistics])
+    fdr = np.stack([np.asarray(item["p_values_fdr"]).reshape(-1) for item in statistics])
+    effect = np.stack([np.asarray(item["effect_size_dz"]).reshape(-1) for item in statistics])
+    return {
+        f"raw_psd_modulation_{suffix}": t_values[:7],
+        f"fooof_modulation_{suffix}": t_values[7:10],
+        f"corrected_psd_modulation_{suffix}": t_values[10:],
+        f"raw_psd_p_cluster_{suffix}": cluster[:7],
+        f"fooof_p_cluster_{suffix}": cluster[7:10],
+        f"corrected_psd_p_cluster_{suffix}": cluster[10:],
+        f"p_values_cluster_{suffix}": cluster,
+        f"p_values_fdr_{suffix}": fdr,
+        f"raw_psd_p_fdr_{suffix}": fdr[:7],
+        f"fooof_p_fdr_{suffix}": fdr[7:10],
+        f"corrected_psd_p_fdr_{suffix}": fdr[10:],
+        f"effect_size_dz_{suffix}": effect,
+    }
 
 
 def _validate_feature_modulation_chunks(
@@ -571,7 +731,7 @@ def _write_observed(
         json.dumps(
             {
                 "provenance": {
-                    "analysis_id": analysis_dir.name,
+                    "analysis_id": analysis["analysis_id"],
                     "data_mode": "real",
                     "git": analysis["git"],
                     "config_hash": analysis["config_hash"],
@@ -605,12 +765,13 @@ def _require_bundle_provenance(
     """Reject partials from a different analysis, Git state, or configuration."""
     analysis = json.loads((analysis_dir / "provenance.json").read_text())
     expected_commit = analysis["git"]["commit"]
+    expected_analysis_id = analysis["analysis_id"]
     expected_config = analysis["config_hash"]
     for bundle in bundles:
         provenance = bundle["provenance"]
         commit = provenance.get("git", {}).get("commit")
         if (
-            provenance.get("analysis_id") != analysis_dir.name
+            provenance.get("analysis_id") != expected_analysis_id
             or provenance.get("config_hash") != expected_config
             or commit != expected_commit
         ):
@@ -628,7 +789,7 @@ def _analysis_directory(
         / "processed"
         / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
-    directory = root / analysis_id
+    directory = resolve_analysis_directory(root, analysis_id)
     if not directory.exists():
         raise FileNotFoundError(f"analysis not found: {directory}")
     return directory

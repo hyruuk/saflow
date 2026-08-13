@@ -17,6 +17,7 @@ from code.analysis.chunks import derive_chunk_seed
 from code.analysis.contracts import FEATURE_MODULATION_FEATURES
 from code.analysis.real_inputs import load_real_inputs
 from code.analysis.result_io import write_result_bundle
+from code.analysis.provenance import resolve_analysis_directory
 from code.utils.config import load_config
 
 
@@ -150,7 +151,7 @@ def _analysis_directory(
         / "processed"
         / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
-    directory = root / analysis_id
+    directory = resolve_analysis_directory(root, analysis_id)
     if not (directory / "provenance.json").exists():
         raise FileNotFoundError(f"analysis provenance not found: {directory}")
     return directory

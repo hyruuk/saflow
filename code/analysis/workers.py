@@ -17,6 +17,7 @@ from code.classification.multifeature_scientific import (
     run_primary_analysis,
 )
 from code.analysis.decoding import DecodingConfig
+from code.analysis.inference import synchronized_cluster_mass_test
 from code.analysis.networks import (
     CELL_ORDER,
     YEO7_ORDER,
@@ -36,8 +37,12 @@ def compute_feature_modulation_statistics(
     *,
     feature_order: Sequence[str],
     alpha: float = 0.05,
+    adjacency: Sequence[Sequence[int]] | None = None,
+    n_permutations: int = 10_000,
+    cluster_threshold: float = 2.0,
+    seed: int = 42,
 ) -> dict[str, object]:
-    """Compute subject-paired feature-modulation analysis maps with per-feature BH correction."""
+    """Compute paired maps with primary cluster-FWER and FDR sensitivity inference."""
     inside = np.asarray(in_values, dtype=float)
     outside = np.asarray(out_values, dtype=float)
     if inside.shape != outside.shape or inside.ndim != 3:
@@ -63,7 +68,7 @@ def compute_feature_modulation_statistics(
         out=np.full_like(standard_deviation, np.nan),
         where=standard_deviation > 0,
     )
-    return {
+    result = {
         "contrast": "OUT_minus_IN",
         "feature_order": tuple(feature_order),
         "subject_n": np.sum(np.isfinite(differences), axis=0),
@@ -74,6 +79,24 @@ def compute_feature_modulation_statistics(
         "p_values_fdr": corrected,
         "significant_fdr": rejected,
     }
+    if adjacency is not None:
+        cluster = synchronized_cluster_mass_test(
+            differences,
+            adjacency,
+            n_permutations=n_permutations,
+            cluster_threshold=cluster_threshold,
+            seed=seed,
+        )
+        result.update(
+            {
+                "p_values_cluster": cluster["p_values_fwer"],
+                "significant_cluster": cluster["p_values_fwer"] < alpha,
+                "null_max_cluster_mass": cluster["null_max_cluster_mass"],
+                "cluster_forming_threshold": cluster_threshold,
+                "cluster_permutations": n_permutations,
+            }
+        )
+    return result
 
 
 def compute_multifeature_models(

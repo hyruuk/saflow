@@ -9,6 +9,7 @@ from pathlib import Path
 
 from code.analysis.contracts import FEATURE_MODULATION_FEATURES
 from code.utils.config import load_config
+from code.analysis.provenance import resolve_analysis_directory
 
 
 def run_exploratory(args: argparse.Namespace) -> Path:
@@ -76,7 +77,7 @@ def run_exploratory(args: argparse.Namespace) -> Path:
         / "processed"
         / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
-    output = root / args.analysis_id / "exploratory" / "sidekick_manifest.json"
+    output = resolve_analysis_directory(root, args.analysis_id) / "exploratory" / "sidekick_manifest.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         json.dumps(

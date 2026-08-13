@@ -2,7 +2,8 @@
 
 ## Corrected analysis pipeline
 
-The corrected workflow is immutable. It rebuilds strict eight-trial labels
+The corrected workflow keeps one active analysis under
+`processed/<configured-analysis-directory>/main/`. It rebuilds strict eight-trial labels
 from reflected-boundary filtered VTC, runs the scientific analyses, and
 generates three final panels from compact exports. The authoritative frequency policy contains
 Theta through Gamma 3; Delta and complexity are excluded from the primary branch.
@@ -12,11 +13,17 @@ invoke pipeline.all --dry-run                 # inspect local execution
 invoke pipeline.all                          # execute locally
 invoke pipeline.all --slurm --dry-run         # inspect complete Rorqual submission
 invoke pipeline.all --slurm                   # submit to Rorqual
-invoke pipeline.resume --slurm --analysis-id=analysis-...
-invoke viz.panels --panel=all --analysis-id=analysis-...
+invoke pipeline.all --slurm --analyses=feature_modulation \
+  --start-at=analyses --stop-after=analyses  # Panel 1 analysis only
+invoke pipeline.resume --slurm
+invoke viz.panel1-legacy
 ```
 
-`pipeline.all` creates an immutable analysis, renders every cell script,
+`pipeline.all` creates the active analysis on its first run and reuses valid
+outputs by default thereafter. Pass `--force` to replace `main/` and start a
+fresh computation. The timestamp/Git/config analysis ID remains recorded in
+provenance and deterministic seeds, but is no longer part of the active path.
+The command renders every cell script,
 and executes it locally unless `--slurm` is passed explicitly. SLURM execution
 counts array elements and existing queued/running jobs, and never lets the
 total exceed the 900-job Rorqual safety ceiling.
@@ -34,6 +41,12 @@ same-node overlaps are rejected to prevent duplicate arrays.
 [the output contracts](docs/analysis_output_schemas.md).
 The statistical definitions are summarized in
 [the corrected methods notes](docs/analysis_methods.md).
+
+Feature modulation stores both equal-window and equal-run subject summaries.
+Equal-window weighting is the primary/default Panel 1 view; use
+`invoke viz.panel1-legacy --weighting=equal_run` for the sensitivity view.
+Modulation maps use Schaefer-adjacency cluster-mass permutation FWER
+correction; BH-FDR maps are retained as sensitivity outputs.
 
 Corrected BIDS enrichment is run-wise and provenance-aware:
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 @dataclass(frozen=True)
@@ -90,21 +90,36 @@ FEATURE_MODULATION_RENDER_ARRAYS = (
     "corrected_psd_auc",
 )
 
+FEATURE_MODULATION_SUBJECT_SPECTRA = (
+    "subject_spectrum_in",
+    "subject_spectrum_out",
+    "subject_aperiodic_spectrum_in",
+    "subject_aperiodic_spectrum_out",
+    "subject_corrected_spectrum_in",
+    "subject_corrected_spectrum_out",
+    "subject_periodic_spectrum_in",
+    "subject_periodic_spectrum_out",
+    "spectral_subject_order",
+)
+
 PANEL_SPECS = {
     "panel1": {
         "composite_filename": "panel1_feature_modulation.png",
+        "composite_directory": "manuscript",
         "slide_directory": "panel1_feature_modulation",
         "layout": "A-J preserved feature-modulation and spectral narrative",
         "features": FEATURE_MODULATION_FEATURES,
     },
     "panel2": {
         "composite_filename": "panel2_multifeature_decoding.png",
+        "composite_directory": "paper",
         "slide_directory": "panel2_multifeature_decoding",
         "layout": "three-model performance, feature reliance, and parcel reliance",
         "features": CORRECTED_FEATURES,
     },
     "panel3": {
         "composite_filename": "panel3_network_dynamics.png",
+        "composite_directory": "paper",
         "slide_directory": "panel3_network_dynamics",
         "layout": "four-cell modulation, contrasts, and DMN-DAN coupling",
         "features": CORRECTED_FEATURES,

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Restore cluster-mass permutation FWER correction as the primary Panel 1
+  modulation inference, retaining BH-FDR maps as sensitivity results. Compute
+  both equal-window (primary) and equal-run weighting variants, including
+  independently selected spectra, and support targeted Panel 1-only HPC runs.
+- Restored the legacy paired spectral scaling in Panel 1: C/D now share their
+  main and OUT-minus-IN y axes, as do E/F.
+
+- Restore the established Panel 1 manuscript layout through a corrected-bundle
+  compatibility adapter, including standalone slide crops. Future compact
+  feature-modulation bundles retain selected subject spectra for exact SEM
+  ribbons without exporting subject feature matrices.
+- Store the active corrected workflow under `processed/.../main`, reuse valid
+  cells by default, and require `--force` for intentional replacement. Keep
+  the generated analysis ID as provenance and deterministic-seed metadata.
+
 - Define network-coupling windows as clean, opposite-state-free IN/MID or
   OUT/MID mixtures and require five windows per state × outcome cell. Strict
   eight-trial labels remain unchanged for feature modulation and multifeature

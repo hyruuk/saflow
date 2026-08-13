@@ -8,20 +8,54 @@ from pathlib import Path
 
 import numpy as np
 
-from code.analysis.contracts import FEATURE_MODULATION_RENDER_ARRAYS
+from code.analysis.contracts import (
+    FEATURE_MODULATION_RENDER_ARRAYS,
+    FEATURE_MODULATION_SUBJECT_SPECTRA,
+)
 from code.utils.config import load_config
+from code.analysis.provenance import resolve_analysis_directory
 
 REQUIRED_ARRAYS = {
     "feature_modulation": set(FEATURE_MODULATION_RENDER_ARRAYS)
+    | set(FEATURE_MODULATION_SUBJECT_SPECTRA)
     | {
         "raw_psd_p_fdr",
+        "raw_psd_p_cluster",
         "fooof_p_fdr",
+        "fooof_p_cluster",
         "corrected_psd_p_fdr",
+        "corrected_psd_p_cluster",
         "decoding_p_tmax",
         "confusion_matrices",
         "effect_size_dz",
         "p_values_uncorrected",
         "p_values_fdr",
+        "p_values_cluster",
+        "raw_psd_modulation_equal_run",
+        "fooof_modulation_equal_run",
+        "corrected_psd_modulation_equal_run",
+        "raw_psd_p_cluster_equal_run",
+        "fooof_p_cluster_equal_run",
+        "corrected_psd_p_cluster_equal_run",
+        "subject_spectrum_in_equal_run",
+        "subject_spectrum_out_equal_run",
+        "subject_aperiodic_spectrum_in_equal_run",
+        "subject_aperiodic_spectrum_out_equal_run",
+        "subject_corrected_spectrum_in_equal_run",
+        "subject_corrected_spectrum_out_equal_run",
+        "subject_periodic_spectrum_in_equal_run",
+        "subject_periodic_spectrum_out_equal_run",
+        "spectrum_in_equal_run",
+        "spectrum_out_equal_run",
+        "aperiodic_spectrum_in_equal_run",
+        "aperiodic_spectrum_out_equal_run",
+        "corrected_spectrum_in_equal_run",
+        "corrected_spectrum_out_equal_run",
+        "periodic_spectrum_in_equal_run",
+        "periodic_spectrum_out_equal_run",
+        "raw_psd_p_fdr_equal_run",
+        "fooof_p_fdr_equal_run",
+        "corrected_psd_p_fdr_equal_run",
     },
     "multifeature_decoding": {
         "joint_auc",
@@ -68,7 +102,7 @@ def validate_analysis_result(
         / "processed"
         / config.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
     )
-    directory = root / analysis_id / analysis
+    directory = resolve_analysis_directory(root, analysis_id) / analysis
     metadata = json.loads((directory / "observed.json").read_text())
     provenance = metadata.get("provenance", {})
     if provenance.get("analysis_id") != analysis_id:

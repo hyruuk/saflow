@@ -29,13 +29,14 @@ paths:
 
 # Corrected Saflow analysis values are resolved into every immutable analysis folder.
 analysis_workflow:
-  schema_version: "1.0.0"        # Result/manifest contract version
+  schema_version: "1.1.0"        # Result/manifest contract version
   processed_directory: analysis_workflow   # Under paths.data_root/processed/
   gaussian_fwhm: 9.0             # Reflected Gaussian width, trials
   strict_window_size: 8          # Every constituent shares the IN/OUT label
   inout_percentiles: [25, 75]    # Run-specific VTC percentile bounds
   minimum_circular_offset: 24    # Exclude shifts within 24 trials of zero
   map_permutations: 10000        # Synchronized map permutations
+  cluster_permutations: 10000    # Sign-flip cluster-mass permutations per feature/weighting
   decoding_permutations: 1000    # Synchronized nested-decoding permutations
   map_chunk_size: 250            # Immutable permutations per map chunk
   decoding_chunk_size: 25        # Tune after the HPC subset benchmark
