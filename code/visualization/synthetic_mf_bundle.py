@@ -38,7 +38,7 @@ import numpy as np
 
 # Combined feature list (matches expand_feature_set("all")).
 DEFAULT_FEATURES = [
-    "fooof_exponent", "fooof_offset", "fooof_r_squared",
+    "fooof_exponent", "fooof_offset",
     "psd_delta", "psd_theta", "psd_alpha", "psd_lobeta", "psd_hibeta",
     "psd_gamma1", "psd_gamma2", "psd_gamma3",
     "psd_corrected_delta", "psd_corrected_theta", "psd_corrected_alpha",

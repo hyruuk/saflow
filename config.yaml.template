@@ -46,6 +46,9 @@ analysis_workflow:
   random_seed: 42                # Shared deterministic seed
   c_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0] # Inner grouped ridge tuning
   inner_splits: 5                # Subject-grouped inner folds, training only
+  fast_state_alpha: 1.0          # Prespecified Schaefer-400 ridge penalty; never tuned on state labels
+  fast_state_tolerance: 0.0001   # LSQR convergence tolerance
+  fast_state_permutations_per_job: 10 # Checkpoint each permutation within 100 array cells
   minimum_modulation_windows: 5  # Required in every state × outcome cell
   minimum_coupling_windows: 5    # Required pooled across runs per relaxed cell
   spaces: [sensor, schaefer_400] # Sensor QC plus primary parcel space
@@ -64,6 +67,8 @@ analysis_workflow:
     network_coupling: {time: "12:00:00", memory_gb: 64, cpus: 4}
     network_dynamics_results: {time: "12:00:00", memory_gb: 64, cpus: 4}
     multifeature_decoding_models: {time: "3-00:00:00", memory_gb: 32, cpus: 4}
+    fast_state_prepare: {time: "04:00:00", memory_gb: 64, cpus: 4}
+    fast_state_permutations: {time: "06:00:00", memory_gb: 64, cpus: 4}
     exploratory_analyses: {time: "3-00:00:00", memory_gb: 32, cpus: 4}
 
 # =============================================================================

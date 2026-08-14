@@ -47,7 +47,8 @@ Equal-window weighting is the primary/default Panel 1 view; use
 `invoke viz.panel1 --weighting=equal_run` for the sensitivity view.
 Modulation maps use Schaefer-adjacency cluster-mass permutation FWER
 correction; BH-FDR maps are retained as sensitivity outputs.
-The manuscript Panel 1 omits FOOOF R² maps (R² remains available as QC),
+FOOOF R² is retained in extraction outputs only as fit QC and is excluded from
+all inferential, decoding, multifeature, and network analyses. Panel 1 therefore omits its maps,
 using the space to widen C–F. Panel F shows the summed Gaussian peak models
 fitted by specparam/FOOOF rather than a thresholded corrected spectrum. Slide
 outputs are separately composed native
@@ -129,6 +130,7 @@ Saflow implements a complete MEG analysis pipeline for the gradCPT (gradual Cont
 - ✅ **Two-pass preprocessing** - ICA + AutoReject with aggregate QC reports
 - ✅ **Group statistics** - paired t-tests with tmax/FDR/Bonferroni corrections
 - ✅ **Classification** - single-feature, multi-feature (4 axes), and Yeo-network-restricted
+- ✅ **Publication panels** - Panel 3 labels its matrices with full Yeo-7 network and feature names
 - ✅ **Composite figures** - publication-ready stats+classif panels, FOOOF spectral decomposition, network story panels
 - ✅ **Modern Python** - type hints, dataclasses, invoke task runner
 
@@ -460,6 +462,8 @@ invoke pipeline.all --slurm --subjects="08 09 10 11"
 
 # Render protected Panel 2/3 prototypes or complete real bundles
 invoke viz.panels --panel=all
+# Panels 2/3 write composites/captions under figures/manuscript and native
+# 2560x1440 PNG/SVG components plus captions under figures/slides.
 
 # Render the sole canonical real-data Panel 1
 invoke viz.panel1
@@ -504,6 +508,10 @@ invoke viz.networks.panel --space=schaefer_400
 
 The command above is retained for legacy axis diagnostics. Confirmatory
 multifeature inference uses the immutable corrected workflow:
+
+The primary Panel 2 endpoint is fixed-ridge IN/OUT decoding at Schaefer-400
+resolution. It excludes FOOOF R², prepares the aligned tensor once, and saves
+every circular-shift permutation independently so timed-out jobs are resumable.
 
 ```bash
 invoke analysis.multifeature-preflight --features=all --space=sensor

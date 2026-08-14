@@ -278,12 +278,12 @@ def _load_psd(
 def _load_fooof(
     path: Path | None,
 ) -> tuple[np.ndarray, dict[str, Any], list[str]]:
-    """Load exponent, offset, and fit quality in canonical feature order."""
+    """Load exponent and offset in canonical analysis-feature order."""
     if path is None:
         raise FileNotFoundError("FOOOF path is missing")
     with np.load(path, allow_pickle=True) as archive:
         tensor = np.stack(
-            [archive["exponent"], archive["offset"], archive["r_squared"]], axis=2
+            [archive["exponent"], archive["offset"]], axis=2
         ).astype(float)
         return (
             tensor,

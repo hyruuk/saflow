@@ -9,7 +9,7 @@ into IN / OUT zones using each subject's VTC distribution, and runs either:
   single permutation-based classification (sklearn's permutation_test_score).
 
 Supported feature families (folder layout under <features>/):
-- fooof_{space}/                  -> fooof_exponent, fooof_offset, fooof_r_squared
+- fooof_{space}/                  -> fooof_exponent, fooof_offset
 - welch_psds_{space}/             -> psd_<band> (band averaged from configured bins)
 - welch_psds_corrected_{space}/   -> psd_corrected_<band>
 - complexity_{space}/             -> complexity_<metric> (lzc_median, entropy_*, fractal_*)
@@ -138,7 +138,7 @@ def inout_bounds_to_string(bounds: Tuple[int, int]) -> str:
 # Feature loading from new npz format
 # ---------------------------------------------------------------------------
 
-FOOOF_FEATURES = ["fooof_exponent", "fooof_offset", "fooof_r_squared"]
+FOOOF_FEATURES = ["fooof_exponent", "fooof_offset"]
 # entropy_sample, entropy_approximate, fractal_higuchi, fractal_katz, fractal_dfa
 # are excluded — they come out ~98.6% NaN at the source on this dataset (antropy
 # raises inside compute_complexity_for_channel). Removed from config.yaml so
@@ -159,7 +159,7 @@ def expand_feature_set(name: str, config: Dict) -> List[str]:
     Sets:
         psds            -> psd_<band> for each band in config.features.frequency_bands
         psds_corrected  -> psd_corrected_<band> for each band
-        fooof           -> fooof_exponent, fooof_offset, fooof_r_squared
+        fooof           -> fooof_exponent, fooof_offset
         complexity      -> complexity_<metric> for each entry in COMPLEXITY_METRICS
         all             -> union of fooof + psds + psds_corrected + complexity
     """
@@ -206,6 +206,8 @@ def parse_feature(
                                         "lzc_median")
     """
     w = "" if n_events_window <= 1 else f"w{n_events_window}"
+    if feature == "fooof_r_squared":
+        raise ValueError("fooof_r_squared is QC-only and cannot be classified")
     if feature.startswith("fooof_"):
         return "fooof", f"desc-fooof{w}.npz", feature[len("fooof_"):]
     if feature.startswith("psd_corrected_"):

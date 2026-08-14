@@ -1,6 +1,24 @@
 # Changelog
 
+- Replaced the timed-out primary multifeature state decoder with a fixed-ridge,
+  Schaefer-400 workflow that materializes inputs once, stages arrays locally,
+  and checkpoints every permutation. FOOOF R² is excluded from multifeature
+  classification, leaving nine features and 3,600 predictors. Outputs resolve
+  to the active `main/` analysis and are replaced by a fresh preparation unless
+  manually archived first.
+
 ## Unreleased
+
+- Exclude FOOOF R² from all canonical statistical, decoding, multifeature, and
+  network analyses while retaining it in extraction outputs as fit-quality QC.
+  Panel 2/3 analysis bundles now contain nine features.
+
+- Label Panel 3 matrices with canonical Yeo-7 network names and readable
+  feature names.
+
+- Promoted Panels 2 and 3 to the manuscript figure directory, added manuscript
+  and slide caption text exports, and normalized composite sidecars from
+  `<figure>.png.json` to `<figure>.json`.
 
 - Distinguish overlapping Panel 1 spectral conditions with dashed blue IN
   curves and solid orange OUT curves in manuscript and slide renderings.

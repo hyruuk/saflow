@@ -152,6 +152,10 @@ def get_feature_folder(
 
     # Map feature types to folder names
     # Actual folder structure: fooof_sensor, complexity_sensor, welch_psds_sensor, etc.
+    if feature_type == "fooof_r_squared":
+        raise ValueError(
+            "fooof_r_squared is QC-only and cannot be used for group statistics"
+        )
     if feature_type.startswith("fooof_"):
         folder_name = f"fooof_{space}"
     elif feature_type.startswith("psd_corrected_"):

@@ -78,7 +78,7 @@ FEATURE_DISPLAY: Dict[str, str] = {
 FAMILY_COLUMNS: Tuple[str, ...] = ("psds_corrected", "fooof", "complexity")
 FAMILY_DISPLAY: Dict[str, str] = {
     "psds_corrected": "PSDc (all bands)",
-    "fooof":          "FOOOF (exp + off + R²)",
+    "fooof":          "FOOOF (exponent + offset)",
     "complexity":     "Complexity (LZc + entropy + fractal)",
 }
 

@@ -67,7 +67,7 @@ explicitly secondary.
 
 Network-dynamics modulation corrections are synchronized across contrasts, networks,
 and features, with separate FOOOF and corrected-PSD families. DMN–DAN
-coupling is corrected across all ten features and prespecified contrasts.
+coupling is corrected across all nine analysis features and prespecified contrasts.
 Every other Yeo-7 network pair is exported as exploratory Fisher-z coupling.
 
 ### SLURM execution and recovery
@@ -293,7 +293,8 @@ but would diverge from cc_saflow and is not implemented.
 ## Path 1 — subject-averaged stats (default for stats)
 
 Used for: `psd_<band>`, `psd_corrected_<band>`, `fooof_exponent`,
-`fooof_offset`, `fooof_r_squared`, complexity metrics.
+`fooof_offset`, complexity metrics. FOOOF R² is saved only for fit QC and is
+not accepted as an inferential feature.
 
 Aggregation (PSD-derived families):
 
@@ -305,7 +306,7 @@ Aggregation (PSD-derived families):
    - `psd_<band>`: average the median PSD over the band's frequencies.
    - `psd_corrected_<band>`: subtract the aperiodic fit from the median
      PSD in log-space, then average over the band.
-   - `fooof_exponent` / `_offset` / `_r_squared`: read directly off the fit.
+   - `fooof_exponent` / `_offset`: read directly off the fit.
 4. **Mean across runs** of those per-`(subj, run, cond)` values → one
    value per `(subject, condition)` per channel.
 5. **Paired t-test** across subjects (OUT − IN). Multiple-comparison
@@ -333,7 +334,7 @@ baseline.
 ## Path 2 — single-epoch classification (default for classification)
 
 Used for: `psd_<band>`, `psd_corrected_<band>` (per-epoch self-corrected),
-`fooof_exponent` / `_offset` / `_r_squared` (per-epoch fits), complexity
+`fooof_exponent` / `_offset` (per-epoch fits), complexity
 metrics. Each feature is already at epoch granularity from the
 extraction step — the loader just filters good epochs and forwards them.
 

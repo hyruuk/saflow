@@ -13,7 +13,7 @@ from code.classification.multifeature_scientific import (
     run_primary_analysis,
 )
 from code.analysis.chunks import derive_chunk_seed
-from code.analysis.contracts import CORRECTED_FEATURES
+from code.analysis.contracts import MULTIFEATURE_FEATURES
 from code.analysis.labels import (
     LABEL_IN,
     LABEL_OUT,
@@ -66,7 +66,7 @@ def run_chunk(args: argparse.Namespace) -> Path:
     result.update(
         {
             "model_order": MODEL_ORDER,
-            "feature_order": CORRECTED_FEATURES,
+            "feature_order": MULTIFEATURE_FEATURES,
             "parcel_order": inputs.parcel_order,
             "permutation_interval": np.asarray([start, stop]),
             "chunk_index": args.chunk_index,
@@ -133,7 +133,7 @@ def _run_permutations(
 ) -> dict[str, np.ndarray]:
     """Fit all three null models with synchronized permutation indices."""
     joint = np.full((count, 3), np.nan)
-    standalone = np.full((count, 3, len(CORRECTED_FEATURES)), np.nan)
+    standalone = np.full((count, 3, len(MULTIFEATURE_FEATURES)), np.nan)
     feature = np.full_like(standalone, np.nan)
     parcel = np.full((count, 3, len(inputs.parcel_order)), np.nan)
     failures = np.zeros((count, 3), dtype=bool)
@@ -228,7 +228,9 @@ def _fit_null_model(
     if np.unique(labels).size < 2 or np.unique(inputs.subjects[selector]).size < 3:
         raise ValueError(f"{model} permutation lacks evaluable classes or subjects")
     return run_primary_analysis(
-        inputs.feature_tensor[selector],
+        inputs.feature_tensor[selector][
+            :, :, [inputs.feature_order.index(name) for name in MULTIFEATURE_FEATURES]
+        ],
         labels,
         inputs.subjects[selector],
         config,

@@ -20,7 +20,7 @@ legacy correct/lapse selectors are exploratory.
 
 The paper bands are Theta (4–8 Hz), Alpha (8–12 Hz), Low Beta (12–20 Hz),
 High Beta (20–30 Hz), Gamma 1 (30–60 Hz), Gamma 2 (60–90 Hz), and Gamma 3
-(90–120 Hz). Delta is excluded. The feature-modulation analysis uses raw PSD, FOOOF exponent/offset/R²,
+(90–120 Hz). Delta is excluded. The feature-modulation analysis uses raw PSD, FOOOF exponent/offset,
 and corrected PSD. The multifeature-decoding and network-dynamics analyses omit raw PSD. Complexity is exploratory.
 
 All paper maps use 400 ordered cortical parcels from
@@ -41,16 +41,25 @@ preserving the established t-max behavior.
 
 ## Multifeature decoding analysis
 
-The three prespecified models are state, matched lapse within IN, and matched
-lapse within OUT. Ridge logistic regression is class-balanced. Median
-imputation, standardization, and C selection occur only within outer training
-data, using subject-grouped inner folds.
+The primary multifeature endpoint is Schaefer-400 IN-versus-OUT state decoding.
+It combines FOOOF exponent and offset with seven aperiodic-corrected frequency
+bands (3,600 predictors). FOOOF fit quality (R²) is excluded because it is a
+model-quality diagnostic rather than a neurophysiological feature. The primary
+classifier is class-balanced fixed ridge with a prespecified penalty, outer
+leave-one-subject-out validation, training-only median imputation and scaling,
+and pooled held-out AUC. Run-wise circular VTC shifts provide the state null.
+Inputs are materialized once, each permutation is checkpointed independently,
+and no hyperparameter selection is repeated inside the null loop.
+The workflow writes to the canonical active `main/fast_state/` directory; a
+fresh preparation replaces that branch after users archive any result they
+intend to retain.
+
+The matched lapse-within-IN and lapse-within-OUT models are no longer part of
+the primary Panel 2 analysis.
 
 State nulls use run-wise circular VTC shifts farther than 24 trials from zero,
-then rebuild strict labels once per run/permutation. Lapse nulls permute
-matched outcomes within subject/run/state. Joint models, all standalone and
-grouped feature tests, and all parcel-reliance tests form three separate
-synchronized maximum-statistic families. Reliance is predictive, not causal.
+then rebuild strict labels once per run/permutation. Any later feature or
+parcel reliance analysis is secondary and predictive, not causal.
 
 ## Network dynamics analysis
 
@@ -77,7 +86,7 @@ run and then pooled across runs. One Pearson association is estimated from the
 pooled residuals and Fisher-z transformed. Run centering prevents between-run
 baseline differences from inducing the pooled association while allowing rare
 outcomes distributed across runs to contribute. Primary coupling requires five
-pooled windows per cell and is corrected across ten features and all
+pooled windows per cell and is corrected across nine features and all
 prespecified contrasts. All other Yeo-7 pairs are exploratory.
 
 ## Reproducibility

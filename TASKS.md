@@ -352,9 +352,13 @@ invoke viz.panels --panel=all
 invoke viz.panels --panel=panel2 --analysis-id=analysis-...
 ```
 
-Panel 2/3 composites are written at 600 DPI under `reports/figures/paper/`.
+Final Panel 2 and Panel 3 composites and captions are written at 600 DPI under
+`reports/figures/manuscript/`. Panel 3 matrix axes use the full Yeo-7 network
+names and publication-facing feature names rather than internal analysis keys.
 Standalone white-background 2560×1440 PNG and editable SVG components are
-written under `reports/figures/slides/`. Every artifact has a JSON sidecar.
+written under `reports/figures/slides/`. Both panels also write their captions
+into their slide directories. Every artifact has a JSON sidecar; manuscript composite
+sidecars use the clean `<figure>.json` name.
 Synthetic rendering cannot overwrite real output.
 
 ### `invoke analysis.audit`
@@ -586,7 +590,7 @@ invoke pipeline.features.all --slurm
 - A shortcut name (expands to the family below):
   - `psds` → `psd_<band>` for every band in `config.yaml`
   - `psds_corrected` → `psd_corrected_<band>` for every band
-  - `fooof` → `fooof_exponent`, `fooof_offset`, `fooof_r_squared`
+  - `fooof` → `fooof_exponent`, `fooof_offset` (R² is QC-only)
   - `complexity` → all 10 complexity sub-metrics (LZC, entropies, fractals)
   - `all` → union of `fooof` + `psds` + `psds_corrected` + `complexity`
 
@@ -803,6 +807,22 @@ invoke analysis.classify-multifeature --axis=per-cell --space=schaefer_400 \
 ---
 
 ### Corrected multifeature workflow
+
+The fast primary state workflow keeps Schaefer-400 resolution and uses nine
+features (FOOOF exponent/offset plus seven corrected-power bands); FOOOF R² is
+excluded. Prepare the memory-mappable tensor and deterministic circular-shift
+labels once, run the observed model, submit 100 permutation cells with ten
+permutations per cell, then aggregate:
+
+```bash
+invoke analysis.state-fast-prepare --analysis-root=<ROOT>
+invoke analysis.state-fast-run --analysis-root=<ROOT> --observed
+invoke analysis.state-fast-run --analysis-root=<ROOT> \
+  --batch-index=0 --permutations-per-job=10 --stage-local
+invoke analysis.state-fast-aggregate --analysis-root=<ROOT>
+```
+
+Each permutation is atomically checkpointed before the next one begins.
 
 The corrected workflow uses an immutable `mf-<UTC>-g<git>-c<config>` analysis
 ID, strict trial/spatial alignment, nested subject-grouped ridge logistic
@@ -1171,7 +1191,7 @@ scientific or styling changes that affect a map automatically render a new one.
 - Classification rows (B, H, J): single-epoch (`level-epoch`) + tmax + `cv-logo`.
 - Classification scoring metric is AUC (`roc_auc`); the loader warns if any input file was scored with something else.
 
-**Requires:** Both `analysis.stats` and `analysis.classify` must have been run for the chosen `--space` and `--trial-type` at the required granularity (raw + corrected PSD bands and the three FOOOF parameters).
+**Requires:** Both `analysis.stats` and `analysis.classify` must have been run for the chosen `--space` and `--trial-type` at the required granularity (raw + corrected PSD bands and the two analyzed FOOOF parameters). FOOOF R² is QC-only.
 
 **Arguments:**
 | Argument | Type | Default | Description |

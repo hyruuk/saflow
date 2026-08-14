@@ -15,6 +15,7 @@ from pathlib import Path
 from code.analysis.contracts import (
     FEATURE_MODULATION_FEATURES,
     CORRECTED_FEATURES,
+    MULTIFEATURE_FEATURES,
     PANEL_COMPONENTS,
     PANEL1_SLIDE_COMPONENTS,
     PANEL_SPECS,
@@ -87,7 +88,7 @@ def run_preflight(args: argparse.Namespace) -> Path:
         "primary_trial_set": "alltrials",
         "feature_families": {
             "feature_modulation": list(FEATURE_MODULATION_FEATURES),
-            "multifeature_decoding": list(CORRECTED_FEATURES),
+            "multifeature_decoding": list(MULTIFEATURE_FEATURES),
             "network_dynamics": list(CORRECTED_FEATURES),
         },
         "frequency_bands": frequency_band_manifest(),
@@ -751,7 +752,7 @@ def audit_analysis(args: argparse.Namespace) -> Path:
             / spec.get("composite_directory", "paper")
             / spec["composite_filename"]
         )
-        sidecar = composite.with_name(f"{composite.name}.json")
+        sidecar = composite.with_suffix(".json")
         for kind, path in (
             ("bundle", bundle),
             ("composite", composite),

@@ -46,8 +46,8 @@ A/B raw PSD, C–F raw/aperiodic/corrected spectra and summed-Gaussian FOOOF
 peak models, G/H FOOOF, and I/J
 corrected PSD. A map-only result is not considered render-ready and cannot be
 labeled as a real composite.
-FOOOF R² arrays remain part of the scientific bundle for QC but are not
-displayed in Panel 1. The saved manuscript layout uses the released space for
+FOOOF R² remains in extraction archives and validation summaries for QC, but
+is excluded from scientific analysis bundles and figures. The saved manuscript layout uses the released space for
 wider C–F spectra. Slide artifacts are independently composed 2560×1440
 figures; C–F are combined into a single logical decomposition-flow slide.
 The bundle stores both `equal_window` and `equal_run` subject-level map and

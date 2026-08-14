@@ -50,7 +50,7 @@ COMPLEXITY_VIZ_SKIP: set = set()
 FEATURE_SETS = {
     "psds": [f"psd_{b}" for b in BAND_ORDER],
     "psds_corrected": [f"psd_corrected_{b}" for b in BAND_ORDER],
-    "fooof": [f"fooof_{p}" for p in ("exponent", "offset", "r_squared")],
+    "fooof": [f"fooof_{p}" for p in ("exponent", "offset")],
     "complexity": [f"complexity_{m}" for m in COMPLEXITY_ORDER
                    if m not in COMPLEXITY_VIZ_SKIP],
 }

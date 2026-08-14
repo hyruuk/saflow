@@ -164,8 +164,8 @@ def test_scientific_arrays_use_feature_model_and_chunk_cells():
         stop_after="analyses",
     )
     cells = plan["node_cells"]
-    assert len(cells["feature_modulation_statistics"]) == 17
-    assert len(cells["feature_modulation_decoding_permutations"]) == 17
+    assert len(cells["feature_modulation_statistics"]) == 16
+    assert len(cells["feature_modulation_decoding_permutations"]) == 16
     assert cells["feature_modulation_decoding_permutations"][0]["chunk_indices"] == [0, 1]
     assert [cell["model"] for cell in cells["multifeature_decoding_models"]] == [
         "state",
@@ -174,7 +174,7 @@ def test_scientific_arrays_use_feature_model_and_chunk_cells():
     ]
     assert len(cells["multifeature_decoding_permutations"]) == 1
     assert cells["multifeature_decoding_permutations"][0]["chunk_indices"] == [0, 1, 2]
-    assert len(cells["network_factorial_modulation"]) == 10
+    assert len(cells["network_factorial_modulation"]) == 9
     assert all("subject" not in cell for cell in cells["network_coupling"])
 
 
@@ -339,7 +339,7 @@ def test_submission_wave_stays_below_rorqual_capacity():
     selected_nodes = {cell["node"] for cell in ready}
     assert "input_validation" in selected_nodes
     assert "run_preprocessing" in selected_nodes
-    assert len(ready) == 773
+    assert len(ready) == 762
 
 
 def test_submission_capacity_counts_existing_jobs_and_never_exceeds_900(
@@ -407,7 +407,7 @@ def test_four_subject_pipeline_fits_in_one_complete_submission():
     ready, deferred = _capacity_limited_wave(
         plan, list(plan["expected_outputs"]), capacity=900
     )
-    assert len(ready) == 269
+    assert len(ready) == 258
     assert not deferred
     assert {
         "feature_modulation_results",

@@ -115,6 +115,10 @@ def resolve_features(features):
     config = None
     resolved = []
     for tok in tokens:
+        if tok == "fooof_r_squared":
+            raise ValueError(
+                "fooof_r_squared is QC-only and cannot be used as an analysis feature"
+            )
         if tok in _FEATURE_SHORTCUTS:
             if config is None:
                 config = load_config()
@@ -3382,6 +3386,55 @@ def analysis_run(c, analysis_id, analysis_root=None, n_permutations=1000,
 
 
 @task
+def state_fast_prepare(c, analysis_root, n_permutations=1000,
+                       alpha="1.0", tolerance="0.0001", subjects=None, runs=None,
+                       config="config.yaml"):
+    """Materialize the nine-feature Schaefer-400 state tensor and null labels once."""
+    cmd = [
+        get_python_executable(config), "-m", "code.analysis.fast_state_workflow",
+        "prepare", "--analysis-root", analysis_root,
+        "--n-permutations", str(n_permutations), "--alpha", str(alpha),
+        "--tolerance", str(tolerance), "--config", config,
+    ]
+    if subjects:
+        cmd.extend(["--subjects", subjects])
+    if runs:
+        cmd.extend(["--runs", runs])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def state_fast_run(c, analysis_root, observed=False, batch_index=0,
+                   permutations_per_job=10, stage_local=False, skip_valid=True,
+                   config="config.yaml"):
+    """Run observed state LOSO or one checkpointed permutation batch."""
+    cmd = [
+        get_python_executable(config), "-m", "code.analysis.fast_state_workflow",
+        "run", "--analysis-root", analysis_root,
+        "--batch-index", str(batch_index), "--permutations-per-job",
+        str(permutations_per_job), "--config", config,
+    ]
+    if observed:
+        cmd.append("--observed")
+    if stage_local:
+        cmd.append("--stage-local")
+    if skip_valid:
+        cmd.append("--skip-valid")
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def state_fast_aggregate(c, analysis_root, config="config.yaml"):
+    """Validate all state permutations and compute the primary one-sided p-value."""
+    cmd = [
+        get_python_executable(config), "-m", "code.analysis.fast_state_workflow",
+        "aggregate", "--analysis-root", analysis_root,
+        "--config", config,
+    ]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def analysis_synthetic(c, output_dir="reports/synthetic/analysis", seed=42):
     """Run all three scientific workers with small schema-compatible data."""
     cmd = [
@@ -4201,6 +4254,9 @@ analysis.add_task(multifeature_legacy_inventory,
                   name="multifeature-legacy-inventory")
 analysis.add_task(analysis_preflight, name="preflight")
 analysis.add_task(analysis_run, name="run")
+analysis.add_task(state_fast_prepare, name="state-fast-prepare")
+analysis.add_task(state_fast_run, name="state-fast-run")
+analysis.add_task(state_fast_aggregate, name="state-fast-aggregate")
 analysis.add_task(analysis_synthetic, name="synthetic")
 analysis.add_task(analysis_execution_plan, name="execution-plan")
 analysis.add_task(analysis_export, name="export")

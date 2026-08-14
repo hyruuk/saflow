@@ -11,7 +11,11 @@ from typing import Any
 import numpy as np
 
 from code.analysis.chunks import derive_chunk_seed
-from code.analysis.contracts import FEATURE_MODULATION_FEATURES, CORRECTED_FEATURES
+from code.analysis.contracts import (
+    CORRECTED_FEATURES,
+    FEATURE_MODULATION_FEATURES,
+    MULTIFEATURE_FEATURES,
+)
 from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.observed_runner import _network_assignments
 from code.analysis.permutations import correct_decoding_families
@@ -211,14 +215,14 @@ def _aggregate_feature_modulation(
         "subject_periodic_spectrum_in": subject_periodic_in,
         "subject_periodic_spectrum_out": subject_periodic_out,
         "spectral_subject_order": np.unique(inputs.subjects),
-        "fooof_modulation": t_values[7:10],
-        "fooof_auc": auc[7:10],
-        "fooof_p_cluster": statistics_p_cluster[7:10],
-        "fooof_p_fdr": statistics_p_fdr[7:10],
-        "corrected_psd_modulation": t_values[10:],
-        "corrected_psd_auc": auc[10:],
-        "corrected_psd_p_cluster": statistics_p_cluster[10:],
-        "corrected_psd_p_fdr": statistics_p_fdr[10:],
+        "fooof_modulation": t_values[7:9],
+        "fooof_auc": auc[7:9],
+        "fooof_p_cluster": statistics_p_cluster[7:9],
+        "fooof_p_fdr": statistics_p_fdr[7:9],
+        "corrected_psd_modulation": t_values[9:],
+        "corrected_psd_auc": auc[9:],
+        "corrected_psd_p_cluster": statistics_p_cluster[9:],
+        "corrected_psd_p_fdr": statistics_p_fdr[9:],
         "decoding_p_tmax": np.stack(corrected),
         "confusion_matrices": np.stack(confusion),
         "parcel_order": np.asarray(inputs.parcel_order),
@@ -406,16 +410,16 @@ def _weighting_map_arrays(
     effect = np.stack([np.asarray(item["effect_size_dz"]).reshape(-1) for item in statistics])
     return {
         f"raw_psd_modulation_{suffix}": t_values[:7],
-        f"fooof_modulation_{suffix}": t_values[7:10],
-        f"corrected_psd_modulation_{suffix}": t_values[10:],
+        f"fooof_modulation_{suffix}": t_values[7:9],
+        f"corrected_psd_modulation_{suffix}": t_values[9:],
         f"raw_psd_p_cluster_{suffix}": cluster[:7],
-        f"fooof_p_cluster_{suffix}": cluster[7:10],
-        f"corrected_psd_p_cluster_{suffix}": cluster[10:],
+        f"fooof_p_cluster_{suffix}": cluster[7:9],
+        f"corrected_psd_p_cluster_{suffix}": cluster[9:],
         f"p_values_cluster_{suffix}": cluster,
         f"p_values_fdr_{suffix}": fdr,
         f"raw_psd_p_fdr_{suffix}": fdr[:7],
-        f"fooof_p_fdr_{suffix}": fdr[7:10],
-        f"corrected_psd_p_fdr_{suffix}": fdr[10:],
+        f"fooof_p_fdr_{suffix}": fdr[7:9],
+        f"corrected_psd_p_fdr_{suffix}": fdr[9:],
         f"effect_size_dz_{suffix}": effect,
     }
 
@@ -540,7 +544,7 @@ def _aggregate_multifeature_decoding(
     arrays.update(correct_decoding_families(arrays, valid_null))
     return arrays, {
         "model_order": list(model_order),
-        "feature_order": list(CORRECTED_FEATURES),
+        "feature_order": list(MULTIFEATURE_FEATURES),
         "permutation_inference": "synchronized max-statistic families",
         "decoding_permutations": total,
         "effective_synchronized_permutations": int(synchronized_valid.sum()),
@@ -585,7 +589,7 @@ def _aggregate_network_dynamics(
     analysis_dir: Path,
     args: argparse.Namespace,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-    """Combine ten feature-wise modulation and coupling results."""
+    """Combine nine feature-wise modulation and coupling results."""
     analysis_workflow = config.get("analysis_workflow", {})
     permutations = int(analysis_workflow.get("map_permutations", 10_000))
     base_seed = int(analysis_workflow.get("random_seed", 42))
@@ -624,19 +628,19 @@ def _aggregate_network_dynamics(
     )
     fooof_inference = _network_family_inference(
         modulation_contrasts,
-        slice(0, 3),
+        slice(0, 2),
         permutations=permutations,
         seed=base_seed,
     )
     corrected_inference = _network_family_inference(
         modulation_contrasts,
-        slice(3, 10),
+        slice(2, 9),
         permutations=permutations,
         seed=base_seed + 1,
     )
     coupling_inference = _network_family_inference(
         coupling_contrasts,
-        slice(0, 10),
+        slice(0, 9),
         permutations=permutations,
         seed=base_seed + 2,
     )

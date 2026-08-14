@@ -1,7 +1,12 @@
 """Tests for fixed-ridge Schaefer-400 state decoding."""
 
+import argparse
+import json
+
 import numpy as np
 
+from code.analysis.contracts import MULTIFEATURE_FEATURES
+from code.analysis.fast_state_workflow import aggregate, run_batch
 from code.classification.fast_state_scientific import (
     FixedRidgeConfig,
     fit_held_out_subject,
@@ -34,3 +39,45 @@ def test_fixed_ridge_rejects_nonpositive_penalty():
         assert "positive" in str(error)
     else:
         raise AssertionError("nonpositive ridge penalty was accepted")
+
+
+def test_multifeature_contract_excludes_fit_quality():
+    assert "fooof_r_squared" not in MULTIFEATURE_FEATURES
+    assert len(MULTIFEATURE_FEATURES) == 9
+
+
+def test_fast_workflow_checkpoints_and_aggregates(tmp_path):
+    generator = np.random.default_rng(8)
+    subjects = np.repeat(np.asarray(["01", "02", "03", "04"]), 24)
+    states = np.tile(np.repeat([-1, 1], 12), 4)
+    tensor = generator.normal(size=(len(states), 5, 9))
+    tensor[:, 0, 0] += (states == 1) * 1.5
+    analysis_directory = tmp_path / "main"
+    directory = analysis_directory / "fast_state"
+    directory.mkdir(parents=True)
+    (analysis_directory / "provenance.json").write_text(
+        json.dumps({"analysis_id": "analysis-test"})
+    )
+    np.save(directory / "features.npy", tensor.astype(np.float32))
+    np.save(directory / "subjects.npy", subjects)
+    np.save(directory / "observed_states.npy", states)
+    np.save(directory / "permuted_states.npy", np.stack([states, -states]))
+    (directory / "metadata.json").write_text(json.dumps({
+        "alpha": 1.0,
+        "tolerance": 1e-4,
+        "n_permutations": 2,
+    }))
+    common = {
+        "analysis_root": str(tmp_path),
+        "config": "config.yaml",
+        "stage_local": False,
+        "batch_index": 0,
+        "permutations_per_job": 2,
+        "skip_valid": True,
+    }
+    run_batch(argparse.Namespace(**common, observed=True))
+    run_batch(argparse.Namespace(**common, observed=False))
+    output = aggregate(argparse.Namespace(**common))
+    with np.load(output) as inference:
+        assert inference["null_auc"].shape == (2,)
+        assert 0 < float(inference["p_value"]) <= 1

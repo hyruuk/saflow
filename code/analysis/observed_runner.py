@@ -9,7 +9,11 @@ from typing import Any
 
 import numpy as np
 
-from code.analysis.contracts import FEATURE_MODULATION_FEATURES, CORRECTED_FEATURES
+from code.analysis.contracts import (
+    CORRECTED_FEATURES,
+    FEATURE_MODULATION_FEATURES,
+    MULTIFEATURE_FEATURES,
+)
 from code.analysis.decoding import DecodingConfig
 from code.analysis.real_inputs import AnalysisInputs, load_real_inputs
 from code.analysis.result_io import write_result_bundle
@@ -60,8 +64,11 @@ def _dispatch(
             ("state", "lapse_within_IN", "lapse_within_OUT"),
             "model",
         )
+        feature_indices = [
+            inputs.feature_order.index(feature) for feature in MULTIFEATURE_FEATURES
+        ]
         result = compute_multifeature_model(
-            inputs.feature_tensor,
+            inputs.feature_tensor[:, :, feature_indices],
             inputs.states,
             inputs.outcomes,
             inputs.subjects,
@@ -71,7 +78,7 @@ def _dispatch(
         result.update(
             {
                 "model": model,
-                "feature_order": CORRECTED_FEATURES,
+                "feature_order": MULTIFEATURE_FEATURES,
                 "parcel_order": inputs.parcel_order,
             }
         )
@@ -94,7 +101,7 @@ def _dispatch(
                 )
             ),
             # Authoritative synchronized families are recomputed only after
-            # all ten feature cells pass aggregation.
+            # all nine analysis-feature cells pass aggregation.
             "n_permutations": 1,
             "seed": int(analysis_workflow.get("random_seed", 42)) + index,
         }

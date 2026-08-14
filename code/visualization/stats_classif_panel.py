@@ -11,8 +11,8 @@ composites (left/right × lateral/medial):
     D  Aperiodic component                    IN vs OUT line plot
     E  Corrected spectrum (PSDc)              IN vs OUT line plot
     F  Periodic components                    IN vs OUT line plot
-    G  FOOOF t-values (exponent, offset, R²)  (3 spatial maps)
-    H  FOOOF AUC (exponent, offset, R²)       (3 spatial maps)
+    G  FOOOF t-values (exponent, offset)       (2 spatial maps)
+    H  FOOOF AUC (exponent, offset)            (2 spatial maps)
     I  Per-band t-values for corrected PSD    (7 spatial maps)
     J  Per-band AUC for corrected PSD         (7 spatial maps)
 
@@ -83,7 +83,7 @@ logger = logging.getLogger(__name__)
 
 
 BANDS = ["theta", "alpha", "lobeta", "hibeta", "gamma1", "gamma2", "gamma3"]
-FOOOF_PARAMS = ["exponent", "offset", "r_squared"]
+FOOOF_PARAMS = ["exponent", "offset"]
 
 COLOR_IN = "#1f77b4"
 COLOR_OUT = "#ff7f0e"

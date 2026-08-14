@@ -220,7 +220,7 @@ def _draw_composite(
     spatial_row(4, PANEL_NAMES[8], arrays["corrected_psd_modulation"],
                 _primary_p(arrays, "corrected_psd"), band_labels, False)
     spatial_row(5, PANEL_NAMES[9], arrays["corrected_psd_auc"],
-                arrays["decoding_p_tmax"][10:], band_labels, True)
+                arrays["decoding_p_tmax"][9:], band_labels, True)
     _stamp_groups(figure, groups)
     return figure, groups
 
@@ -349,7 +349,7 @@ def _write_slides(
          arrays["corrected_psd_modulation"], _primary_p(arrays, "corrected_psd"),
          bands, False),
         (7, PANEL_NAMES[9], "Decoding attentional state from corrected PSD",
-         arrays["corrected_psd_auc"], arrays["decoding_p_tmax"][10:], bands, True),
+         arrays["corrected_psd_auc"], arrays["decoding_p_tmax"][9:], bands, True),
     )
     outputs = [
         _write_spatial_slide(
@@ -638,7 +638,12 @@ def _metadata(metadata: dict[str, Any], directory: Path, output: Path,
 
 def _write_sidecar(path: Path, metadata: dict[str, Any]) -> None:
     """Write one JSON artifact sidecar."""
-    path.with_name(f"{path.name}.json").write_text(
+    sidecar = (
+        path.with_suffix(".json")
+        if metadata.get("component") == "composite"
+        else path.with_name(f"{path.name}.json")
+    )
+    sidecar.write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n"
     )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ BAND_ALIASES = {
     "low_gamma": "gamma1",
     "high_gamma": "gamma2",
 }
-FOOOF_FEATURES = ("fooof_exponent", "fooof_offset", "fooof_r_squared")
+FOOOF_FEATURES = ("fooof_exponent", "fooof_offset")
 CORRECTED_PSD_FEATURES = tuple(f"psd_corrected_{key}" for key in CANONICAL_BAND_KEYS)
 FEATURE_MODULATION_FEATURES = (
     *(f"psd_{key}" for key in CANONICAL_BAND_KEYS),
@@ -42,6 +42,17 @@ FEATURE_MODULATION_FEATURES = (
     *CORRECTED_PSD_FEATURES,
 )
 CORRECTED_FEATURES = (*FOOOF_FEATURES, *CORRECTED_PSD_FEATURES)
+MULTIFEATURE_FEATURES = tuple(
+    feature for feature in CORRECTED_FEATURES if feature != "fooof_r_squared"
+)
+FEATURE_DISPLAY_NAMES = {
+    "fooof_exponent": "FOOOF exponent",
+    "fooof_offset": "FOOOF offset",
+    **{
+        f"psd_corrected_{band.key}": f"Corrected {band.display_name}"
+        for band in CANONICAL_BANDS
+    },
+}
 PANEL_COMPONENTS = {
     "panel1": (
         "A_raw_PSD_modulation",
@@ -121,14 +132,14 @@ PANEL_SPECS = {
     },
     "panel2": {
         "composite_filename": "panel2_multifeature_decoding.png",
-        "composite_directory": "paper",
+        "composite_directory": "manuscript",
         "slide_directory": "panel2_multifeature_decoding",
         "layout": "three-model performance, feature reliance, and parcel reliance",
-        "features": CORRECTED_FEATURES,
+        "features": MULTIFEATURE_FEATURES,
     },
     "panel3": {
         "composite_filename": "panel3_network_dynamics.png",
-        "composite_directory": "paper",
+        "composite_directory": "manuscript",
         "slide_directory": "panel3_network_dynamics",
         "layout": "four-cell modulation, contrasts, and DMN-DAN coupling",
         "features": CORRECTED_FEATURES,

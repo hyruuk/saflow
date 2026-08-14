@@ -16,12 +16,18 @@ import numpy as np
 
 from code.analysis.contracts import (
     CANONICAL_BANDS,
+    CORRECTED_FEATURES,
+    FEATURE_DISPLAY_NAMES,
     PANEL_COMPONENTS,
     PANEL_SPECS,
     PANEL_ANALYSES,
     SCHEMA_VERSION,
 )
 from code.analysis.provenance import active_analysis_id, resolve_analysis_directory
+from code.utils.yeo_networks import YEO7_NETWORKS, network_display_name
+
+PANEL2_CAPTION = """Figure X. Multifeature decoding of attentional state and behavioral outcome. Models combined two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD bands across Schaefer parcels; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (A) Cross-validated performance for decoding IN versus OUT state, lapses versus correct responses within IN, and lapses versus correct responses within OUT. (B) Standalone-feature performance. (C) Held-out feature reliance, quantified as the change in AUC after feature disruption. (D) Parcel reliance for state decoding. (E) Parcel reliance for lapse decoding within IN. (F) Parcel reliance for lapse decoding within OUT. Inference used synchronized permutation maximum-statistic correction within prespecified model and reliance families. Subject-level performance summaries included {state_n}, {lapse_in_n}, and {lapse_out_n} participants for the state, lapse-within-IN, and lapse-within-OUT models, respectively.\n"""
+PANEL3_CAPTION = """Figure X. Network dynamics across attentional state and behavioral outcome. Neural features were summarized within the seven Yeo networks for four state-by-outcome cells (IN-correct, IN-lapse, OUT-correct, and OUT-lapse). (A) Four-cell network means for two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD features; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (B) State-by-outcome interaction effects. (C) Prespecified interaction and simple-effect contrasts. (D) Network-level summary of the feature effects. (E) Default-mode to dorsal-attention network coupling across the four cells. (F) Prespecified coupling contrasts. Primary inference used synchronized two-sided sign-flip maximum-|t| correction, separately across the FOOOF modulation family, corrected-PSD modulation family, and DMN-DAN coupling family. Simple effects are reported regardless of the interaction result. Complete-case analyses included {modulation_n} participants for modulation and {coupling_n} participants for coupling; secondary mixed-effects models used all available observations.\n"""
 
 COMPOSITE_DPI = 600
 SLIDE_DPI = 160
@@ -143,9 +149,9 @@ def _synthetic_arrays(
     frequency = np.linspace(2.0, 120.0, 240)
     baseline = -1.1 * np.log10(frequency) - 0.3
     common = {
-        "effects": generator.normal(0, 1, (10, 400)),
+        "effects": generator.normal(0, 1, (len(CORRECTED_FEATURES), 400)),
         "performance": np.clip(generator.normal(0.67, 0.06, (3, 16)), 0.5, 0.9),
-        "matrix": generator.normal(size=(7, 10)),
+        "matrix": generator.normal(size=(7, len(CORRECTED_FEATURES))),
         "frequency": frequency,
         "spectrum_in": baseline + generator.normal(0, 0.015, frequency.size),
         "spectrum_out": baseline - 0.04 + generator.normal(0, 0.015, frequency.size),
@@ -160,7 +166,10 @@ def _render_panel(
     components = PANEL_COMPONENTS[panel]
     plotters = [_component_plotter(panel, index) for index in range(len(components))]
     composite_path = (
-        context.reports_root / "figures" / "paper" / PANEL_SPECS[panel]["composite_filename"]
+        context.reports_root
+        / "figures"
+        / PANEL_SPECS[panel].get("composite_directory", "paper")
+        / PANEL_SPECS[panel]["composite_filename"]
     )
     figure, axes = _composite_canvas(panel, len(components))
     for index, (axis, title, plotter) in enumerate(zip(axes, components, plotters)):
@@ -169,6 +178,10 @@ def _render_panel(
         _watermark(axis, context.data_mode)
     figure.suptitle(_panel_title(panel), fontsize=11, fontweight="bold")
     _save_figure(figure, composite_path, context, panel, "composite", COMPOSITE_DPI)
+    if panel == "panel2":
+        _write_panel2_captions(composite_path, context)
+    elif panel == "panel3":
+        _write_panel3_captions(composite_path, context)
     plt.close(figure)
     outputs = [composite_path]
     slide_dir = (
@@ -191,6 +204,63 @@ def _render_panel(
         plt.close(standalone)
         outputs.extend((png_path, svg_path))
     return outputs
+
+
+def _write_panel2_captions(composite_path: Path, context: RenderContext) -> None:
+    """Write the Panel 2 caption beside manuscript and slide artifacts."""
+    counts = _panel2_subject_counts(context.analysis_dir)
+    caption = PANEL2_CAPTION.format(
+        state_n=counts.get("state", "N/A"),
+        lapse_in_n=counts.get("lapse_within_IN", "N/A"),
+        lapse_out_n=counts.get("lapse_within_OUT", "N/A"),
+    )
+    _write_captions(composite_path, context.reports_root, "panel2", caption)
+
+
+def _write_panel3_captions(composite_path: Path, context: RenderContext) -> None:
+    """Write the Panel 3 caption beside manuscript and slide artifacts."""
+    summary = _panel3_summary(context.analysis_dir)
+    caption = PANEL3_CAPTION.format(
+        modulation_n=summary.get("modulation_complete_subject_n", "N/A"),
+        coupling_n=summary.get("coupling_complete_subject_n", "N/A"),
+    )
+    _write_captions(composite_path, context.reports_root, "panel3", caption)
+
+
+def _write_captions(
+    composite_path: Path, reports_root: Path, panel: str, caption: str
+) -> None:
+    """Write one caption beside its composite and slide exports."""
+    composite_path.with_suffix(".txt").write_text(caption)
+    slide_caption = (
+        reports_root
+        / "figures"
+        / "slides"
+        / PANEL_SPECS[panel]["slide_directory"]
+        / f"{Path(PANEL_SPECS[panel]['composite_filename']).stem}.txt"
+    )
+    slide_caption.parent.mkdir(parents=True, exist_ok=True)
+    slide_caption.write_text(caption)
+
+
+def _panel2_subject_counts(analysis_dir: Path | None) -> dict[str, int]:
+    """Read per-model subject counts from the compact Panel 2 bundle."""
+    if analysis_dir is None:
+        return {}
+    archive = analysis_dir / PANEL_ANALYSES["panel2"] / "observed.npz"
+    with np.load(archive, allow_pickle=False) as arrays:
+        return {
+            model: int(arrays[f"subject_auc_{model}"].size)
+            for model in ("state", "lapse_within_IN", "lapse_within_OUT")
+        }
+
+
+def _panel3_summary(analysis_dir: Path | None) -> dict[str, Any]:
+    """Load sample-size metadata for the Panel 3 caption."""
+    if analysis_dir is None:
+        return {}
+    metadata = analysis_dir / PANEL_ANALYSES["panel3"] / "observed.json"
+    return json.loads(metadata.read_text()).get("summary", {})
 
 
 def _composite_canvas(panel: str, count: int) -> tuple[plt.Figure, list[plt.Axes]]:
@@ -403,8 +473,8 @@ def _panel1_p_values(
     p_values = np.asarray(decoding)
     slices = {
         "raw_psd_auc": slice(0, 7),
-        "fooof_auc": slice(7, 10),
-        "corrected_psd_auc": slice(10, 17),
+        "fooof_auc": slice(7, 9),
+        "corrected_psd_auc": slice(9, 16),
     }
     return p_values[slices[key]]
 
@@ -509,8 +579,18 @@ def _plot_map(axis: plt.Axes, arrays: dict[str, np.ndarray], index: int) -> None
 
 def _plot_matrix(axis: plt.Axes, arrays: dict[str, np.ndarray], index: int) -> None:
     source = np.asarray(arrays.get("matrix", _numeric(arrays, index))).ravel()
-    values = np.resize(source, 70).reshape(7, 10)
+    values = np.resize(source, 7 * len(CORRECTED_FEATURES)).reshape(
+        7, len(CORRECTED_FEATURES)
+    )
     image = axis.imshow(values, cmap="viridis", aspect="auto")
+    feature_labels = [FEATURE_DISPLAY_NAMES[name] for name in CORRECTED_FEATURES]
+    network_labels = [network_display_name(name) for name in YEO7_NETWORKS]
+    axis.set_xticks(np.arange(len(feature_labels)), feature_labels)
+    axis.set_yticks(np.arange(len(network_labels)), network_labels)
+    axis.tick_params(axis="x", labelrotation=45, labelsize=6)
+    axis.tick_params(axis="y", labelsize=6)
+    for label in axis.get_xticklabels():
+        label.set_horizontalalignment("right")
     axis.set_xlabel("Feature")
     axis.set_ylabel("Yeo network")
     axis.figure.colorbar(image, ax=axis, fraction=0.045, pad=0.02)
@@ -543,7 +623,7 @@ def _save_figure(
     dpi: int | None,
 ) -> None:
     """Protect real outputs and atomically replace only permitted figures."""
-    sidecar = path.with_name(f"{path.name}.json")
+    sidecar = _figure_sidecar(path, component)
     _assert_overwrite_allowed(path, sidecar, context.data_mode)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.stem}.{os.getpid()}{path.suffix}")
@@ -595,6 +675,13 @@ def _save_figure(
     temporary_sidecar = sidecar.with_name(f".{sidecar.name}.{os.getpid()}.partial")
     temporary_sidecar.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     temporary_sidecar.replace(sidecar)
+
+
+def _figure_sidecar(path: Path, component: str) -> Path:
+    """Use a clean composite JSON name while distinguishing slide formats."""
+    return path.with_suffix(".json") if component == "composite" else path.with_name(
+        f"{path.name}.json"
+    )
 
 
 def _assert_overwrite_allowed(path: Path, sidecar: Path, incoming: str) -> None:
