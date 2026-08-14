@@ -808,34 +808,30 @@ invoke analysis.classify-multifeature --axis=per-cell --space=schaefer_400 \
 
 ### Corrected multifeature workflow
 
-The fast primary state workflow keeps Schaefer-400 resolution and uses nine
-features (FOOOF exponent/offset plus seven corrected-power bands); FOOOF R² is
-excluded. Prepare the memory-mappable tensor and deterministic circular-shift
-labels once, run the observed model, submit 100 permutation cells with ten
-permutations per cell, then aggregate:
+The primary state workflow keeps Schaefer-400 resolution and uses nine features
+(FOOOF exponent/offset plus seven corrected-power bands); FOOOF R² is excluded.
+It prepares one memory-mappable tensor and deterministic circular-shift label
+matrix, then runs population LOSO, individual leave-one-run-out, their nulls,
+and feature/network reliance as separate resumable branches.
+
+Submit the complete dependency graph with one command:
 
 ```bash
-invoke analysis.state-fast-prepare --analysis-root=<ROOT>
-invoke analysis.state-fast-run --analysis-root=<ROOT> --observed
-invoke analysis.state-fast-run --analysis-root=<ROOT> \
-  --batch-index=0 --permutations-per-job=10 --stage-local
-invoke analysis.state-fast-aggregate --analysis-root=<ROOT>
-```
-
-Each permutation is atomically checkpointed before the next one begins.
-
-For SLURM, submit the complete dependency graph with one command:
-
-```bash
-invoke analysis.state-fast-submit --analysis-root=<ROOT> \
+invoke analysis.state-multifeature --slurm \
   --n-permutations=1000 --permutations-per-job=10 --array-throttle=25 \
   --account=def-pbellec
 ```
 
-This submits preparation first, observed and permutation-array jobs after it,
-and aggregation only after both branches succeed. Scripts and job IDs are
-recorded under `main/slurm/`; scheduler output goes to
+Without `--slurm`, the same task runs every stage sequentially on the local
+machine. With `--slurm`, preparation precedes six independent branches:
+population observed/null/reliance and within-subject observed/null/reliance.
+Aggregation starts only after all branches succeed. Every null permutation is
+checkpointed independently. Scripts and job IDs are recorded under
+`main/slurm/`; scheduler output goes to
 `logs/analysis_workflow/`.
+The analysis root defaults to
+`paths.data_root/processed/analysis_workflow.processed_directory` from the
+configuration; `--analysis-root` is only an explicit override.
 
 The corrected workflow uses an immutable `mf-<UTC>-g<git>-c<config>` analysis
 ID, strict trial/spatial alignment, nested subject-grouped ridge logistic

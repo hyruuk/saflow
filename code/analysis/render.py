@@ -26,7 +26,7 @@ from code.analysis.contracts import (
 from code.analysis.provenance import active_analysis_id, resolve_analysis_directory
 from code.utils.yeo_networks import YEO7_NETWORKS, network_display_name
 
-PANEL2_CAPTION = """Figure X. Multifeature decoding of attentional state and behavioral outcome. Models combined two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD bands across Schaefer parcels; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (A) Cross-validated performance for decoding IN versus OUT state, lapses versus correct responses within IN, and lapses versus correct responses within OUT. (B) Standalone-feature performance. (C) Held-out feature reliance, quantified as the change in AUC after feature disruption. (D) Parcel reliance for state decoding. (E) Parcel reliance for lapse decoding within IN. (F) Parcel reliance for lapse decoding within OUT. Inference used synchronized permutation maximum-statistic correction within prespecified model and reliance families. Subject-level performance summaries included {state_n}, {lapse_in_n}, and {lapse_out_n} participants for the state, lapse-within-IN, and lapse-within-OUT models, respectively.\n"""
+PANEL2_CAPTION = """Figure X. Trial-level multifeature decoding of IN versus OUT attentional state. Models combined FOOOF exponent and offset with seven aperiodic-corrected PSD bands across 400 Schaefer parcels; FOOOF R² was excluded. (A) Population leave-one-subject-out performance. (B) Individual leave-one-run-out performance. (C) Population-versus-individual performance comparison. (D) Held-out feature reliance. (E) Held-out Yeo-7 network reliance. (F) Feature-by-network reliance. State performance used run-wise circular VTC shifts; reliance used synchronized subject sign flips with separate maximum-statistic families. Population and individual summaries included {state_n} participants.\n"""
 PANEL3_CAPTION = """Figure X. Network dynamics across attentional state and behavioral outcome. Neural features were summarized within the seven Yeo networks for four state-by-outcome cells (IN-correct, IN-lapse, OUT-correct, and OUT-lapse). (A) Four-cell network means for two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD features; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (B) State-by-outcome interaction effects. (C) Prespecified interaction and simple-effect contrasts. (D) Network-level summary of the feature effects. (E) Default-mode to dorsal-attention network coupling across the four cells. (F) Prespecified coupling contrasts. Primary inference used synchronized two-sided sign-flip maximum-|t| correction, separately across the FOOOF modulation family, corrected-PSD modulation family, and DMN-DAN coupling family. Simple effects are reported regardless of the interaction result. Complete-case analyses included {modulation_n} participants for modulation and {coupling_n} participants for coupling; secondary mixed-effects models used all available observations.\n"""
 
 COMPOSITE_DPI = 600
@@ -211,8 +211,6 @@ def _write_panel2_captions(composite_path: Path, context: RenderContext) -> None
     counts = _panel2_subject_counts(context.analysis_dir)
     caption = PANEL2_CAPTION.format(
         state_n=counts.get("state", "N/A"),
-        lapse_in_n=counts.get("lapse_within_IN", "N/A"),
-        lapse_out_n=counts.get("lapse_within_OUT", "N/A"),
     )
     _write_captions(composite_path, context.reports_root, "panel2", caption)
 

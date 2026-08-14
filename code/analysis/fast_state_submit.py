@@ -18,6 +18,16 @@ from code.utils.config import load_config
 LOGGER = logging.getLogger(__name__)
 
 
+def _analysis_root(config: dict[str, Any], override: str | None) -> Path:
+    """Resolve the configured processed analysis root or an explicit override."""
+    if override:
+        return Path(override)
+    directory = config.get("analysis_workflow", {}).get(
+        "processed_directory", "analysis_workflow"
+    )
+    return Path(config["paths"]["data_root"]) / "processed" / directory
+
+
 def _resource(config: dict[str, Any], node: str, fallback: dict[str, Any]) -> dict[str, Any]:
     """Resolve one fast-state node resource request."""
     configured = config.get("analysis_workflow", {}).get("node_resources", {}).get(
@@ -65,7 +75,7 @@ def build_scripts(args: argparse.Namespace, config: dict[str, Any]) -> dict[str,
         raise ValueError("permutation counts must be positive")
     if args.array_throttle < 1:
         raise ValueError("array throttle must be positive")
-    analysis_root = Path(args.analysis_root)
+    analysis_root = _analysis_root(config, args.analysis_root)
     resolve_analysis_directory(analysis_root)
     project_root = Path.cwd().resolve()
     venv = Path(config["paths"]["venv"]).resolve()
@@ -195,7 +205,7 @@ def main() -> None:
     """Submit the complete workflow from the command line."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--analysis-root", required=True)
+    parser.add_argument("--analysis-root")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--n-permutations", type=int, default=1000)
     parser.add_argument("--permutations-per-job", type=int, default=10)

@@ -32,6 +32,7 @@ SLURM Support:
     - invoke pipeline.features.all --slurm --space=aparc.a2009s
 """
 
+import math
 import os
 import shlex
 import subprocess
@@ -3386,70 +3387,75 @@ def analysis_run(c, analysis_id, analysis_root=None, n_permutations=1000,
 
 
 @task
-def state_fast_prepare(c, analysis_root, n_permutations=1000,
-                       alpha="1.0", tolerance="0.0001", subjects=None, runs=None,
-                       config="config.yaml"):
-    """Materialize the nine-feature Schaefer-400 state tensor and null labels once."""
-    cmd = [
-        get_python_executable(config), "-m", "code.analysis.fast_state_workflow",
-        "prepare", "--analysis-root", analysis_root,
-        "--n-permutations", str(n_permutations), "--alpha", str(alpha),
-        "--tolerance", str(tolerance), "--config", config,
-    ]
-    if subjects:
-        cmd.extend(["--subjects", subjects])
-    if runs:
-        cmd.extend(["--runs", runs])
-    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
-
-
-@task
-def state_fast_run(c, analysis_root, observed=False, batch_index=0,
-                   permutations_per_job=10, stage_local=False, skip_valid=True,
-                   config="config.yaml"):
-    """Run observed state LOSO or one checkpointed permutation batch."""
-    cmd = [
-        get_python_executable(config), "-m", "code.analysis.fast_state_workflow",
-        "run", "--analysis-root", analysis_root,
-        "--batch-index", str(batch_index), "--permutations-per-job",
-        str(permutations_per_job), "--config", config,
-    ]
-    if observed:
-        cmd.append("--observed")
-    if stage_local:
-        cmd.append("--stage-local")
-    if skip_valid:
-        cmd.append("--skip-valid")
-    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
-
-
-@task
-def state_fast_aggregate(c, analysis_root, config="config.yaml"):
-    """Validate all state permutations and compute the primary one-sided p-value."""
-    cmd = [
-        get_python_executable(config), "-m", "code.analysis.fast_state_workflow",
-        "aggregate", "--analysis-root", analysis_root,
-        "--config", config,
-    ]
-    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
-
-
-@task
-def state_fast_submit(c, analysis_root, n_permutations=1000,
-                      permutations_per_job=10, array_throttle=25,
-                      alpha="1.0", tolerance="0.0001", account=None,
-                      config="config.yaml"):
-    """Submit preparation, observed, permutation, and aggregation dependencies."""
-    cmd = [
-        get_python_executable(config), "-m", "code.analysis.fast_state_submit",
-        "--analysis-root", analysis_root, "--n-permutations", str(n_permutations),
+def state_multifeature(c, slurm=False, n_permutations=1000,
+                       permutations_per_job=10,
+                       within_permutations_per_job=100,
+                       reliance_repeats=20, sign_flip_permutations=10000,
+                       array_throttle=25, subject_throttle=16,
+                       alpha="1.0", tolerance="0.0001", account=None,
+                       analysis_root=None, config="config.yaml"):
+    """Run population and within-subject state decoding and reliance."""
+    common = ["--config", config]
+    if analysis_root:
+        common.extend(["--analysis-root", analysis_root])
+    submission = [
+        get_python_executable(config), "-m",
+        "code.analysis.state_multifeature_submit",
+        *common,
+        "--n-permutations", str(n_permutations),
         "--permutations-per-job", str(permutations_per_job),
-        "--array-throttle", str(array_throttle), "--alpha", str(alpha),
-        "--tolerance", str(tolerance), "--config", config,
+        "--within-permutations-per-job", str(within_permutations_per_job),
+        "--reliance-repeats", str(reliance_repeats),
+        "--sign-flip-permutations", str(sign_flip_permutations),
+        "--array-throttle", str(array_throttle),
+        "--subject-throttle", str(subject_throttle),
+        "--alpha", str(alpha), "--tolerance", str(tolerance),
     ]
     if account:
-        cmd.extend(["--account", account])
-    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+        submission.extend(["--account", account])
+    if slurm:
+        c.run(shlex.join(submission), pty=True, env=get_env_with_pythonpath())
+        return
+    import yaml
+
+    configured = yaml.safe_load((PROJECT_ROOT / config).read_text())
+    subject_count = len(configured["bids"]["subjects"])
+    python = get_python_executable(config)
+    prepare = [
+        python, "-m", "code.analysis.state_multifeature_workflow", "prepare",
+        *common, "--n-permutations", str(n_permutations), "--alpha", str(alpha),
+        "--tolerance", str(tolerance), "--reliance-repeats", str(reliance_repeats),
+    ]
+    c.run(shlex.join(prepare), pty=True, env=get_env_with_pythonpath())
+    stages = [
+        [python, "-m", "code.analysis.state_multifeature_workflow", "population", *common, "--observed", "--skip-valid"],
+    ]
+    population_batches = math.ceil(int(n_permutations) / int(permutations_per_job))
+    stages.extend([
+        [python, "-m", "code.analysis.state_multifeature_workflow", "population", *common, "--batch-index", str(index), "--permutations-per-job", str(permutations_per_job), "--skip-valid"]
+        for index in range(population_batches)
+    ])
+    stages.extend([
+        [python, "-m", "code.analysis.state_multifeature_workflow", "within", *common, "--observed", "--cell-index", str(index), "--skip-valid"]
+        for index in range(subject_count)
+    ])
+    within_batches = math.ceil(int(n_permutations) / int(within_permutations_per_job))
+    stages.extend([
+        [python, "-m", "code.analysis.state_multifeature_workflow", "within", *common, "--cell-index", str(index), "--permutations-per-job", str(within_permutations_per_job), "--skip-valid"]
+        for index in range(subject_count * within_batches)
+    ])
+    for regime in ("population", "within_subject"):
+        stages.extend([
+            [python, "-m", "code.analysis.state_multifeature_workflow", "reliance", *common, "--regime", regime, "--cell-index", str(index), "--skip-valid"]
+            for index in range(subject_count)
+        ])
+    for command in stages:
+        c.run(shlex.join(command), pty=True, env=get_env_with_pythonpath())
+    aggregate = [
+        python, "-m", "code.analysis.state_multifeature_workflow", "aggregate",
+        *common, "--sign-flip-permutations", str(sign_flip_permutations),
+    ]
+    c.run(shlex.join(aggregate), pty=True, env=get_env_with_pythonpath())
 
 
 @task
@@ -4272,10 +4278,7 @@ analysis.add_task(multifeature_legacy_inventory,
                   name="multifeature-legacy-inventory")
 analysis.add_task(analysis_preflight, name="preflight")
 analysis.add_task(analysis_run, name="run")
-analysis.add_task(state_fast_prepare, name="state-fast-prepare")
-analysis.add_task(state_fast_run, name="state-fast-run")
-analysis.add_task(state_fast_aggregate, name="state-fast-aggregate")
-analysis.add_task(state_fast_submit, name="state-fast-submit")
+analysis.add_task(state_multifeature, name="state-multifeature")
 analysis.add_task(analysis_synthetic, name="synthetic")
 analysis.add_task(analysis_execution_plan, name="execution-plan")
 analysis.add_task(analysis_export, name="export")

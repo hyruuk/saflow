@@ -85,6 +85,67 @@ def fit_held_out_subject(
     }
 
 
+def fit_train_test(
+    features: np.ndarray,
+    labels: np.ndarray,
+    train: np.ndarray,
+    test: np.ndarray,
+    config: FixedRidgeConfig,
+) -> tuple[Pipeline, np.ndarray, float]:
+    """Fit one prespecified split and return estimator, scores, and AUC."""
+    feature_values = np.asarray(features, dtype=float)
+    label_values = np.asarray(labels, dtype=int)
+    if not train.any() or not test.any() or np.unique(label_values[train]).size != 2:
+        raise ValueError("train/test split lacks observations or training classes")
+    estimator = make_fixed_ridge(config)
+    estimator.fit(feature_values[train], label_values[train])
+    scores = np.asarray(estimator.decision_function(feature_values[test]), dtype=float)
+    auc = (
+        float(roc_auc_score(label_values[test], scores))
+        if np.unique(label_values[test]).size == 2
+        else float("nan")
+    )
+    return estimator, scores, auc
+
+
+def compute_grouped_reliance(
+    estimator: Pipeline,
+    features: np.ndarray,
+    labels: np.ndarray,
+    blocks: list[np.ndarray],
+    exchangeability_groups: np.ndarray,
+    *,
+    repeats: int,
+    seed: int,
+) -> np.ndarray:
+    """Measure held-out AUC decrease after within-group block shuffling."""
+    if repeats < 1:
+        raise ValueError("reliance repeats must be positive")
+    feature_values = np.asarray(features, dtype=float)
+    label_values = np.asarray(labels, dtype=int)
+    groups = np.asarray(exchangeability_groups)
+    transformed = estimator[:-1].transform(feature_values)
+    classifier = estimator[-1]
+    weights = np.asarray(classifier.coef_, dtype=float).reshape(-1)
+    baseline_scores = np.asarray(classifier.decision_function(transformed), dtype=float)
+    baseline = float(roc_auc_score(label_values, baseline_scores))
+    generator = np.random.default_rng(seed)
+    reliance = np.full((len(blocks), repeats), np.nan)
+    for block_index, columns in enumerate(blocks):
+        contribution = transformed[:, columns] @ weights[columns]
+        for repeat in range(repeats):
+            shuffled_contribution = contribution.copy()
+            for group in np.unique(groups):
+                selected = np.flatnonzero(groups == group)
+                shuffled_contribution[selected] = contribution[
+                    generator.permutation(selected)
+                ]
+            shuffled_scores = baseline_scores - contribution + shuffled_contribution
+            shuffled_auc = roc_auc_score(label_values, shuffled_scores)
+            reliance[block_index, repeat] = baseline - shuffled_auc
+    return reliance
+
+
 def pool_held_out_folds(folds: list[dict[str, object]]) -> dict[str, object]:
     """Combine disjoint held-out predictions into the primary pooled AUC."""
     if not folds:

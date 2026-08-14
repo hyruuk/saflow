@@ -50,9 +50,17 @@ leave-one-subject-out validation, training-only median imputation and scaling,
 and pooled held-out AUC. Run-wise circular VTC shifts provide the state null.
 Inputs are materialized once, each permutation is checkpointed independently,
 and no hyperparameter selection is repeated inside the null loop.
-The workflow writes to the canonical active `main/fast_state/` directory; a
+The workflow writes to the canonical active `main/multifeature_state/` directory; a
 fresh preparation replaces that branch after users archive any result they
 intend to retain.
+
+Population decoding uses outer leave-one-subject-out validation. Individual
+decoding uses leave-one-run-out validation independently for every subject.
+Both regimes use the same run-wise circular-shift null labels. Predictive
+reliance is computed without refitting by jointly shuffling held-out columns
+within run for nine feature blocks, seven Yeo-network blocks, and 63
+feature-by-network blocks. Synchronized subject sign flips and separate
+maximum-statistic families control feature, network, and cell-level reliance.
 
 The matched lapse-within-IN and lapse-within-OUT models are no longer part of
 the primary Panel 2 analysis.

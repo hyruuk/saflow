@@ -8,6 +8,13 @@ import numpy as np
 from code.analysis.contracts import MULTIFEATURE_FEATURES
 from code.analysis.fast_state_workflow import aggregate, run_batch
 from code.analysis.fast_state_submit import build_scripts
+from code.analysis.state_multifeature_submit import build_scripts as build_state_scripts
+from code.analysis.state_multifeature_workflow import (
+    aggregate as aggregate_state,
+    run_population,
+    run_reliance,
+    run_within,
+)
 from code.classification.fast_state_scientific import (
     FixedRidgeConfig,
     fit_held_out_subject,
@@ -85,18 +92,26 @@ def test_fast_workflow_checkpoints_and_aggregates(tmp_path):
 
 
 def test_fast_state_submission_builds_main_dependency_scripts(tmp_path):
-    main = tmp_path / "main"
-    main.mkdir()
+    analysis_root = tmp_path / "data" / "processed" / "panel_analysis"
+    main = analysis_root / "main"
+    main.mkdir(parents=True)
     (main / "provenance.json").write_text(
         json.dumps({"analysis_id": "analysis-test"})
     )
     config = {
-        "paths": {"venv": "env", "logs": str(tmp_path / "logs")},
+        "paths": {
+            "data_root": str(tmp_path / "data"),
+            "venv": "env",
+            "logs": str(tmp_path / "logs"),
+        },
         "computing": {"slurm": {"account": "def-pbellec"}},
-        "analysis_workflow": {"node_resources": {}},
+        "analysis_workflow": {
+            "processed_directory": "panel_analysis",
+            "node_resources": {},
+        },
     }
     arguments = argparse.Namespace(
-        analysis_root=str(tmp_path),
+        analysis_root=None,
         config="config.yaml",
         n_permutations=1000,
         permutations_per_job=10,
@@ -110,3 +125,83 @@ def test_fast_state_submission_builds_main_dependency_scripts(tmp_path):
     assert "#SBATCH --account=def-pbellec" in scripts["prepare"]
     assert "--analysis-id" not in "".join(scripts.values())
     assert "--stage-local" in scripts["permutations"]
+
+
+def test_state_multifeature_stages_and_aggregation(tmp_path):
+    analysis = tmp_path / "main"
+    directory = analysis / "multifeature_state"
+    prepared = directory / "prepared"
+    prepared.mkdir(parents=True)
+    (analysis / "provenance.json").write_text(
+        json.dumps({"analysis_id": "analysis-test"})
+    )
+    generator = np.random.default_rng(21)
+    subjects = np.repeat(np.asarray(["01", "02", "03", "04"]), 24)
+    runs = np.tile(np.repeat(["02", "03"], 12), 4)
+    states = np.tile(np.repeat([-1, 1], 6), 8)
+    features = generator.normal(size=(len(states), 7, 3)).astype(np.float32)
+    features[:, 0, 0] += (states == 1) * 1.5
+    np.save(prepared / "features.npy", features)
+    np.save(prepared / "subjects.npy", subjects)
+    np.save(prepared / "runs.npy", runs)
+    np.save(prepared / "observed_states.npy", states)
+    np.save(prepared / "permuted_states.npy", np.stack([states, -states]))
+    np.save(prepared / "network_assignments.npy", np.asarray([
+        "Vis", "SomMot", "DorsAttn", "SalVentAttn", "Limbic", "Cont", "Default"
+    ]))
+    metadata = {
+        "analysis_id": "analysis-test",
+        "shape": list(features.shape),
+        "feature_order": ["f1", "f2", "f3"],
+        "network_order": ["Vis", "SomMot", "DorsAttn", "SalVentAttn", "Limbic", "Cont", "Default"],
+        "subject_order": ["01", "02", "03", "04"],
+        "n_permutations": 2,
+        "alpha": 1.0,
+        "tolerance": 1e-4,
+        "reliance_repeats": 1,
+    }
+    (directory / "metadata.json").write_text(json.dumps(metadata))
+    common = {
+        "analysis_root": str(tmp_path), "config": "config.yaml",
+        "stage_local": False, "skip_valid": True,
+    }
+    run_population(argparse.Namespace(**common, observed=True, batch_index=0, permutations_per_job=2))
+    run_population(argparse.Namespace(**common, observed=False, batch_index=0, permutations_per_job=2))
+    for subject_index in range(4):
+        run_within(argparse.Namespace(**common, observed=True, cell_index=subject_index, permutations_per_job=1))
+        for cell_index in (subject_index * 2, subject_index * 2 + 1):
+            run_within(argparse.Namespace(**common, observed=False, cell_index=cell_index, permutations_per_job=1))
+        for regime in ("population", "within_subject"):
+            run_reliance(argparse.Namespace(**common, regime=regime, cell_index=subject_index))
+    output = aggregate_state(argparse.Namespace(**common, sign_flip_permutations=19))
+    with np.load(output) as result:
+        assert result["within_subject_auc"].shape == (4,)
+        assert result["population_feature_reliance"].shape == (4, 3)
+        assert result["within_subject_cell_reliance"].shape == (4, 21)
+
+
+def test_state_multifeature_submission_fans_out_independent_branches(tmp_path):
+    main = tmp_path / "data" / "processed" / "panel_analysis" / "main"
+    main.mkdir(parents=True)
+    (main / "provenance.json").write_text(json.dumps({"analysis_id": "analysis-test"}))
+    config = {
+        "paths": {"data_root": str(tmp_path / "data"), "venv": "env", "logs": str(tmp_path / "logs")},
+        "analysis_workflow": {"processed_directory": "panel_analysis", "node_resources": {}},
+        "computing": {"slurm": {"account": "def-pbellec"}},
+        "bids": {"subjects": ["01", "02", "03", "04"]},
+    }
+    arguments = argparse.Namespace(
+        analysis_root=None, config="config.yaml", n_permutations=1000,
+        permutations_per_job=10, within_permutations_per_job=100,
+        reliance_repeats=20, sign_flip_permutations=10000,
+        array_throttle=25, subject_throttle=4, alpha=1.0,
+        tolerance=1e-4, account="def-pbellec",
+    )
+    scripts = build_state_scripts(arguments, config)
+    assert set(scripts) == {
+        "prepare", "population_observed", "population_permutations",
+        "population_reliance", "within_observed", "within_permutations",
+        "within_reliance", "aggregate",
+    }
+    assert "#SBATCH --array=0-99%25" in scripts["population_permutations"]
+    assert "#SBATCH --array=0-39%25" in scripts["within_permutations"]

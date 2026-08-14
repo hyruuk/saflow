@@ -5,9 +5,11 @@
   and checkpoints every permutation. FOOOF R² is excluded from multifeature
   classification, leaving nine features and 3,600 predictors. Outputs resolve
   to the active `main/` analysis and are replaced by a fresh preparation unless
-  manually archived first. A single SLURM submission command now schedules
-  preparation, observed decoding, a throttled permutation array, and dependent
-  aggregation while journaling scripts and job IDs.
+  manually archived first.
+- Expanded state decoding into the unified `analysis.state-multifeature`
+  pipeline with separate population LOSO, individual leave-one-run-out,
+  circular-shift null, and held-out feature/network reliance branches. Removed
+  the public fast-state task and did not include target-subject fine-tuning.
 
 ## Unreleased
 

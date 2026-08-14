@@ -67,12 +67,12 @@ PANEL_COMPONENTS = {
         "J_corrected_PSD_decoding",
     ),
     "panel2": (
-        "A_model_performance",
-        "B_standalone_features",
-        "C_feature_reliance",
-        "D_state_parcels",
-        "E_lapse_in_parcels",
-        "F_lapse_out_parcels",
+        "A_population_performance",
+        "B_within_subject_performance",
+        "C_population_vs_individual",
+        "D_feature_reliance",
+        "E_network_reliance",
+        "F_feature_by_network_reliance",
     ),
     "panel3": (
         "A_four_cell_overview",
@@ -134,7 +134,7 @@ PANEL_SPECS = {
         "composite_filename": "panel2_multifeature_decoding.png",
         "composite_directory": "manuscript",
         "slide_directory": "panel2_multifeature_decoding",
-        "layout": "three-model performance, feature reliance, and parcel reliance",
+        "layout": "population and individual state decoding with feature/network reliance",
         "features": MULTIFEATURE_FEATURES,
     },
     "panel3": {

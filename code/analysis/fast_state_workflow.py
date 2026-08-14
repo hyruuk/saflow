@@ -28,9 +28,21 @@ from code.utils.config import load_config
 LOGGER = logging.getLogger(__name__)
 
 
-def _active_analysis(analysis_root: str) -> tuple[Path, str, dict]:
+def _analysis_root(config: dict, override: str | None) -> Path:
+    """Resolve the configured processed analysis root or an explicit override."""
+    if override:
+        return Path(override)
+    directory = config.get("analysis_workflow", {}).get(
+        "processed_directory", "analysis_workflow"
+    )
+    return Path(config["paths"]["data_root"]) / "processed" / directory
+
+
+def _active_analysis(
+    config: dict, analysis_root: str | None
+) -> tuple[Path, str, dict]:
     """Resolve the canonical main analysis and its internal provenance ID."""
-    analysis_directory = resolve_analysis_directory(Path(analysis_root))
+    analysis_directory = resolve_analysis_directory(_analysis_root(config, analysis_root))
     provenance = json.loads((analysis_directory / "provenance.json").read_text())
     analysis_id = str(provenance.get("analysis_id", ""))
     if not analysis_id:
@@ -50,7 +62,7 @@ def prepare(args: argparse.Namespace) -> Path:
     """Load source files once and materialize immutable state-decoding inputs."""
     config = load_config(args.config)
     analysis_directory, analysis_id, analysis_provenance = _active_analysis(
-        args.analysis_root
+        config, args.analysis_root
     )
     directory = analysis_directory / "fast_state"
     if directory.exists():
@@ -142,7 +154,8 @@ def _fit_states(
 
 def run_batch(args: argparse.Namespace) -> Path:
     """Run observed state decoding or one checkpointed permutation batch."""
-    analysis_directory, _, _ = _active_analysis(args.analysis_root)
+    config = load_config(args.config)
+    analysis_directory, _, _ = _active_analysis(config, args.analysis_root)
     directory = analysis_directory / "fast_state"
     metadata, arrays = _load_prepared(directory, args.stage_local)
     features = np.load(arrays / "features.npy", mmap_mode="r")
@@ -185,7 +198,8 @@ def _write_result(path: Path, result: dict[str, object]) -> None:
 
 def aggregate(args: argparse.Namespace) -> Path:
     """Validate complete permutation coverage and compute the primary p-value."""
-    analysis_directory, _, _ = _active_analysis(args.analysis_root)
+    config = load_config(args.config)
+    analysis_directory, _, _ = _active_analysis(config, args.analysis_root)
     directory = analysis_directory / "fast_state"
     metadata = json.loads((directory / "metadata.json").read_text())
     with np.load(directory / "observed.npz", allow_pickle=False) as observed:
@@ -215,7 +229,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--analysis-root", required=True)
+    common.add_argument("--analysis-root")
     common.add_argument("--config", default="config.yaml")
     prepare_parser = subparsers.add_parser("prepare", parents=[common])
     prepare_parser.add_argument("--subjects")

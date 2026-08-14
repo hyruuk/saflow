@@ -32,7 +32,7 @@ def test_synthetic_panel_writes_watermarked_composite_and_exact_slide_exports(
         / "figures"
         / "slides"
         / "panel2_multifeature_decoding"
-        / "01_A_model_performance.png"
+        / "01_A_population_performance.png"
     )
     svg = slide.with_suffix(".svg")
     assert composite in outputs
