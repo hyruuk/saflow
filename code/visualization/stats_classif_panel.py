@@ -332,7 +332,8 @@ def _mean_sem(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
                    arr_out: np.ndarray, show_legend: bool = False,
                    logx: bool = True, axhline_zero: bool = False,
-                   ax_delta=None):
+                   ax_delta=None, in_linestyle: str = "-",
+                   out_linestyle: str = "-"):
     # With a single subject (n_rows < 2) the SEM is undefined — just draw
     # the line. ddof=1 with n=1 would emit a RuntimeWarning and fill_between
     # would silently no-op on NaN bands.
@@ -340,8 +341,10 @@ def _plot_spectrum(ax, freqs: np.ndarray, arr_in: np.ndarray,
     mean_in, sem_in = _mean_sem(arr_in)
     mean_out, sem_out = _mean_sem(arr_out)
 
-    ax.plot(freqs, mean_in,  color=COLOR_IN,  lw=1.2, label="IN")
-    ax.plot(freqs, mean_out, color=COLOR_OUT, lw=1.2, label="OUT")
+    ax.plot(freqs, mean_in, color=COLOR_IN, lw=1.2,
+            linestyle=in_linestyle, label="IN", zorder=3)
+    ax.plot(freqs, mean_out, color=COLOR_OUT, lw=1.2,
+            linestyle=out_linestyle, label="OUT", zorder=2)
     if not single:
         ax.fill_between(freqs, mean_in  - sem_in,  mean_in  + sem_in,
                         color=COLOR_IN,  alpha=0.22, lw=0)

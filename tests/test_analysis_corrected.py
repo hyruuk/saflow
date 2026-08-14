@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from PIL import Image
 
 from code.analysis.alignment import (
     build_alignment_keys,
@@ -43,10 +44,18 @@ from code.analysis.provenance import (
     initialize,
     resolve_analysis_directory,
 )
-from code.analysis.aggregate_runner import _subject_selected_spectra
+from code.analysis.aggregate_runner import (
+    _fit_periodic_spectra,
+    _subject_selected_spectra,
+)
 from code.analysis.real_inputs import RunLabelContext
 from code.analysis.observed_runner import _subject_state_means
-from code.visualization.panel1_bundle import PANEL_NAMES, _select_weighting, _spectral_rows
+from code.visualization.panel1_bundle import (
+    PANEL_NAMES,
+    _select_weighting,
+    _spectral_rows,
+    _write_slides,
+)
 
 
 def test_reflected_filter_is_boundary_safe():
@@ -236,7 +245,7 @@ def test_panel1_spectral_pairs_share_main_and_difference_y_axes():
         arrays[f"{prefix}spectrum_in"] = baseline
         arrays[f"{prefix}spectrum_out"] = baseline - 0.1
     figure = plt.figure()
-    groups = _spectral_rows(figure, figure.add_gridspec(6, 8), arrays)
+    groups = _spectral_rows(figure, figure.add_gridspec(6, 16), arrays)
     for left, right in ((PANEL_NAMES[2], PANEL_NAMES[3]),
                         (PANEL_NAMES[4], PANEL_NAMES[5])):
         assert groups[left][0].get_shared_y_axes().joined(
@@ -245,6 +254,10 @@ def test_panel1_spectral_pairs_share_main_and_difference_y_axes():
         assert groups[left][1].get_shared_y_axes().joined(
             groups[left][1], groups[right][1]
         )
+    for name in PANEL_NAMES[2:6]:
+        condition_lines = groups[name][0].lines[:2]
+        assert condition_lines[0].get_linestyle() == "--"
+        assert condition_lines[1].get_linestyle() == "-"
     plt.close(figure)
 
 
@@ -260,6 +273,72 @@ def test_panel1_defaults_to_equal_window_and_can_select_equal_run():
     assert _select_weighting(arrays, metadata, "equal_run")[
         "raw_psd_modulation"
     ] == 2.0
+
+
+def test_panel1_periodic_spectra_are_modeled_peak_fits(monkeypatch):
+    class FakeModel:
+        def __init__(self, **parameters):
+            self.parameters = parameters
+
+        def fit(self, frequencies, powers, *, freq_range):
+            self.frequencies = frequencies
+            self.powers = powers
+            self.frequency_range = freq_range
+
+    monkeypatch.setattr(
+        "code.analysis.aggregate_runner.load_spectral_model",
+        lambda: FakeModel,
+    )
+    monkeypatch.setattr(
+        "code.analysis.aggregate_runner.get_peak_fit",
+        lambda model: np.asarray([0.1, 0.3, 0.1]),
+    )
+    modeled = _fit_periodic_spectra(
+        np.asarray([1.0, 2.0, 3.0, 4.0, 5.0]),
+        np.log10(np.asarray([[2.0, 3.0, 4.0, 5.0, 6.0]])),
+        {"features": {"fooof": [{"freq_range": [2.0, 4.0]}]}},
+    )
+    np.testing.assert_allclose(modeled[0, 1:4], [0.1, 0.3, 0.1])
+    assert np.isnan(modeled[0, [0, 4]]).all()
+
+
+def test_panel1_slide_exports_are_native_and_combine_spectral_progression(tmp_path):
+    frequency = np.linspace(2.0, 120.0, 20)
+    arrays = {
+        "frequency": frequency,
+        "raw_psd_modulation": np.ones((7, 4)),
+        "raw_psd_auc": np.full((7, 4), 0.52),
+        "fooof_modulation": np.ones((3, 4)),
+        "fooof_auc": np.full((3, 4), 0.52),
+        "corrected_psd_modulation": np.ones((7, 4)),
+        "corrected_psd_auc": np.full((7, 4), 0.52),
+        "raw_psd_p_fdr": np.ones((7, 4)),
+        "fooof_p_fdr": np.ones((3, 4)),
+        "corrected_psd_p_fdr": np.ones((7, 4)),
+        "decoding_p_tmax": np.ones((17, 4)),
+    }
+    baseline = -np.log10(frequency)
+    for prefix in ("", "aperiodic_", "corrected_", "periodic_"):
+        arrays[f"{prefix}spectrum_in"] = baseline
+        arrays[f"{prefix}spectrum_out"] = baseline - 0.1
+    groups = {}
+    for name, count in (
+        (PANEL_NAMES[0], 7), (PANEL_NAMES[1], 7),
+        (PANEL_NAMES[6], 2), (PANEL_NAMES[7], 2),
+        (PANEL_NAMES[8], 7), (PANEL_NAMES[9], 7),
+    ):
+        figure, axes = plt.subplots(1, count)
+        for axis in np.atleast_1d(axes):
+            axis.imshow(np.ones((20, 30, 3)))
+        groups[name] = np.atleast_1d(axes).tolist()
+        plt.close(figure)
+    outputs = _write_slides(
+        arrays, groups, tmp_path,
+        {"weighting": "equal_window", "map_correction": "FDR"},
+    )
+    assert len(outputs) == 7
+    assert outputs[2].name == "03_C-F_spectral_decomposition.png"
+    assert Image.open(outputs[0]).size == (2560, 1440)
 
 
 def test_band_and_feature_contract_excludes_delta():

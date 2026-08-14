@@ -15,7 +15,7 @@ invoke analysis.execution-plan --analysis-id=analysis-... [--subjects="04 05"] \
 invoke pipeline.all [--analysis-root=PATH] [--force] [--analyses="..."]
 invoke pipeline.resume [--analysis-root=PATH]
 invoke analysis.export --analysis-root=PATH
-invoke viz.panel1-legacy [--analysis-root=PATH] \
+invoke viz.panel1 [--analysis-root=PATH] \
   [--weighting=equal_window|equal_run]
 ```
 
@@ -343,15 +343,16 @@ and pooled across runs before estimating one subject/cell correlation.
 
 ### `invoke viz.panels`
 
-Render one or all panels from complete real bundles, otherwise use protected
-watermarked synthetic data.
+Render Panel 2, Panel 3, or both from complete real bundles, otherwise use
+protected watermarked synthetic data. Panel 1 has one dedicated canonical
+renderer: `invoke viz.panel1`.
 
 ```bash
 invoke viz.panels --panel=all
 invoke viz.panels --panel=panel2 --analysis-id=analysis-...
 ```
 
-Paper composites are written at 600 DPI under `reports/figures/paper/`.
+Panel 2/3 composites are written at 600 DPI under `reports/figures/paper/`.
 Standalone white-background 2560×1440 PNG and editable SVG components are
 written under `reports/figures/slides/`. Every artifact has a JSON sidecar.
 Synthetic rendering cannot overwrite real output.
@@ -1142,15 +1143,25 @@ A single composite figure with letter labels A–J:
 | C | Raw spectrum (PSD) — IN vs OUT line plot |
 | D | Aperiodic component — IN vs OUT line plot |
 | E | Corrected spectrum (PSDc) — IN vs OUT line plot |
-| F | Periodic components — IN vs OUT line plot |
-| G | FOOOF t-values (exponent, offset, R²) (3 spatial maps) |
-| H | FOOOF AUC (exponent, offset, R²) (3 spatial maps) |
+| F | Modeled periodic component (summed FOOOF Gaussian peaks) — IN vs OUT |
+| G | FOOOF t-values (exponent and offset; R² retained as QC but not plotted) |
+| H | FOOOF AUC (exponent and offset; R² retained as QC but not plotted) |
 | I | Per-band t-values for corrected PSD (7 spatial maps) |
 | J | Per-band AUC for corrected PSD (7 spatial maps) |
 
 For `--space=sensor`, the spatial panels are MNE topomaps; for an atlas space (e.g. `schaefer_400`, `aparc.a2009s`) they become 2×2 inflated-brain composites (left/right × lateral/medial), drawn with `aspect="equal"` so they aren't squeezed. When a panel has zero significant parcels, the cortical surface is still rendered (no overlay) instead of falling back to a "no data" placeholder. Each spatial panel's xlabel reports the band/parameter and the number of significant units (e.g. `Theta (4–8Hz) · n=12 sig`).
 
-Significance is computed within each spatial map independently per feature — never pooled across bands or metrics. The spectral lines (C–F) are picked at the sensor/region with the largest |t| on the FOOOF-exponent map.
+Significance is computed within each spatial map independently per feature —
+never pooled across bands or metrics. C–F pool parcels in the significant
+FOOOF-exponent cluster map for the selected weighting, falling back to the
+maximum-|t| exponent parcel only when no cluster survives correction.
+
+Panel 1 slide exports are native 2560×1440 figures, not manuscript crops.
+Seven-band map families use a presentation-scale 4+3 layout; FOOOF slides
+show two large exponent/offset maps. C–F share one self-contained spectral
+decomposition slide showing the separately fitted aperiodic and summed-Gaussian
+periodic components, and the empirical corrected spectrum obtained as original
+minus aperiodic, with explanatory arrows and legends.
 
 **Default mixes analysis modes:**
 - Stats rows (A, G, I): subject-level pooled-mean (`level-average`) + FDR.

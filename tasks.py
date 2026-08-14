@@ -3502,7 +3502,7 @@ def viz_panels(
 
 
 @task
-def panel1_legacy(
+def panel1(
     c, bundle_directory=None, analysis_root=None, reports_root="reports",
     weighting="equal_window", config="config.yaml",
 ):
@@ -4221,7 +4221,7 @@ viz.add_task(spectra)
 viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
 viz.add_task(viz_panels, name="panels")
-viz.add_task(panel1_legacy, name="panel1-legacy")
+viz.add_task(panel1, name="panel1")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

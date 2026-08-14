@@ -16,7 +16,7 @@ invoke pipeline.all --slurm                   # submit to Rorqual
 invoke pipeline.all --slurm --analyses=feature_modulation \
   --start-at=analyses --stop-after=analyses  # Panel 1 analysis only
 invoke pipeline.resume --slurm
-invoke viz.panel1-legacy
+invoke viz.panel1
 ```
 
 `pipeline.all` creates the active analysis on its first run and reuses valid
@@ -44,9 +44,14 @@ The statistical definitions are summarized in
 
 Feature modulation stores both equal-window and equal-run subject summaries.
 Equal-window weighting is the primary/default Panel 1 view; use
-`invoke viz.panel1-legacy --weighting=equal_run` for the sensitivity view.
+`invoke viz.panel1 --weighting=equal_run` for the sensitivity view.
 Modulation maps use Schaefer-adjacency cluster-mass permutation FWER
 correction; BH-FDR maps are retained as sensitivity outputs.
+The manuscript Panel 1 omits FOOOF R² maps (R² remains available as QC),
+using the space to widen C–F. Panel F shows the summed Gaussian peak models
+fitted by specparam/FOOOF rather than a thresholded corrected spectrum. Slide
+outputs are separately composed native
+16:9 figures with large map grids and a combined spectral-decomposition flow.
 
 Corrected BIDS enrichment is run-wise and provenance-aware:
 
@@ -453,8 +458,11 @@ invoke pipeline.all --slurm --subjects="08 09 10 11"
 
 # pipeline.resume is reserved for genuinely failed or corrupt cells.
 
-# Render protected synthetic prototypes or complete real bundles
+# Render protected Panel 2/3 prototypes or complete real bundles
 invoke viz.panels --panel=all
+
+# Render the sole canonical real-data Panel 1
+invoke viz.panel1
 
 # Preview or submit only invalid cells in an immutable analysis
 invoke pipeline.resume --slurm --analysis-id=analysis-... --dry-run

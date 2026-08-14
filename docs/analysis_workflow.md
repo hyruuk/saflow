@@ -116,7 +116,8 @@ directory, avoiding shared home-directory lock contention.
 
 ### Rendering and replacement safety
 
-`viz.panels` checks all requested compact observed bundles. If any are missing
+`viz.panels` covers Panel 2/3 and checks their requested compact observed
+bundles. Panel 1 is rendered only by `viz.panel1`. If any Panel 2/3 bundles are missing
 or are not explicitly marked `data_mode: real`, the requested render uses
 schema-compatible deterministic synthetic arrays and watermarks every subplot.
 Synthetic figures may replace only synthetic figures. A real render may

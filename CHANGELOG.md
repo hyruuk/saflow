@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Distinguish overlapping Panel 1 spectral conditions with dashed blue IN
+  curves and solid orange OUT curves in manuscript and slide renderings.
+- Replace the thresholded corrected-spectrum proxy in Panel 1F with genuine
+  participant-level summed Gaussian peak fits from specparam/FOOOF.
+- Replace Panel 1 manuscript-crop slides with self-contained native 16:9
+  layouts, including large 4+3 band-map grids and a combined C–F spectral
+  decomposition flow. Retain FOOOF R² as QC but omit its G/H maps, using the
+  manuscript space to widen the spectral panels.
 - Restore cluster-mass permutation FWER correction as the primary Panel 1
   modulation inference, retaining BH-FDR maps as sensitivity results. Compute
   both equal-window (primary) and equal-run weighting variants, including
@@ -9,8 +17,8 @@
 - Restored the legacy paired spectral scaling in Panel 1: C/D now share their
   main and OUT-minus-IN y axes, as do E/F.
 
-- Restore the established Panel 1 manuscript layout through a corrected-bundle
-  compatibility adapter, including standalone slide crops. Future compact
+- Restore the established Panel 1 manuscript layout as the sole canonical
+  renderer. Future compact
   feature-modulation bundles retain selected subject spectra for exact SEM
   ribbons without exporting subject feature matrices.
 - Store the active corrected workflow under `processed/.../main`, reuse valid

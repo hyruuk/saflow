@@ -16,6 +16,7 @@ from code.analysis.contracts import (
     FEATURE_MODULATION_FEATURES,
     CORRECTED_FEATURES,
     PANEL_COMPONENTS,
+    PANEL1_SLIDE_COMPONENTS,
     PANEL_SPECS,
     PANEL_ANALYSES,
     frequency_band_manifest,
@@ -766,7 +767,10 @@ def audit_analysis(args: argparse.Namespace) -> Path:
                     {"panel": panel, "kind": "sidecar", "status": "wrong_analysis_id"}
                 )
         slide_directory = reports_root / "figures" / "slides" / spec["slide_directory"]
-        for index, component in enumerate(PANEL_COMPONENTS[panel], start=1):
+        components = (
+            PANEL1_SLIDE_COMPONENTS if panel == "panel1" else PANEL_COMPONENTS[panel]
+        )
+        for index, component in enumerate(components, start=1):
             stem = f"{index:02d}_{component}"
             suffixes = (".png",) if panel == "panel1" else (".png", ".svg")
             for suffix in suffixes:

@@ -17,7 +17,6 @@ import numpy as np
 from code.analysis.contracts import (
     CANONICAL_BANDS,
     PANEL_COMPONENTS,
-    FEATURE_MODULATION_RENDER_ARRAYS,
     PANEL_SPECS,
     PANEL_ANALYSES,
     SCHEMA_VERSION,
@@ -51,9 +50,13 @@ def render_panels(
     reports_root: Path,
 ) -> list[Path]:
     """Render requested real panels or protected synthetic fallbacks."""
-    selected = tuple(PANEL_SPECS) if panel == "all" else (panel,)
-    if any(name not in PANEL_SPECS for name in selected):
-        raise ValueError(f"panel must be all or one of {tuple(PANEL_SPECS)}")
+    available = ("panel2", "panel3")
+    selected = available if panel == "all" else (panel,)
+    if any(name not in available for name in selected):
+        raise ValueError(
+            "generic rendering supports panel2, panel3, or all; "
+            "render the canonical Panel 1 with `invoke viz.panel1`"
+        )
     if analysis_root is not None:
         resolved_id = analysis_id or active_analysis_id(analysis_root)
         analysis_dir = resolve_analysis_directory(analysis_root, resolved_id)
@@ -127,7 +130,7 @@ def _validate_render_arrays(
     panel: str, arrays: dict[str, np.ndarray]
 ) -> None:
     """Reject real bundles that are complete scientifically but not render-ready."""
-    required = FEATURE_MODULATION_RENDER_ARRAYS if panel == "panel1" else ()
+    required: tuple[str, ...] = ()
     missing = sorted(set(required) - arrays.keys())
     if missing:
         raise ValueError(f"real {panel} bundle lacks render-ready arrays: {missing}")
@@ -147,31 +150,6 @@ def _synthetic_arrays(
         "spectrum_in": baseline + generator.normal(0, 0.015, frequency.size),
         "spectrum_out": baseline - 0.04 + generator.normal(0, 0.015, frequency.size),
     }
-    if panel == "panel1":
-        corrected_in = common["spectrum_in"] - baseline
-        corrected_out = common["spectrum_out"] - (baseline - 0.04)
-        common.update(
-            {
-                "raw_psd_modulation": generator.normal(0, 1, (7, 400)),
-                "raw_psd_auc": np.clip(
-                    generator.normal(0.64, 0.05, (7, 400)), 0.5, 0.85
-                ),
-                "fooof_modulation": generator.normal(0, 1, (3, 400)),
-                "fooof_auc": np.clip(
-                    generator.normal(0.65, 0.05, (3, 400)), 0.5, 0.85
-                ),
-                "corrected_psd_modulation": generator.normal(0, 1, (7, 400)),
-                "corrected_psd_auc": np.clip(
-                    generator.normal(0.63, 0.05, (7, 400)), 0.5, 0.85
-                ),
-                "aperiodic_spectrum_in": baseline,
-                "aperiodic_spectrum_out": baseline - 0.04,
-                "corrected_spectrum_in": corrected_in,
-                "corrected_spectrum_out": corrected_out,
-                "periodic_spectrum_in": np.maximum(corrected_in, 0),
-                "periodic_spectrum_out": np.maximum(corrected_out, 0),
-            }
-        )
     return common
 
 
@@ -217,33 +195,12 @@ def _render_panel(
 
 def _composite_canvas(panel: str, count: int) -> tuple[plt.Figure, list[plt.Axes]]:
     """Create the focused publication geometry for one panel."""
-    if panel == "panel1":
-        figure = plt.figure(figsize=(13.5, 15.5), constrained_layout=True)
-        grid = figure.add_gridspec(
-            6,
-            8,
-            width_ratios=(1, 1, 1, 1, 1, 1, 1, 0.08),
-            height_ratios=(1, 1, 1.05, 1.05, 1, 1),
-        )
-        axes = [
-            figure.add_subplot(grid[0, :7]),
-            figure.add_subplot(grid[1, :7]),
-            figure.add_subplot(grid[2, 0:2]),
-            figure.add_subplot(grid[2, 2:4]),
-            figure.add_subplot(grid[3, 0:2]),
-            figure.add_subplot(grid[3, 2:4]),
-            figure.add_subplot(grid[2, 4:7]),
-            figure.add_subplot(grid[3, 4:7]),
-            figure.add_subplot(grid[4, :7]),
-            figure.add_subplot(grid[5, :7]),
-        ]
-        return figure, axes
-    columns = 5 if panel == "panel1" else 3
+    columns = 3
     rows = int(np.ceil(count / columns))
     figure, grid = plt.subplots(
         rows,
         columns,
-        figsize=(12.0 if panel == "panel1" else 10.5, 3.4 * rows),
+        figsize=(10.5, 3.4 * rows),
         constrained_layout=True,
         facecolor="white",
     )
@@ -257,8 +214,6 @@ def _component_plotter(
     panel: str, index: int
 ) -> Callable[[plt.Axes, dict[str, np.ndarray], int], None]:
     """Select a deterministic plot primitive for one narrative component."""
-    if panel == "panel1":
-        return _PANEL1_PLOTTERS[index]
     kinds = {
         "panel2": ("bar", "error", "error", "map", "map", "map"),
         "panel3": ("matrix", "map", "error", "matrix", "line", "error"),

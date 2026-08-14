@@ -11,7 +11,7 @@ from code.visualization.panel1_bundle import render_bundle
 
 
 def main() -> None:
-    """Render legacy-layout Panel 1 and the current Panel 2/3 layouts."""
+    """Render the canonical Panel 1 and the current Panel 2/3 layouts."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--analysis-root", type=Path, required=True)
     parser.add_argument("--analysis-id")

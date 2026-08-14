@@ -27,6 +27,7 @@ from code.analysis.workers import (
 from code.analysis.result_io import read_result_bundle
 from code.analysis.provenance import resolve_analysis_directory
 from code.utils.config import load_config
+from code.utils.specparam_compat import get_peak_fit, load_spectral_model
 
 
 def aggregate_analysis(args: argparse.Namespace) -> Path:
@@ -179,10 +180,14 @@ def _aggregate_feature_modulation(
     )
     equal_run_spectra = _selected_spectral_variants(
         inputs, equal_run_selected, equal_run_aperiodic_in,
-        equal_run_aperiodic_out, "equal_run"
+        equal_run_aperiodic_out, "equal_run", config
     )
-    subject_periodic_in = np.maximum(subject_corrected_in, 0)
-    subject_periodic_out = np.maximum(subject_corrected_out, 0)
+    subject_periodic_in = _fit_periodic_spectra(
+        inputs.frequencies, subject_raw_in, config
+    )
+    subject_periodic_out = _fit_periodic_spectra(
+        inputs.frequencies, subject_raw_out, config
+    )
     arrays = {
         "raw_psd_modulation": t_values[:7],
         "raw_psd_auc": auc[:7],
@@ -195,12 +200,8 @@ def _aggregate_feature_modulation(
         "aperiodic_spectrum_out": np.nanmean(subject_aperiodic_out, axis=0),
         "corrected_spectrum_in": np.nanmean(subject_corrected_in, axis=0),
         "corrected_spectrum_out": np.nanmean(subject_corrected_out, axis=0),
-        "periodic_spectrum_in": np.maximum(
-            np.nanmean(subject_corrected_in, axis=0), 0
-        ),
-        "periodic_spectrum_out": np.maximum(
-            np.nanmean(subject_corrected_out, axis=0), 0
-        ),
+        "periodic_spectrum_in": np.nanmean(subject_periodic_in, axis=0),
+        "periodic_spectrum_out": np.nanmean(subject_periodic_out, axis=0),
         "subject_spectrum_in": subject_raw_in,
         "subject_spectrum_out": subject_raw_out,
         "subject_aperiodic_spectrum_in": subject_aperiodic_in,
@@ -250,6 +251,9 @@ def _aggregate_feature_modulation(
         "spectral_selection_parcel_indices": selected_parcels.tolist(),
         "spectral_selection_rule_equal_run": equal_run_selection_rule,
         "spectral_selection_parcel_indices_equal_run": equal_run_selected.tolist(),
+        "periodic_spectrum_definition": (
+            "participant-level summed Gaussian peak fit from specparam/FOOOF"
+        ),
     }
     return arrays, summary
 
@@ -298,7 +302,7 @@ def _subject_selected_spectra(
 
 def _selected_spectral_variants(
     inputs: AnalysisInputs, selected: np.ndarray, aperiodic_in: np.ndarray,
-    aperiodic_out: np.ndarray, weighting: str,
+    aperiodic_out: np.ndarray, weighting: str, config: dict[str, Any],
 ) -> dict[str, np.ndarray]:
     """Build one complete selected-spectrum payload for a weighting rule."""
     raw_in = _subject_selected_spectra(
@@ -323,14 +327,20 @@ def _selected_spectral_variants(
         inputs.corrected_spectrum_out, selected, inputs,
         state="OUT", weighting=weighting,
     )
-    return _spectral_payload(raw_in, raw_out, ap_in, ap_out, corrected_in, corrected_out)
+    return _spectral_payload(
+        raw_in, raw_out, ap_in, ap_out, corrected_in, corrected_out,
+        inputs.frequencies, config,
+    )
 
 
 def _spectral_payload(
     raw_in: np.ndarray, raw_out: np.ndarray, ap_in: np.ndarray,
     ap_out: np.ndarray, corrected_in: np.ndarray, corrected_out: np.ndarray,
+    frequencies: np.ndarray, config: dict[str, Any],
 ) -> dict[str, np.ndarray]:
-    """Return group and subject spectral arrays for one weighting rule."""
+    """Return empirical and modeled spectra for one weighting rule."""
+    periodic_in = _fit_periodic_spectra(frequencies, raw_in, config)
+    periodic_out = _fit_periodic_spectra(frequencies, raw_out, config)
     return {
         "spectrum_in": np.nanmean(raw_in, axis=0),
         "spectrum_out": np.nanmean(raw_out, axis=0),
@@ -338,17 +348,52 @@ def _spectral_payload(
         "aperiodic_spectrum_out": np.nanmean(ap_out, axis=0),
         "corrected_spectrum_in": np.nanmean(corrected_in, axis=0),
         "corrected_spectrum_out": np.nanmean(corrected_out, axis=0),
-        "periodic_spectrum_in": np.maximum(np.nanmean(corrected_in, axis=0), 0),
-        "periodic_spectrum_out": np.maximum(np.nanmean(corrected_out, axis=0), 0),
+        "periodic_spectrum_in": np.nanmean(periodic_in, axis=0),
+        "periodic_spectrum_out": np.nanmean(periodic_out, axis=0),
         "subject_spectrum_in": raw_in,
         "subject_spectrum_out": raw_out,
         "subject_aperiodic_spectrum_in": ap_in,
         "subject_aperiodic_spectrum_out": ap_out,
         "subject_corrected_spectrum_in": corrected_in,
         "subject_corrected_spectrum_out": corrected_out,
-        "subject_periodic_spectrum_in": np.maximum(corrected_in, 0),
-        "subject_periodic_spectrum_out": np.maximum(corrected_out, 0),
+        "subject_periodic_spectrum_in": periodic_in,
+        "subject_periodic_spectrum_out": periodic_out,
     }
+
+
+def _fit_periodic_spectra(
+    frequencies: np.ndarray,
+    log_spectra: np.ndarray,
+    config: dict[str, Any],
+) -> np.ndarray:
+    """Fit and align summed Gaussian peak models for participant spectra."""
+    fooof_config = config.get("features", {}).get("fooof", [{}])
+    parameters = fooof_config[0] if isinstance(fooof_config, list) else fooof_config
+    frequency_range = parameters.get("freq_range", [2.0, 40.0])
+    model_class = load_spectral_model()
+    modeled = np.full(np.asarray(log_spectra).shape, np.nan, dtype=float)
+    fit_mask = (
+        (frequencies >= float(frequency_range[0]))
+        & (frequencies <= float(frequency_range[1]))
+    )
+    for subject_index, log_spectrum in enumerate(log_spectra):
+        model = model_class(
+            peak_width_limits=parameters.get("peak_width_limits", [1, 8]),
+            max_n_peaks=parameters.get("max_n_peaks", 4),
+            min_peak_height=parameters.get("min_peak_height", 0.10),
+            peak_threshold=parameters.get("peak_threshold", 2.0),
+            aperiodic_mode=parameters.get("aperiodic_mode", "fixed"),
+            verbose=False,
+        )
+        model.fit(
+            frequencies, np.power(10.0, log_spectrum),
+            freq_range=frequency_range,
+        )
+        peak_fit = get_peak_fit(model)
+        if peak_fit.shape != (int(fit_mask.sum()),):
+            raise ValueError("FOOOF peak model does not align with its fit range")
+        modeled[subject_index, fit_mask] = peak_fit
+    return modeled
 
 
 def _weighting_map_arrays(

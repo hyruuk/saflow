@@ -56,37 +56,9 @@ def test_synthetic_cannot_overwrite_real_but_real_can_replace_synthetic(
         _assert_overwrite_allowed(figure, sidecar, "real")
 
 
-def test_real_mode_requires_complete_real_bundle(tmp_path: Path):
-    analysis_root = tmp_path / "analyses"
-    bundle = analysis_root / "analysis-1" / "feature_modulation"
-    bundle.mkdir(parents=True)
-    frequency = np.linspace(2, 120, 24)
-    np.savez_compressed(
-        bundle / "observed.npz",
-        raw_psd_modulation=np.ones((7, 40)),
-        raw_psd_auc=np.full((7, 40), 0.6),
-        frequency=frequency,
-        spectrum_in=-np.log10(frequency),
-        spectrum_out=-np.log10(frequency) - 0.02,
-        aperiodic_spectrum_in=-np.log10(frequency),
-        aperiodic_spectrum_out=-np.log10(frequency) - 0.02,
-        corrected_spectrum_in=np.zeros_like(frequency),
-        corrected_spectrum_out=np.zeros_like(frequency),
-        periodic_spectrum_in=np.zeros_like(frequency),
-        periodic_spectrum_out=np.zeros_like(frequency),
-        fooof_modulation=np.ones((3, 40)),
-        fooof_auc=np.full((3, 40), 0.6),
-        corrected_psd_modulation=np.ones((7, 40)),
-        corrected_psd_auc=np.full((7, 40), 0.6),
-    )
-    (bundle / "observed.json").write_text(
-        '{"provenance": {"data_mode": "real"}}'
-    )
-    outputs = render_panels(
-        panel="panel1",
-        analysis_id="analysis-1",
-        analysis_root=analysis_root,
-        reports_root=tmp_path / "reports",
-    )
-    sidecar = outputs[0].with_name(f"{outputs[0].name}.json")
-    assert json.loads(sidecar.read_text())["data_mode"] == "real"
+def test_generic_renderer_rejects_panel1_alternate():
+    with pytest.raises(ValueError, match="invoke viz.panel1"):
+        render_panels(
+            panel="panel1", analysis_id=None, analysis_root=None,
+            reports_root=Path("reports"),
+        )

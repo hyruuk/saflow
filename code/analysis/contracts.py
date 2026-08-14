@@ -72,6 +72,15 @@ PANEL_COMPONENTS = {
         "F_coupling_contrasts",
     ),
 }
+PANEL1_SLIDE_COMPONENTS = (
+    "A_raw_PSD_modulation",
+    "B_raw_PSD_decoding",
+    "C-F_spectral_decomposition",
+    "G_FOOOF_modulation",
+    "H_FOOOF_decoding",
+    "I_corrected_PSD_modulation",
+    "J_corrected_PSD_decoding",
+)
 FEATURE_MODULATION_RENDER_ARRAYS = (
     "raw_psd_modulation",
     "raw_psd_auc",
@@ -107,7 +116,7 @@ PANEL_SPECS = {
         "composite_filename": "panel1_feature_modulation.png",
         "composite_directory": "manuscript",
         "slide_directory": "panel1_feature_modulation",
-        "layout": "A-J preserved feature-modulation and spectral narrative",
+        "layout": "A-J feature-modulation narrative; exponent/offset maps and widened C-F spectra",
         "features": FEATURE_MODULATION_FEATURES,
     },
     "panel2": {
