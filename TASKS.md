@@ -1162,6 +1162,9 @@ show two large exponent/offset maps. C–F share one self-contained spectral
 decomposition slide showing the separately fitted aperiodic and summed-Gaussian
 periodic components, and the empirical corrected spectrum obtained as original
 minus aperiodic, with explanatory arrows and legends.
+Rendered cortical rasters are cached under `reports/.cache/panel1_surface/`;
+cache keys include map values, masks, atlas, colormap, and color limits, so
+scientific or styling changes that affect a map automatically render a new one.
 
 **Default mixes analysis modes:**
 - Stats rows (A, G, I): subject-level pooled-mean (`level-average`) + FDR.

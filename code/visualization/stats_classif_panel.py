@@ -40,6 +40,7 @@ Output: reports/figures/stats_classif_panel_space-<space>_type-<trial>_correctio
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import warnings
@@ -253,7 +254,8 @@ def _plot_topomap(ax, values: np.ndarray, mask: Optional[np.ndarray],
 
 def _plot_brain(ax, values: np.ndarray, mask: Optional[np.ndarray],
                 roi_names: List[str], atlas_name: str, fsaverage: dict,
-                vmin: float, vmax: float, cmap: str):
+                vmin: float, vmax: float, cmap: str,
+                cache_directory: Optional[Path] = None):
     """Render a 2x2 inflated-brain composite into an existing axes.
 
     Significance masking is applied by NaN-ing non-significant ROIs before
@@ -277,6 +279,16 @@ def _plot_brain(ax, values: np.ndarray, mask: Optional[np.ndarray],
     vals = np.asarray(values, dtype=float).copy()
     if mask is not None:
         vals[~np.asarray(mask, dtype=bool)] = np.nan
+
+    cache_path = _brain_cache_path(
+        cache_directory, vals, roi_names, atlas_name, vmin, vmax, cmap
+    )
+    if cache_path is not None and cache_path.exists():
+        from PIL import Image
+
+        composite = np.asarray(Image.open(cache_path).convert("RGB"))
+        _show_brain_composite(ax, composite)
+        return None
 
     lh_data, rh_data = roi_to_surface(vals, roi_names, atlas_name)
 
@@ -314,12 +326,37 @@ def _plot_brain(ax, values: np.ndarray, mask: Optional[np.ndarray],
         bot = np.concatenate([bot, pad], axis=1)
     composite = np.concatenate([top, bot], axis=0)
 
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(composite).save(cache_path)
+
+    _show_brain_composite(ax, composite)
+    return None
+
+
+def _brain_cache_path(
+    directory: Optional[Path], values: np.ndarray, roi_names: List[str],
+    atlas_name: str, vmin: float, vmax: float, cmap: str,
+) -> Optional[Path]:
+    """Return a content-addressed cache path for one final brain raster."""
+    if directory is None:
+        return None
+    digest = hashlib.sha256()
+    digest.update(b"inflated-brain-raster-v1")
+    digest.update(np.asarray(values, dtype=np.float64).tobytes())
+    digest.update("\0".join(roi_names).encode())
+    digest.update(f"{atlas_name}|{vmin:.12g}|{vmax:.12g}|{cmap}".encode())
+    return Path(directory) / f"{digest.hexdigest()}.png"
+
+
+def _show_brain_composite(ax, composite: np.ndarray) -> None:
+    """Place one cached or freshly rendered brain raster on an axis."""
+
     ax.imshow(composite, interpolation="bilinear", aspect="equal")
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
-    return None
 
 
 def _mean_sem(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

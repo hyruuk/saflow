@@ -6,6 +6,8 @@
   curves and solid orange OUT curves in manuscript and slide renderings.
 - Replace the thresholded corrected-spectrum proxy in Panel 1F with genuine
   participant-level summed Gaussian peak fits from specparam/FOOOF.
+- Cache content-addressed Panel 1 cortical rasters so unchanged maps are reused
+  when adjusting spectra, typography, captions, or layout.
 - Replace Panel 1 manuscript-crop slides with self-contained native 16:9
   layouts, including large 4+3 band-map grids and a combined C–F spectral
   decomposition flow. Retain FOOOF R² as QC but omit its G/H maps, using the

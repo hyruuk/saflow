@@ -56,6 +56,7 @@ from code.visualization.panel1_bundle import (
     _spectral_rows,
     _write_slides,
 )
+from code.visualization.stats_classif_panel import _plot_brain
 
 
 def test_reflected_filter_is_boundary_safe():
@@ -300,6 +301,32 @@ def test_panel1_periodic_spectra_are_modeled_peak_fits(monkeypatch):
     )
     np.testing.assert_allclose(modeled[0, 1:4], [0.1, 0.3, 0.1])
     assert np.isnan(modeled[0, [0, 4]]).all()
+
+
+def test_brain_raster_cache_reuses_identical_map(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "code.visualization.plot_surface.roi_to_surface",
+        lambda values, names, atlas: (values, values),
+    )
+
+    def fake_render(*args, **kwargs):
+        calls.append((args[2], args[3]))
+        return np.full((12, 16, 3), 127, dtype=np.uint8)
+
+    monkeypatch.setattr(
+        "code.visualization.plot_surface.render_inflated_view", fake_render
+    )
+    figure, axes = plt.subplots(1, 2)
+    arguments = (
+        np.asarray([1.0, 2.0]), np.asarray([True, False]),
+        ["parcel-lh", "parcel-rh"], "schaefer_400", {}, -3.0, 3.0, "RdBu_r",
+    )
+    _plot_brain(axes[0], *arguments, cache_directory=tmp_path)
+    _plot_brain(axes[1], *arguments, cache_directory=tmp_path)
+    assert len(calls) == 4
+    assert len(list(tmp_path.glob("*.png"))) == 1
+    plt.close(figure)
 
 
 def test_panel1_slide_exports_are_native_and_combine_spectral_progression(tmp_path):

@@ -50,7 +50,8 @@ def render_bundle(
     """Render one real corrected bundle using the established A--J design."""
     arrays, metadata = _load_bundle(bundle_directory)
     arrays = _select_weighting(arrays, metadata, weighting)
-    figure, groups = _draw_composite(arrays, metadata)
+    cache_directory = reports_root / ".cache" / "panel1_surface"
+    figure, groups = _draw_composite(arrays, metadata, cache_directory)
     output = reports_root / "figures" / "manuscript" / output_name
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=300, bbox_inches="tight", facecolor="white")
@@ -158,7 +159,8 @@ def _select_weighting(
 
 
 def _draw_composite(
-    arrays: dict[str, np.ndarray], metadata: dict[str, Any]
+    arrays: dict[str, np.ndarray], metadata: dict[str, Any],
+    cache_directory: Path | None = None,
 ) -> tuple[plt.Figure, dict[str, list[plt.Axes]]]:
     """Draw the legacy six-row composition from corrected bundle arrays."""
     figure = plt.figure(figsize=(14.7, 13.0), dpi=150, facecolor="white")
@@ -197,7 +199,8 @@ def _draw_composite(
             axis = figure.add_subplot(grid[row, column:column + 2])
             mask = p_values[index] < 0.05
             _plot_brain(axis, values[index], mask, parcel_order,
-                        "schaefer_400", fsaverage, value_min, value_max, color_map)
+                        "schaefer_400", fsaverage, value_min, value_max, color_map,
+                        cache_directory=cache_directory)
             axis.set_xlabel(f"{label}\n(n={int(mask.sum())} sig)", fontsize=8.5)
             axes.append(axis)
         color_axis = figure.add_subplot(grid[row, 14:16])
