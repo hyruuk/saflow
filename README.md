@@ -512,6 +512,8 @@ multifeature inference uses the immutable corrected workflow:
 The primary Panel 2 endpoint is fixed-ridge IN/OUT decoding at Schaefer-400
 resolution. It excludes FOOOF R², prepares the aligned tensor once, and saves
 every circular-shift permutation independently so timed-out jobs are resumable.
+Submit its complete preparation → observed/permutation → aggregation graph with
+`invoke analysis.state-fast-submit --analysis-root=<ROOT>`.
 
 ```bash
 invoke analysis.multifeature-preflight --features=all --space=sensor

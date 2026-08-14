@@ -225,7 +225,11 @@ def main() -> None:
     prepare_parser.add_argument("--tolerance", type=float, default=1e-4)
     run_parser = subparsers.add_parser("run", parents=[common])
     run_parser.add_argument("--observed", action="store_true")
-    run_parser.add_argument("--batch-index", type=int, default=0)
+    run_parser.add_argument(
+        "--batch-index",
+        type=int,
+        default=int(os.environ.get("SLURM_ARRAY_TASK_ID", "0")),
+    )
     run_parser.add_argument("--permutations-per-job", type=int, default=10)
     run_parser.add_argument("--stage-local", action="store_true")
     run_parser.add_argument("--skip-valid", action="store_true")

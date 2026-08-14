@@ -3435,6 +3435,24 @@ def state_fast_aggregate(c, analysis_root, config="config.yaml"):
 
 
 @task
+def state_fast_submit(c, analysis_root, n_permutations=1000,
+                      permutations_per_job=10, array_throttle=25,
+                      alpha="1.0", tolerance="0.0001", account=None,
+                      config="config.yaml"):
+    """Submit preparation, observed, permutation, and aggregation dependencies."""
+    cmd = [
+        get_python_executable(config), "-m", "code.analysis.fast_state_submit",
+        "--analysis-root", analysis_root, "--n-permutations", str(n_permutations),
+        "--permutations-per-job", str(permutations_per_job),
+        "--array-throttle", str(array_throttle), "--alpha", str(alpha),
+        "--tolerance", str(tolerance), "--config", config,
+    ]
+    if account:
+        cmd.extend(["--account", account])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def analysis_synthetic(c, output_dir="reports/synthetic/analysis", seed=42):
     """Run all three scientific workers with small schema-compatible data."""
     cmd = [
@@ -4257,6 +4275,7 @@ analysis.add_task(analysis_run, name="run")
 analysis.add_task(state_fast_prepare, name="state-fast-prepare")
 analysis.add_task(state_fast_run, name="state-fast-run")
 analysis.add_task(state_fast_aggregate, name="state-fast-aggregate")
+analysis.add_task(state_fast_submit, name="state-fast-submit")
 analysis.add_task(analysis_synthetic, name="synthetic")
 analysis.add_task(analysis_execution_plan, name="execution-plan")
 analysis.add_task(analysis_export, name="export")

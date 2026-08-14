@@ -824,6 +824,19 @@ invoke analysis.state-fast-aggregate --analysis-root=<ROOT>
 
 Each permutation is atomically checkpointed before the next one begins.
 
+For SLURM, submit the complete dependency graph with one command:
+
+```bash
+invoke analysis.state-fast-submit --analysis-root=<ROOT> \
+  --n-permutations=1000 --permutations-per-job=10 --array-throttle=25 \
+  --account=def-pbellec
+```
+
+This submits preparation first, observed and permutation-array jobs after it,
+and aggregation only after both branches succeed. Scripts and job IDs are
+recorded under `main/slurm/`; scheduler output goes to
+`logs/analysis_workflow/`.
+
 The corrected workflow uses an immutable `mf-<UTC>-g<git>-c<config>` analysis
 ID, strict trial/spatial alignment, nested subject-grouped ridge logistic
 regression, training-only scaling, and within-subject permutations.
