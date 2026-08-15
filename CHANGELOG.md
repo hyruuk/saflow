@@ -1,5 +1,13 @@
 # Changelog
 
+- Publish the completed fixed-ridge state multifeature inference as the
+  canonical Panel 2 bundle, and render its population, individual, and held-out
+  feature/network reliance results directly instead of expecting the retired
+  three-target decoding schema.
+- Allow a targeted execution plan to resolve the active `main/` analysis,
+  select analysis branches and stage bounds, and archive the preceding plan;
+  this supports sequential Panel 1/3 recovery without replacing valid results.
+
 - Replaced the timed-out primary multifeature state decoder with a fixed-ridge,
   Schaefer-400 workflow that materializes inputs once, stages arrays locally,
   and checkpoints every permutation. FOOOF R² is excluded from multifeature
@@ -16,6 +24,10 @@
 - Exclude FOOOF R² from all canonical statistical, decoding, multifeature, and
   network analyses while retaining it in extraction outputs as fit-quality QC.
   Panel 2/3 analysis bundles now contain nine features.
+
+- Redesign Panel 3 around the factorial interaction: complete network-feature
+  and coupling heatmaps, four-cell callout profiles, and bootstrap effect-size
+  intervals replace the generic plotting primitives.
 
 - Label Panel 3 matrices with canonical Yeo-7 network names and readable
   feature names.

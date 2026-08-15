@@ -11,6 +11,8 @@ invoke analysis.preflight [--analysis-root=PATH] [--force]
   [--subjects="04 05"] [--runs="02 03"]
 invoke analysis.execution-plan --analysis-id=analysis-... [--subjects="04 05"] \
   [--runs="02 03"] [--spaces="sensor schaefer_400"] \
+  [--analyses="feature_modulation network_dynamics"] \
+  [--start-at=analyses] [--stop-after=analyses] \
   [--no-include-exploratory]
 invoke pipeline.all [--analysis-root=PATH] [--force] [--analyses="..."]
 invoke pipeline.resume [--analysis-root=PATH]
@@ -18,6 +20,11 @@ invoke analysis.export --analysis-root=PATH
 invoke viz.panel1 [--analysis-root=PATH] \
   [--weighting=equal_window|equal_run]
 ```
+
+`invoke analysis.state-multifeature --slurm` publishes its completed inference
+to the canonical `multifeature_decoding/observed.*` Panel 2 bundle during the
+aggregate job. Rerunning only that aggregate command is safe when all upstream
+population, within-subject, permutation, and reliance files already exist.
 
 `alltrials` is feature-modulation confirmatory; broad `correct` and `lapse` selectors are
 exploratory. The feature-modulation analysis includes raw PSD, FOOOF, and
@@ -355,6 +362,9 @@ invoke viz.panels --panel=panel2 --analysis-id=analysis-...
 Final Panel 2 and Panel 3 composites and captions are written at 600 DPI under
 `reports/figures/manuscript/`. Panel 3 matrix axes use the full Yeo-7 network
 names and publication-facing feature names rather than internal analysis keys.
+Its interaction-first layout combines complete corrected heatmaps with
+uncertainty-aware four-cell profiles and a standardized-effect forest plot;
+selected callouts are descriptive and the full inferential families remain visible.
 Standalone white-background 2560×1440 PNG and editable SVG components are
 written under `reports/figures/slides/`. Both panels also write their captions
 into their slide directories. Every artifact has a JSON sidecar; manuscript composite

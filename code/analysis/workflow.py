@@ -151,9 +151,9 @@ def plan_execution(args: argparse.Namespace) -> Path:
     """Write a complete inspectable execution plan without submitting any jobs."""
     validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
-    analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
-    if not analysis_dir.exists():
-        raise FileNotFoundError(f"analysis does not exist: {analysis_dir}")
+    analysis_dir = resolve_analysis_directory(
+        _analysis_root(config, args.analysis_root), args.analysis_id
+    )
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     spaces = args.spaces.split()
@@ -163,6 +163,7 @@ def plan_execution(args: argparse.Namespace) -> Path:
         subjects,
         runs,
         spaces,
+        analyses=args.analyses.split(),
         include_exploratory=args.include_exploratory,
         map_chunk_count=_chunk_count(
             analysis_workflow_config,
@@ -183,7 +184,28 @@ def plan_execution(args: argparse.Namespace) -> Path:
             analysis_workflow_config.get("decoding_chunks_per_job", 5)
         ),
     )
+    manifest = bound_execution_plan(
+        manifest,
+        start_at=args.start_at,
+        stop_after=args.stop_after,
+        skip=_split_stages(args.skip),
+    )
+    provenance = json.loads((analysis_dir / "provenance.json").read_text())
+    manifest["provenance"].update({
+        "analysis_id": args.analysis_id,
+        "config_hash": provenance.get("config_hash", config_hash(config)),
+        "git_commit": provenance["git"]["commit"],
+        "git_dirty": provenance["git"]["dirty"],
+        "dry_run": False,
+        "submission_status": "planned",
+    })
     path = analysis_dir / "manifests" / "execution_plan.json"
+    if path.exists():
+        previous = json.loads(path.read_text())
+        label = "-".join(previous.get("analyses", ())) or "previous"
+        archive = path.with_name(f"execution_plan.{label}.json")
+        if not archive.exists():
+            archive.write_text(json.dumps(previous, indent=2, sort_keys=True) + "\n")
     path.write_text(json.dumps(manifest, indent=2) + "\n")
     return path
 
@@ -877,6 +899,13 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--subjects")
     plan.add_argument("--runs")
     plan.add_argument("--spaces", default="sensor schaefer_400")
+    plan.add_argument(
+        "--analyses",
+        default="feature_modulation multifeature_decoding network_dynamics",
+    )
+    plan.add_argument("--start-at")
+    plan.add_argument("--stop-after")
+    plan.add_argument("--skip")
     plan.add_argument(
         "--include-exploratory", action=argparse.BooleanOptionalAction, default=True
     )

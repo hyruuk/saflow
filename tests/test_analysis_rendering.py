@@ -11,6 +11,7 @@ from PIL import Image
 from code.analysis.render import (
     _assert_overwrite_allowed,
     _plot_matrix,
+    _validate_render_arrays,
     render_panels,
 )
 
@@ -113,6 +114,26 @@ def test_panel3_matrix_uses_yeo_and_feature_display_names():
         "Corrected Gamma 3",
     ]
     plt.close(figure)
+
+
+def test_panel3_rejects_stale_ten_feature_bundle():
+    arrays = {
+        key: np.zeros((1,))
+        for key in (
+            "interaction",
+            "fooof_t_values",
+            "fooof_p_fwer",
+            "corrected_psd_t_values",
+            "corrected_psd_p_fwer",
+            "coupling",
+            "coupling_t_values",
+            "coupling_p_fwer",
+        )
+    }
+    arrays["network_cell_means"] = np.zeros((2, 4, 7, 10))
+
+    with pytest.raises(ValueError, match="stale feature schema"):
+        _validate_render_arrays("panel3", arrays)
 
 
 def test_generic_renderer_rejects_panel1_alternate():

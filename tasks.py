@@ -3476,6 +3476,8 @@ def analysis_synthetic(c, output_dir="reports/synthetic/analysis", seed=42):
 @task
 def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
                          spaces="sensor schaefer_400",
+                         analyses="feature_modulation multifeature_decoding network_dynamics",
+                         start_at=None, stop_after=None, skip=None,
                          include_exploratory=True, config="config.yaml"):
     """Write the complete raw-to-panels execution plan without submission."""
     cmd = [
@@ -3489,11 +3491,16 @@ def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, r
         config,
         "--spaces",
         spaces,
+        "--analyses",
+        analyses,
     ]
     for flag, value in (
         ("--analysis-root", analysis_root),
         ("--subjects", subjects),
         ("--runs", runs),
+        ("--start-at", start_at),
+        ("--stop-after", stop_after),
+        ("--skip", skip),
     ):
         if value:
             cmd.extend([flag, value])

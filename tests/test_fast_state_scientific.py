@@ -178,6 +178,12 @@ def test_state_multifeature_stages_and_aggregation(tmp_path):
         assert result["within_subject_auc"].shape == (4,)
         assert result["population_feature_reliance"].shape == (4, 3)
         assert result["within_subject_cell_reliance"].shape == (4, 21)
+    panel_bundle = analysis / "multifeature_decoding" / "observed.npz"
+    assert panel_bundle.exists()
+    with np.load(panel_bundle) as result:
+        assert result["population_auc"].shape == ()
+        assert result["population_cell_reliance"].shape == (4, 21)
+        assert result["feature_order"].tolist() == ["f1", "f2", "f3"]
 
 
 def test_state_multifeature_submission_fans_out_independent_branches(tmp_path):

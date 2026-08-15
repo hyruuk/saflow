@@ -131,6 +131,7 @@ Saflow implements a complete MEG analysis pipeline for the gradCPT (gradual Cont
 - ✅ **Group statistics** - paired t-tests with tmax/FDR/Bonferroni corrections
 - ✅ **Classification** - single-feature, multi-feature (4 axes), and Yeo-network-restricted
 - ✅ **Publication panels** - Panel 3 labels its matrices with full Yeo-7 network and feature names
+- ✅ **Interaction-first network figure** - complete corrected heatmaps, factorial profiles, and effect-size intervals
 - ✅ **Composite figures** - publication-ready stats+classif panels, FOOOF spectral decomposition, network story panels
 - ✅ **Modern Python** - type hints, dataclasses, invoke task runner
 
@@ -512,6 +513,9 @@ multifeature inference uses the immutable corrected workflow:
 The primary Panel 2 endpoint is fixed-ridge IN/OUT decoding at Schaefer-400
 resolution. It excludes FOOOF R², prepares the aligned tensor once, and saves
 every circular-shift permutation independently so timed-out jobs are resumable.
+Its aggregate stage also publishes the canonical
+`multifeature_decoding/observed.npz` and `observed.json` bundle consumed by
+`viz.panels`; no separate conversion step is required.
 Submit its shared preparation plus population, within-subject, permutation,
 and reliance branches with `invoke analysis.state-multifeature --slurm`; the
 active root is derived from the configured data root and processed-directory

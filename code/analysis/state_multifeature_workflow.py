@@ -366,7 +366,44 @@ def aggregate(args: argparse.Namespace) -> Path:
     output = directory / "results" / "inference.npz"
     output.parent.mkdir(exist_ok=True)
     _write_result(output, inference)
+    _write_panel2_bundle(directory, metadata, inference)
     return output
+
+
+def _write_panel2_bundle(
+    directory: Path, metadata: dict, inference: dict[str, object]
+) -> tuple[Path, Path]:
+    """Publish state inference through the canonical Panel 2 bundle contract."""
+    target = directory.parent / "multifeature_decoding"
+    target.mkdir(exist_ok=True)
+    archive = target / "observed.npz"
+    sidecar = target / "observed.json"
+    temporary = archive.with_name(f".{archive.name}.{os.getpid()}.partial")
+    arrays = {
+        name: np.asarray(values)
+        for name, values in inference.items()
+        if isinstance(values, (np.ndarray, np.generic, int, float))
+    }
+    arrays["feature_order"] = np.asarray(metadata["feature_order"])
+    arrays["network_order"] = np.asarray(metadata["network_order"])
+    with temporary.open("wb") as stream:
+        np.savez_compressed(stream, **arrays)
+    temporary.replace(archive)
+    provenance = dict(metadata.get("analysis_provenance", {}))
+    provenance.setdefault("analysis_id", metadata["analysis_id"])
+    provenance.setdefault("data_mode", "real")
+    sidecar.write_text(json.dumps({
+        "provenance": provenance,
+        "summary": {
+            "subject_n": len(metadata["subject_order"]),
+            "feature_order": metadata["feature_order"],
+            "network_order": metadata["network_order"],
+            "n_permutations": metadata["n_permutations"],
+            "source": "multifeature_state/results/inference.npz",
+        },
+    }, indent=2, sort_keys=True) + "\n")
+    LOGGER.info("Published canonical Panel 2 bundle to %s", target)
+    return archive, sidecar
 
 
 def main() -> None:
