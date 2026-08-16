@@ -1049,7 +1049,25 @@ def build_sensor_adjacency(
 
 # Parcel adjacency is identical for every feature/contrast in a run, so the
 # expensive surface walk is cached per atlas (keyed by space).
-_ATLAS_ADJ_CACHE: Dict[str, Tuple[Any, List[str]]] = {}
+_ATLAS_ADJ_CACHE: Dict[Tuple[str, str], Tuple[Any, List[str]]] = {}
+
+
+def _resolve_fsaverage_subjects_dir(config: Dict) -> Path:
+    """Return a configured fsaverage parent, fetching only as a fallback."""
+    configured = config.get("paths", {}).get("freesurfer_subjects_dir")
+    if configured:
+        subjects_dir = Path(configured)
+        fsaverage = subjects_dir / "fsaverage"
+        if (fsaverage / "surf").is_dir() and (fsaverage / "label").is_dir():
+            return subjects_dir
+        raise FileNotFoundError(
+            "configured fsaverage must contain surf/ and label/: "
+            f"{fsaverage}"
+        )
+
+    import mne
+
+    return Path(mne.datasets.fetch_fsaverage(verbose=False)).parent
 
 
 def build_atlas_adjacency(
@@ -1069,8 +1087,8 @@ def build_atlas_adjacency(
         space: Atlas short name (``'schaefer_400'``, ``'aparc.a2009s'``, …).
         spatial_names: ROI label names in the order they appear in X
             (e.g. ``'7Networks_LH_Cont_Cing_1-lh'``). None/empty → None.
-        config: Project config (kept for signature parity with
-            :func:`build_sensor_adjacency`; fsaverage is fetched via MNE).
+        config: Project configuration. A configured shared fsaverage is used
+            without network access; MNE's fetcher is only a fallback.
 
     Returns:
         (adjacency, names) with ``adjacency`` a sparse n×n matrix matching
@@ -1085,13 +1103,20 @@ def build_atlas_adjacency(
         return None
     spatial_names = list(spatial_names)
 
-    if space not in _ATLAS_ADJ_CACHE:
+    try:
+        subjects_dir = _resolve_fsaverage_subjects_dir(config)
+    except Exception as exc:
+        logger.warning(
+            f"build_atlas_adjacency: could not resolve fsaverage for '{space}': {exc}"
+        )
+        return None
+    cache_key = (space, str(subjects_dir.resolve()))
+
+    if cache_key not in _ATLAS_ADJ_CACHE:
         try:
             import mne
             from code.source_reconstruction.apply_atlas import get_mne_atlas_name
 
-            fsaverage_path = mne.datasets.fetch_fsaverage(verbose=False)
-            subjects_dir = Path(fsaverage_path).parent
             mne_atlas = get_mne_atlas_name(space)
             labels = mne.read_labels_from_annot(
                 "fsaverage", parc=mne_atlas,
@@ -1150,9 +1175,9 @@ def build_atlas_adjacency(
         ).tocsr()
         # Symmetrise (each border edge was recorded in one direction only).
         adj_full = ((adj_full + adj_full.T) > 0).astype(np.int8)
-        _ATLAS_ADJ_CACHE[space] = (adj_full, names)
+        _ATLAS_ADJ_CACHE[cache_key] = (adj_full, names)
 
-    adj_full, names = _ATLAS_ADJ_CACHE[space]
+    adj_full, names = _ATLAS_ADJ_CACHE[cache_key]
     name_to_idx = {n: i for i, n in enumerate(names)}
     order = []
     for n in spatial_names:

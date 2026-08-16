@@ -40,6 +40,10 @@ cluster-mass sign-flip test; per-feature BH-FDR is retained for sensitivity.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.
+Regenerate this plan after changing the canonical feature contract; recovery
+then excludes retired cells such as FOOOF R². Panel 1 cluster inference uses
+the configured `paths.freesurfer_subjects_dir/fsaverage` surfaces and atlas
+annotations on shared storage, without requiring compute-node network access.
 Its subject-major array mapping is shared by every `aftercorr` edge. Validators
 and aggregators use `afterany` to inspect failures; scientific consumers use
 `afterok`. The Phase A schema catalog is documented in

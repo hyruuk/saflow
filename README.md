@@ -37,6 +37,10 @@ exploratory cells default to a three-day wall time. Valid cells and immutable
 permutation chunks are reused by `invoke pipeline.resume`.
 Recovery can submit disjoint failed nodes while another branch remains active;
 same-node overlaps are rejected to prevent duplicate arrays.
+Panel 1 surface adjacency is built from the configured shared fsaverage copy,
+so analysis workers do not download atlas data from compute nodes. Regenerate
+the targeted execution plan before recovery when the canonical feature list
+changes; this removes retired cells such as FOOOF R².
 `--stop-after=features` retains the former raw-to-feature endpoint. See
 [the output contracts](docs/analysis_output_schemas.md).
 The statistical definitions are summarized in

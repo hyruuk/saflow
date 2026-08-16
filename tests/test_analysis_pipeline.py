@@ -166,6 +166,10 @@ def test_scientific_arrays_use_feature_model_and_chunk_cells():
     cells = plan["node_cells"]
     assert len(cells["feature_modulation_statistics"]) == 16
     assert len(cells["feature_modulation_decoding_permutations"]) == 16
+    assert all(
+        cell["feature"] != "fooof_r_squared"
+        for cell in cells["feature_modulation_decoding_permutations"]
+    )
     assert cells["feature_modulation_decoding_permutations"][0]["chunk_indices"] == [0, 1]
     assert [cell["model"] for cell in cells["multifeature_decoding_models"]] == [
         "state",

@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -49,7 +50,8 @@ from code.analysis.aggregate_runner import (
     _subject_selected_spectra,
 )
 from code.analysis.real_inputs import RunLabelContext
-from code.analysis.observed_runner import _subject_state_means
+from code.analysis.observed_runner import _parcel_adjacency, _subject_state_means
+from code.statistics.run_group_statistics import _resolve_fsaverage_subjects_dir
 from code.visualization.panel1_bundle import (
     PANEL_NAMES,
     _select_weighting,
@@ -385,6 +387,48 @@ def test_band_and_feature_contract_excludes_delta():
     )
     with pytest.raises(ValueError, match="not a canonical"):
         canonical_band_key("delta")
+
+
+def test_fsaverage_resolver_prefers_configured_shared_copy(tmp_path: Path, monkeypatch):
+    subjects_dir = tmp_path / "fs_subjects"
+    (subjects_dir / "fsaverage" / "surf").mkdir(parents=True)
+    (subjects_dir / "fsaverage" / "label").mkdir()
+
+    monkeypatch.setitem(sys.modules, "mne", None)
+    resolved = _resolve_fsaverage_subjects_dir(
+        {"paths": {"freesurfer_subjects_dir": str(subjects_dir)}}
+    )
+    assert resolved == subjects_dir
+
+
+def test_fsaverage_resolver_fails_before_network_for_invalid_config(tmp_path: Path):
+    subjects_dir = tmp_path / "missing_fs_subjects"
+    with pytest.raises(FileNotFoundError, match="must contain surf/ and label/"):
+        _resolve_fsaverage_subjects_dir(
+            {"paths": {"freesurfer_subjects_dir": str(subjects_dir)}}
+        )
+
+
+def test_panel1_adjacency_passes_project_config(monkeypatch):
+    captured = {}
+
+    class FakeRow:
+        indices = np.asarray([0])
+
+    class FakeAdjacency:
+        shape = (1, 1)
+
+        def getrow(self, index):
+            return FakeRow()
+
+    def fake_builder(space, parcel_names, config):
+        captured.update(config)
+        return FakeAdjacency(), parcel_names
+
+    monkeypatch.setattr("code.analysis.observed_runner.build_atlas_adjacency", fake_builder)
+    config = {"paths": {"freesurfer_subjects_dir": "/shared/fs_subjects"}}
+    assert _parcel_adjacency(("parcel",), config) == [[0]]
+    assert captured == config
 
 
 def test_panel_and_schema_contracts_are_complete():

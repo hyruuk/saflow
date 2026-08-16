@@ -53,7 +53,7 @@ def _dispatch(
     analysis_workflow = config.get("analysis_workflow", {})
     if args.node == "feature_modulation_statistics":
         feature = _require_member(args.feature, FEATURE_MODULATION_FEATURES, "feature")
-        result = _run_feature_modulation(inputs, feature, analysis_workflow)
+        result = _run_feature_modulation(inputs, feature, analysis_workflow, config)
         return (
             result,
             analysis_dir / "feature_modulation" / "partials" / "statistics" / feature,
@@ -132,11 +132,14 @@ def _dispatch(
 
 
 def _run_feature_modulation(
-    inputs: AnalysisInputs, feature: str, workflow: dict[str, Any]
+    inputs: AnalysisInputs,
+    feature: str,
+    workflow: dict[str, Any],
+    config: dict[str, Any],
 ) -> dict[str, Any]:
     """Compute both prespecified run-weighting variants for one paired map."""
     index = FEATURE_MODULATION_FEATURES.index(feature)
-    adjacency = _parcel_adjacency(inputs.parcel_order)
+    adjacency = _parcel_adjacency(inputs.parcel_order, config)
     common = {
         "feature_order": (feature,),
         "adjacency": adjacency,
@@ -171,9 +174,11 @@ def _run_feature_modulation(
     return result
 
 
-def _parcel_adjacency(parcel_order: tuple[str, ...]) -> list[list[int]]:
+def _parcel_adjacency(
+    parcel_order: tuple[str, ...], config: dict[str, Any]
+) -> list[list[int]]:
     """Return Schaefer-400 surface neighbors in the input parcel order."""
-    resolved = build_atlas_adjacency("schaefer_400", list(parcel_order), {})
+    resolved = build_atlas_adjacency("schaefer_400", list(parcel_order), config)
     if resolved is None:
         raise RuntimeError("Schaefer-400 adjacency is required for primary cluster inference")
     matrix, _ = resolved

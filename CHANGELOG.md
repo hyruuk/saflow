@@ -1,5 +1,8 @@
 # Changelog
 
+- Make Panel 1 cluster inference use the configured shared fsaverage surfaces
+  and Schaefer annotations instead of attempting OSF downloads from compute
+  nodes, and document plan regeneration after feature-contract changes.
 - Publish the completed fixed-ridge state multifeature inference as the
   canonical Panel 2 bundle, and render its population, individual, and held-out
   feature/network reliance results directly instead of expecting the retired
