@@ -520,6 +520,11 @@ every circular-shift permutation independently so timed-out jobs are resumable.
 Its aggregate stage also publishes the canonical
 `multifeature_decoding/observed.npz` and `observed.json` bundle consumed by
 `viz.panels`; no separate conversion step is required.
+Panel 2 contrasts cross-person LOSO generalization with participant-specific
+leave-one-run-out decoding, shows all paired participant scores and held-out-run
+stability, and summarizes participant-level feature and Yeo-network reliance.
+The feature×network reliance matrix is retained as a complete secondary family
+because no individual cell survived family-wise correction.
 Submit its shared preparation plus population, within-subject, permutation,
 and reliance branches with `invoke analysis.state-multifeature --slurm`; the
 active root is derived from the configured data root and processed-directory

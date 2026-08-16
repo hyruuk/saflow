@@ -1,5 +1,10 @@
 # Changelog
 
+- Redesign Panel 2 around the contrast between unsuccessful cross-person
+  generalization and successful participant-specific decoding, adding paired
+  participant scores, held-out-run stability, and subject-level feature and
+  network reliance distributions while moving the nonsignificant
+  feature×network family out of the main composite.
 - Make Panel 1 cluster inference use the configured shared fsaverage surfaces
   and Schaefer annotations instead of attempting OSF downloads from compute
   nodes, and document plan regeneration after feature-contract changes.

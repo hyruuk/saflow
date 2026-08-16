@@ -59,9 +59,11 @@ REQUIRED_ARRAYS = {
     },
     "multifeature_decoding": {
         "population_auc",
+        "population_subject_auc",
         "population_null",
         "population_p",
         "within_subject_auc",
+        "within_run_auc",
         "within_group_null_mean_auc",
         "within_group_p",
         "subject_order",

@@ -316,18 +316,21 @@ def aggregate(args: argparse.Namespace) -> Path:
     n_permutations = metadata["n_permutations"]
     with np.load(directory / "population" / "observed.npz") as observed:
         population_auc = float(observed["mean_subject_auc"])
+        population_subject_auc = np.asarray(observed["subject_auc"])
     population_null = np.asarray([
         float(np.load(directory / "population" / "permutations" / f"permutation-{i:04d}.npz")["mean_subject_auc"])
         for i in range(n_permutations)
     ])
     subjects = metadata["subject_order"]
     within_auc = np.empty(len(subjects))
+    within_run_auc: list[np.ndarray] = []
     within_p = np.empty(len(subjects))
     within_null = np.empty((n_permutations, len(subjects)))
     for subject_index, subject in enumerate(subjects):
         base = directory / "within_subject" / f"sub-{subject}"
         with np.load(base / "observed.npz") as observed:
             within_auc[subject_index] = float(observed["mean_run_auc"])
+            within_run_auc.append(np.asarray(observed["subject_auc"]))
         null = np.asarray([
             float(np.load(base / "permutations" / f"permutation-{i:04d}.npz")["mean_run_auc"])
             for i in range(n_permutations)
@@ -336,9 +339,11 @@ def aggregate(args: argparse.Namespace) -> Path:
         within_p[subject_index] = (np.count_nonzero(null >= within_auc[subject_index]) + 1) / (n_permutations + 1)
     inference: dict[str, object] = {
         "population_auc": population_auc,
+        "population_subject_auc": population_subject_auc,
         "population_null": population_null,
         "population_p": (np.count_nonzero(population_null >= population_auc) + 1) / (n_permutations + 1),
         "within_subject_auc": within_auc,
+        "within_run_auc": np.stack(within_run_auc),
         "within_subject_p_uncorrected": within_p,
         "within_group_mean_auc": float(np.nanmean(within_auc)),
         "within_group_null_mean_auc": np.nanmean(within_null, axis=1),

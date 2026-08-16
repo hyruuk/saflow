@@ -26,7 +26,7 @@ from code.analysis.contracts import (
 from code.analysis.provenance import active_analysis_id, resolve_analysis_directory
 from code.utils.yeo_networks import YEO7_NETWORKS, network_display_name
 
-PANEL2_CAPTION = """Figure X. Trial-level multifeature decoding of IN versus OUT attentional state. Models combined FOOOF exponent and offset with seven aperiodic-corrected PSD bands across 400 Schaefer parcels; FOOOF R² was excluded. (A) Population leave-one-subject-out performance. (B) Individual leave-one-run-out performance. (C) Population-versus-individual performance comparison. (D) Held-out feature reliance. (E) Held-out Yeo-7 network reliance. (F) Feature-by-network reliance. State performance used run-wise circular VTC shifts; reliance used synchronized subject sign flips with separate maximum-statistic families. Population and individual summaries included {state_n} participants.\n"""
+PANEL2_CAPTION = """Figure X. Personalized multifeature decoding of IN versus OUT attentional state. Fixed-ridge models combined FOOOF exponent and offset with seven aperiodic-corrected PSD bands across 400 Schaefer parcels; FOOOF R² was excluded. (A) Mean held-out-participant AUC for the population leave-one-subject-out model against its run-wise circular-shift null. (B) Paired held-out AUCs from the population model and participant-specific leave-one-run-out models. Lines connect the same participant. (C) Mean participant-specific AUC against its circular-shift null. (D) Held-out AUC across each participant's six runs, ordered by mean participant-specific performance. (E) Participant-level held-out feature reliance for participant-specific models. (F) Participant-level held-out Yeo-7 network reliance for participant-specific models. Reliance is the AUC decrease after grouped shuffling of held-out predictors within run; dots denote synchronized sign-flip maximum-statistic FWER p < 0.05 within the feature or network family. The feature×network family is reported separately because no cell survived correction. Decoding included {state_n} participants.\n"""
 PANEL3_CAPTION = """Figure X. Network dynamics across attentional state and behavioral outcome. Neural features were summarized within the seven Yeo networks for four state-by-outcome cells (IN-correct, IN-lapse, OUT-correct, and OUT-lapse). Analyses included two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD features; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (A) Four-cell profile for the network–feature pair with the largest absolute interaction t statistic. (B) Complete network-by-feature state–outcome interaction map. (C) Prespecified simple effects, showing for each feature the signed t statistic from its strongest Yeo-network expression. (D) Standardized interaction effect sizes and bootstrap 95% confidence intervals for the seven largest absolute interaction t statistics. (E) Four-cell default-mode–dorsal-attention coupling profile for the feature with the largest absolute coupling-interaction t statistic. (F) Complete prespecified DMN–DAN coupling contrasts. Dots in heatmaps mark synchronized maximum-|t| family-wise p < 0.05. Selection in A, C, D, and E is descriptive; complete inferential families remain visible in B and F. Primary inference was corrected separately across the FOOOF modulation, corrected-PSD modulation, and DMN–DAN coupling families. Complete-case analyses included {modulation_n} participants for modulation and {coupling_n} participants for coupling; secondary mixed-effects models used all available observations.\n"""
 
 COMPOSITE_DPI = 600
@@ -139,9 +139,9 @@ def _validate_render_arrays(
     required_by_panel = {
         "panel2": (
             "population_auc", "population_null", "within_subject_auc",
-            "population_feature_reliance", "population_feature_reliance_p_fwer",
-            "population_network_reliance", "population_network_reliance_p_fwer",
-            "population_cell_reliance", "population_cell_reliance_p_fwer",
+            "population_subject_auc", "within_group_null_mean_auc", "within_run_auc",
+            "within_subject_feature_reliance", "within_subject_feature_reliance_p_fwer",
+            "within_subject_network_reliance", "within_subject_network_reliance_p_fwer",
         ),
         "panel3": (
             "network_cell_means",
@@ -188,8 +188,11 @@ def _synthetic_arrays(
         network_count = len(YEO7_NETWORKS)
         common.update({
             "population_auc": np.asarray(0.64),
+            "population_subject_auc": generator.normal(0.52, 0.05, subject_count),
             "population_null": generator.normal(0.5, 0.02, 1000),
             "within_subject_auc": generator.normal(0.61, 0.06, subject_count),
+            "within_group_null_mean_auc": generator.normal(0.5, 0.015, 1000),
+            "within_run_auc": generator.normal(0.61, 0.09, (subject_count, 6)),
             "population_feature_reliance": generator.normal(
                 0.015, 0.01, (subject_count, feature_count)
             ),
@@ -207,6 +210,18 @@ def _synthetic_arrays(
             ),
             "population_cell_reliance_p_fwer": generator.uniform(
                 0.01, 1, feature_count * network_count
+            ),
+            "within_subject_feature_reliance": generator.normal(
+                0.015, 0.02, (subject_count, feature_count)
+            ),
+            "within_subject_feature_reliance_p_fwer": generator.uniform(
+                0.01, 1, feature_count
+            ),
+            "within_subject_network_reliance": generator.normal(
+                0.012, 0.02, (subject_count, network_count)
+            ),
+            "within_subject_network_reliance_p_fwer": generator.uniform(
+                0.01, 1, network_count
             ),
         })
     if panel == "panel3":
@@ -688,43 +703,68 @@ def _plot_panel2_population(
     axis.legend(frameon=False, fontsize=7)
 
 
-def _plot_panel2_within(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
-    """Show individual leave-one-run-out AUC values."""
-    values = np.asarray(arrays["within_subject_auc"], dtype=float)
-    ordered = np.sort(values)
-    axis.scatter(np.arange(len(ordered)), ordered, color="#2878B5", s=16)
-    axis.axhline(0.5, color="black", lw=0.7, ls="--")
-    axis.set_xlabel("Participant (sorted)")
-    axis.set_ylabel("Individual AUC")
-
-
 def _plot_panel2_comparison(
     axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
 ) -> None:
-    """Compare population and mean individual state decoding."""
-    within = np.asarray(arrays["within_subject_auc"], dtype=float)
-    values = [float(np.asarray(arrays["population_auc"])), float(np.nanmean(within))]
-    error = [0.0, float(np.nanstd(within, ddof=1) / np.sqrt(len(within)))]
-    axis.bar((0, 1), values, yerr=error, color=("#D95319", "#2878B5"), capsize=3)
-    axis.set_xticks((0, 1), ("Population", "Individual mean"))
+    """Compare each participant's population and personalized held-out AUC."""
+    population = np.asarray(arrays["population_subject_auc"], dtype=float)
+    individual = np.asarray(arrays["within_subject_auc"], dtype=float)
+    for left, right in zip(population, individual):
+        axis.plot((0, 1), (left, right), color="#A8A8A8", lw=0.65, alpha=0.65)
+    axis.scatter(np.zeros_like(population), population, color="#D95319", s=13, zorder=3)
+    axis.scatter(np.ones_like(individual), individual, color="#2878B5", s=13, zorder=3)
+    axis.plot((0, 1), (np.mean(population), np.mean(individual)), color="black", lw=2.2)
+    axis.set_xticks((0, 1), ("Population\nLOSO", "Participant-specific\nleave-one-run-out"))
     axis.axhline(0.5, color="black", lw=0.7, ls="--")
-    axis.set_ylabel("AUC")
+    axis.set_ylabel("Held-out AUC")
+    axis.text(0.03, 0.97, f"Individual higher: {np.sum(individual > population)}/{len(individual)}",
+              transform=axis.transAxes, va="top", fontsize=6.5)
 
 
-def _plot_reliance_bar(
+def _plot_panel2_individual_group(
+    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
+) -> None:
+    """Show mean participant-specific performance against its shift null."""
+    null = np.asarray(arrays["within_group_null_mean_auc"], dtype=float)
+    observed = float(np.nanmean(arrays["within_subject_auc"]))
+    axis.hist(null, bins=30, color="#B8C5D1", edgecolor="white")
+    axis.axvline(observed, color="#2878B5", lw=2, label=f"Observed {observed:.3f}")
+    axis.set_xlabel("Mean participant-specific AUC")
+    axis.set_ylabel("Permutation count")
+    axis.legend(frameon=False, fontsize=7)
+
+
+def _plot_panel2_run_stability(
+    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
+) -> None:
+    """Show held-out run AUCs ordered by participant mean performance."""
+    values = np.asarray(arrays["within_run_auc"], dtype=float)
+    order = np.argsort(np.nanmean(values, axis=1))
+    image = axis.imshow(values[order], cmap="RdBu_r", vmin=0.3, vmax=0.7, aspect="auto")
+    axis.set_xticks(np.arange(values.shape[1]), [f"Run {index + 1}" for index in range(values.shape[1])],
+                    rotation=45, ha="right", fontsize=6)
+    axis.set_yticks((0, len(order) - 1), ("Lower mean", "Higher mean"), fontsize=6)
+    axis.set_ylabel("Participants (ordered)")
+    axis.figure.colorbar(image, ax=axis, fraction=0.045, pad=0.02, label="Held-out AUC")
+
+
+def _plot_reliance_distribution(
     axis: plt.Axes, arrays: dict[str, np.ndarray], family: str, labels: list[str]
 ) -> None:
-    """Plot held-out reliance means and corrected significance."""
-    values = np.asarray(arrays[f"population_{family}_reliance"], dtype=float)
-    p_values = np.asarray(arrays[f"population_{family}_reliance_p_fwer"], dtype=float)
-    means = np.nanmean(values, axis=0)
-    errors = np.nanstd(values, axis=0, ddof=1) / np.sqrt(values.shape[0])
-    positions = np.arange(len(means))
-    axis.bar(positions, means, yerr=errors, color="#4C78A8", capsize=2)
+    """Plot participant-specific held-out reliance distributions."""
+    values = np.asarray(arrays[f"within_subject_{family}_reliance"], dtype=float)
+    p_values = np.asarray(arrays[f"within_subject_{family}_reliance_p_fwer"], dtype=float)
+    positions = np.arange(values.shape[1])
+    axis.boxplot(values, positions=positions, widths=0.62, patch_artist=True,
+                 showfliers=False, medianprops={"color": "black", "linewidth": 0.8},
+                 boxprops={"facecolor": "#A9CBE5", "edgecolor": "#4C78A8"},
+                 whiskerprops={"color": "#4C78A8"}, capprops={"color": "#4C78A8"})
+    jitter = np.linspace(-0.20, 0.20, values.shape[0])
+    for position in positions:
+        axis.scatter(position + jitter, values[:, position], s=5, color="#2878B5", alpha=0.5)
+    axis.axhline(0, color="black", lw=0.7, ls="--")
     for position in positions[p_values < 0.05]:
-        axis.text(position, means[position] + errors[position], "•", ha="center")
+        axis.text(position, np.nanmax(values[:, position]), "•", ha="center", va="bottom")
     axis.set_xticks(positions, labels, rotation=45, ha="right", fontsize=6)
     axis.set_ylabel("Held-out AUC decrease")
 
@@ -732,13 +772,13 @@ def _plot_reliance_bar(
 def _plot_panel2_feature_reliance(
     axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
 ) -> None:
-    _plot_reliance_bar(axis, arrays, "feature", _feature_labels())
+    _plot_reliance_distribution(axis, arrays, "feature", _feature_labels())
 
 
 def _plot_panel2_network_reliance(
     axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
 ) -> None:
-    _plot_reliance_bar(axis, arrays, "network", _network_labels())
+    _plot_reliance_distribution(axis, arrays, "network", _network_labels())
 
 
 def _plot_panel2_cell_reliance(
@@ -760,11 +800,11 @@ _PANEL2_PLOTTERS: tuple[
     Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...
 ] = (
     _plot_panel2_population,
-    _plot_panel2_within,
     _plot_panel2_comparison,
+    _plot_panel2_individual_group,
+    _plot_panel2_run_stability,
     _plot_panel2_feature_reliance,
     _plot_panel2_network_reliance,
-    _plot_panel2_cell_reliance,
 )
 
 
@@ -1079,6 +1119,15 @@ def _panel_title(panel: str) -> str:
 
 def _component_title(panel: str, component: str) -> str:
     """Return concise narrative titles while preserving stable artifact IDs."""
+    if panel == "panel2":
+        return {
+            "A_population_performance": "A  Cross-person generalization",
+            "B_population_vs_individual": "B  Personalization benefit",
+            "C_individual_group_performance": "C  Personalized decoding",
+            "D_run_stability": "D  Stability across held-out runs",
+            "E_feature_reliance": "E  Spectral feature reliance",
+            "F_network_reliance": "F  Network reliance",
+        }[component]
     if panel != "panel3":
         return component.replace("_", " ")
     return {

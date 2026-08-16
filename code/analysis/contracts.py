@@ -68,11 +68,11 @@ PANEL_COMPONENTS = {
     ),
     "panel2": (
         "A_population_performance",
-        "B_within_subject_performance",
-        "C_population_vs_individual",
-        "D_feature_reliance",
-        "E_network_reliance",
-        "F_feature_by_network_reliance",
+        "B_population_vs_individual",
+        "C_individual_group_performance",
+        "D_run_stability",
+        "E_feature_reliance",
+        "F_network_reliance",
     ),
     "panel3": (
         "A_four_cell_overview",
@@ -134,7 +134,7 @@ PANEL_SPECS = {
         "composite_filename": "panel2_multifeature_decoding.png",
         "composite_directory": "manuscript",
         "slide_directory": "panel2_multifeature_decoding",
-        "layout": "population and individual state decoding with feature/network reliance",
+        "layout": "cross-person generalization, personalized decoding, run stability, and reliance",
         "features": MULTIFEATURE_FEATURES,
     },
     "panel3": {

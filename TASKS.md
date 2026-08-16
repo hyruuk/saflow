@@ -369,6 +369,11 @@ names and publication-facing feature names rather than internal analysis keys.
 Its interaction-first layout combines complete corrected heatmaps with
 uncertainty-aware four-cell profiles and a standardized-effect forest plot;
 selected callouts are descriptive and the full inferential families remain visible.
+Panel 2 presents the population circular-shift null, paired population-versus-
+participant-specific AUCs, the participant-specific group null, six-run
+stability, and participant-level feature and network reliance distributions.
+Its complete feature×network family remains available in the result bundle but
+is not promoted to the main figure when no cell survives correction.
 Standalone white-background 2560×1440 PNG and editable SVG components are
 written under `reports/figures/slides/`. Both panels also write their captions
 into their slide directories. Every artifact has a JSON sidecar; manuscript composite
