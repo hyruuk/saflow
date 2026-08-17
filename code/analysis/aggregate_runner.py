@@ -234,9 +234,7 @@ def _aggregate_feature_modulation(
         "subject_n": np.stack(
             [np.asarray(result["subject_n"]).reshape(-1) for result in statistics]
         ),
-        "window_counts_by_feature": np.stack(
-            [np.asarray(result["window_counts"]) for result in statistics]
-        ),
+        "window_counts_by_feature": _feature_window_counts(statistics_bundles),
     }
     arrays.update(_weighting_map_arrays(statistics_by_weighting["equal_run"], "equal_run"))
     arrays.update({f"{name}_equal_run": value for name, value in equal_run_spectra.items()})
@@ -260,6 +258,15 @@ def _aggregate_feature_modulation(
         ),
     }
     return arrays, summary
+
+
+def _feature_window_counts(
+    statistics_bundles: list[dict[str, Any]],
+) -> np.ndarray:
+    """Stack counts stored beside, rather than inside, weighting variants."""
+    return np.stack(
+        [np.asarray(bundle["result"]["window_counts"]) for bundle in statistics_bundles]
+    )
 
 
 def _subject_average_recordings(

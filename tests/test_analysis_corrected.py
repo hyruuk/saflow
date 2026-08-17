@@ -46,6 +46,7 @@ from code.analysis.provenance import (
     resolve_analysis_directory,
 )
 from code.analysis.aggregate_runner import (
+    _feature_window_counts,
     _fit_periodic_spectra,
     _subject_selected_spectra,
 )
@@ -127,6 +128,30 @@ def test_real_input_band_reduction_uses_only_canonical_bands():
     assert reduced.shape == (2, 3, 7)
     assert reduced[0, 0, 0] == pytest.approx(np.mean(np.arange(4.0, 8.0)))
     assert np.all(reduced[..., 0] > 2.0)
+
+
+def test_feature_window_counts_are_read_outside_weighting_variants():
+    bundles = [
+        {
+            "result": {
+                "equal_window": {"subject_n": np.asarray([32])},
+                "equal_run": {"subject_n": np.asarray([32])},
+                "window_counts": np.asarray([[10, 12], [9, 11]]),
+            }
+        },
+        {
+            "result": {
+                "equal_window": {"subject_n": np.asarray([31])},
+                "equal_run": {"subject_n": np.asarray([31])},
+                "window_counts": np.asarray([[8, 10], [7, 9]]),
+            }
+        },
+    ]
+
+    counts = _feature_window_counts(bundles)
+
+    assert counts.shape == (2, 2, 2)
+    np.testing.assert_array_equal(counts[0], [[10, 12], [9, 11]])
 
 
 def test_alignment_and_schaefer_guards():

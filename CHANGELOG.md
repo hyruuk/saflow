@@ -34,6 +34,9 @@
 
 ## Unreleased
 
+- Fix Panel 1 result aggregation to read per-feature window counts from the
+  shared statistics result, matching the immutable partial-bundle contract.
+
 - Exclude FOOOF R² from all canonical statistical, decoding, multifeature, and
   network analyses while retaining it in extraction outputs as fit-quality QC.
   Panel 2/3 analysis bundles now contain nine features.

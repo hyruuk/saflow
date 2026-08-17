@@ -21,6 +21,10 @@ invoke viz.panel1 [--analysis-root=PATH] \
   [--weighting=equal_window|equal_run]
 ```
 
+If Panel 1 aggregation or validation fails after its immutable partials have
+completed, rerun `invoke pipeline.resume --slurm`; valid statistics and
+permutation chunks are retained and only invalid downstream cells are run.
+
 `invoke analysis.state-multifeature --slurm` publishes its completed inference
 to the canonical `multifeature_decoding/observed.*` Panel 2 bundle during the
 aggregate job. Rerunning only that aggregate command is safe when all upstream

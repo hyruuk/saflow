@@ -19,6 +19,10 @@ invoke pipeline.resume --slurm
 invoke viz.panel1
 ```
 
+Panel 1 aggregation reuses completed immutable statistics and permutation
+partials; a failed aggregation or validator can therefore be resumed without
+recomputing those scientific results.
+
 `pipeline.all` creates the active analysis on its first run and reuses valid
 outputs by default thereafter. Pass `--force` to replace `main/` and start a
 fresh computation. The timestamp/Git/config analysis ID remains recorded in
