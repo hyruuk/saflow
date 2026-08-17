@@ -4449,6 +4449,91 @@ def analysis_panel4(
 
 
 @task
+def analysis_outcome_modulation(
+    c,
+    analysis_root=None,
+    minimum_windows=5,
+    permutations=10000,
+    balanced_repetitions=1000,
+    seed=42,
+    slurm=False,
+    dry_run=False,
+    config="config.yaml",
+):
+    """Analyze Correct-versus-Lapse modulation within IN and OUT."""
+    from code.utils.config import load_config
+
+    loaded = load_config(config)
+    if analysis_root is None:
+        analysis_root = str(
+            Path(loaded["paths"]["data_root"])
+            / "processed"
+            / loaded.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
+        )
+    arguments = [
+        "--config",
+        str(Path(config).resolve()),
+        "--analysis-root",
+        analysis_root,
+        "--minimum-windows",
+        str(minimum_windows),
+        "--permutations",
+        str(permutations),
+        "--balanced-repetitions",
+        str(balanced_repetitions),
+        "--seed",
+        str(seed),
+    ]
+    if not slurm:
+        cmd = [get_python_executable(config), "-m", "code.analysis.outcome_modulation", *arguments]
+        c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+        return
+    _submit_outcome_modulation(
+        loaded,
+        analysis_root,
+        arguments,
+        dry_run=dry_run,
+    )
+
+
+def _submit_outcome_modulation(config, analysis_root, arguments, *, dry_run):
+    """Render and optionally submit the single outcome-modulation SLURM job."""
+    from datetime import datetime
+    from code.utils.slurm import render_slurm_script, submit_slurm_job
+
+    slurm = config["computing"]["slurm"]
+    resources = slurm["statistics"]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = Path(config["paths"]["logs"]) / "slurm" / "outcome_modulation"
+    script = Path("slurm/scripts/outcome_modulation") / f"outcome_modulation_{timestamp}.sh"
+    command_values = dict(zip(arguments[::2], arguments[1::2]))
+    context = {
+        "job_name": "saflow_outcome_mod",
+        "account": slurm["account"],
+        "partition": slurm.get("partition", ""),
+        "time": resources["time"],
+        "cpus": resources["cpus"],
+        "mem": resources["mem"],
+        "email": None,
+        "array": None,
+        "log_dir": str(log_dir.resolve()),
+        "venv_path": str(Path(config["paths"]["venv"]).resolve()),
+        "project_root": str(PROJECT_ROOT.resolve()),
+        "modules": [],
+        "timestamp": timestamp,
+        "config_path": command_values["--config"],
+        "analysis_root": analysis_root,
+        "minimum_windows": command_values["--minimum-windows"],
+        "permutations": command_values["--permutations"],
+        "balanced_repetitions": command_values["--balanced-repetitions"],
+        "seed": command_values["--seed"],
+    }
+    log_dir.mkdir(parents=True, exist_ok=True)
+    render_slurm_script("outcome_modulation.sh.j2", context, output_path=script)
+    submit_slurm_job(script, dry_run=dry_run)
+
+
+@task
 def viz_panels(
     c,
     panel="all",
@@ -4546,6 +4631,38 @@ def outcome_state_panel(
         get_python_executable(config),
         "-m",
         "code.visualization.outcome_state_panel",
+        "--analysis-root",
+        analysis_root,
+        "--reports-root",
+        reports_root,
+    ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def correct_vs_lapse_panel(
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    reports_root="reports",
+    config="config.yaml",
+):
+    """Render network and parcel Correct-versus-Lapse modulation."""
+    if analysis_root is None:
+        from code.utils.config import load_config
+
+        loaded = load_config(config)
+        analysis_root = str(
+            Path(loaded["paths"]["data_root"])
+            / "processed"
+            / loaded.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
+        )
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.visualization.correct_lapse_panel",
         "--analysis-root",
         analysis_root,
         "--reports-root",
@@ -5415,6 +5532,7 @@ analysis.add_task(analysis_export, name="export")
 analysis.add_task(analysis_audit, name="audit")
 analysis.add_task(analysis_legacy_inventory, name="legacy-inventory")
 analysis.add_task(analysis_panel4, name="panel4")
+analysis.add_task(analysis_outcome_modulation, name="outcome-modulation")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection
@@ -5432,6 +5550,7 @@ viz.add_task(behavior)
 viz.add_task(viz_panels, name="panels")
 viz.add_task(panel1, name="panel1")
 viz.add_task(outcome_state_panel, name="outcome-state")
+viz.add_task(correct_vs_lapse_panel, name="correct-vs-lapse")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

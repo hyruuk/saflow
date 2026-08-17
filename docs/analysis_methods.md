@@ -97,6 +97,30 @@ outcomes distributed across runs to contribute. Primary coupling requires five
 pooled windows per cell and is corrected across nine features and all
 prespecified contrasts. All other Yeo-7 pairs are exploratory.
 
+## Correct-versus-Lapse outcome modulation
+
+The supplementary outcome-modulation derivative tests commission-error minus
+correct-omission windows independently within IN and OUT. The primary analysis
+pools all eligible windows into one mean per participant, state, and anchor
+outcome. Consequently, neither participants nor conditions with more retained
+windows receive greater weight in the paired group test. Eligibility requires
+at least five windows in both compared cells and is evaluated separately for
+each state.
+
+Parcel inference uses synchronized two-sided sign flips and maximum
+cluster-mass correction across the complete nine-feature family at
+Schaefer-400 resolution. Network inference averages the same participant
+contrasts within Yeo-7 and uses synchronized maximum-|t| correction across all
+63 network-feature cells. IN and OUT are separate inferential families because
+their independently eligible participant sets may differ.
+
+As an imbalance sensitivity, Correct and Lapse windows are randomly matched to
+the smaller count within each participant, state, and run, after which
+participants are sampled with replacement. Repeated hierarchical-bootstrap
+samples summarize median effects, 95% intervals, and effect-direction stability.
+This sensitivity does not replace the all-window primary test and does not
+treat overlapping windows as independent observations.
+
 ## Reproducibility
 
 Every analysis records the immutable ID, full Git state and dirty flag,

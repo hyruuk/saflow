@@ -1,0 +1,11 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+python -m code.analysis.outcome_modulation \
+    --config {{ config_path }} \
+    --analysis-root {{ analysis_root }} \
+    --minimum-windows {{ minimum_windows }} \
+    --permutations {{ permutations }} \
+    --balanced-repetitions {{ balanced_repetitions }} \
+    --seed {{ seed }}
+{% endblock %}

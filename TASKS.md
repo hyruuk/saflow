@@ -22,6 +22,10 @@ invoke viz.panel1 [--analysis-root=PATH] \
 invoke analysis.panel4 [--analysis-root=PATH] [--permutations=10000]
 invoke viz.panels --panel=panel4
 invoke viz.outcome-state [--analysis-root=PATH] [--analysis-id=ID]
+invoke analysis.outcome-modulation [--analysis-root=PATH] [--slurm] [--dry-run]
+  [--minimum-windows=5] [--permutations=10000]
+  [--balanced-repetitions=1000] [--seed=42]
+invoke viz.correct-vs-lapse [--analysis-root=PATH]
 ```
 
 If Panel 1 aggregation or validation fails after its immutable partials have
@@ -54,6 +58,33 @@ feature. Significance dots and map-title counts reuse the original synchronized
 max-|t| FWER inference; no tests are recomputed by the renderer. A CSV reports
 all 126 displayed tests. Outputs are written to
 `reports/figures/manuscript/supplement_outcome_state_modulation.*`.
+
+### `invoke analysis.outcome-modulation`
+
+Computes commission-error (Lapse) minus correct-omission (Correct) contrasts
+separately within IN and OUT. The primary paired analysis uses one equal-window
+cell mean per participant so unequal trial counts do not weight group effects.
+Eligibility is determined independently for IN and OUT and requires the
+configured minimum in both outcome cells. Schaefer-400 maps use synchronized
+cluster-mass FWER correction across nine features within state; Yeo-7 tests use
+maximum-|t| FWER correction across all 63 network-feature cells within state.
+
+The balanced sensitivity samples equal Correct and Lapse counts separately
+within participant, state, and run, then bootstraps participants with
+replacement. Across repeated samples it stores median t and mean-difference
+maps, 95% hierarchical-bootstrap intervals, direction stability, and the
+retained participant count. Use `--slurm --dry-run` before submitting the
+24-hour statistics job. The immutable output is
+`main/outcome_modulation/observed.*`.
+
+### `invoke viz.correct-vs-lapse`
+
+Renders the outcome-modulation derivative as IN/OUT network heatmaps plus 18
+genuine Schaefer-400 cortical maps. Map titles report cluster-FWER-significant
+parcel counts and the number of parcels with at least 95% direction stability
+under balanced resampling. A CSV includes every corrected network and parcel
+test. Outputs use the stem
+`reports/figures/manuscript/supplement_correct_vs_lapse_modulation`.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.

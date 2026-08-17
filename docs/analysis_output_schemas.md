@@ -56,3 +56,10 @@ equal-run alternatives use the `_equal_run` suffix. Each modulation family
 contains primary cluster-mass FWER p-values and BH-FDR sensitivity p-values.
 Spectral parcel selection is repeated independently for each weighting using
 its own significant FOOOF-exponent cluster map.
+
+The supplementary `outcome_modulation` bundle stores separate IN and OUT
+Lapse-minus-Correct participant contrasts, Schaefer-400 cluster-FWER maps,
+Yeo-7 maximum-statistic-FWER maps, cell counts and subject orders, and
+run-stratified balanced-resampling summaries. It is an immutable derivative of
+the same corrected labels and nine-feature tensor and does not alter the four
+canonical panel bundles.

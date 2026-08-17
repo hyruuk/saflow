@@ -34,6 +34,11 @@
 
 ## Unreleased
 
+- Add an independently schedulable Correct-versus-Lapse outcome-modulation
+  derivative with state-specific participant eligibility, Schaefer-400
+  cluster inference, Yeo-7 maximum-statistic inference, run-stratified balanced
+  resampling, SLURM submission, and a combined network/parcel panel.
+
 - Add a supplementary outcome-stratified state-modulation panel that renders
   correct-omission and commission-error OUT-minus-IN Yeo-7 effects, corrected
   significance matrices, all-feature cortical maps, and a complete corrected-test

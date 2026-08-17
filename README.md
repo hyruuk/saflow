@@ -19,6 +19,9 @@ invoke pipeline.resume --slurm
 invoke viz.panel1
 invoke analysis.panel4 && invoke viz.panels --panel=panel4
 invoke viz.outcome-state                     # CO and CE OUT-minus-IN network maps
+invoke analysis.outcome-modulation --slurm --dry-run
+invoke analysis.outcome-modulation --slurm
+invoke viz.correct-vs-lapse
 ```
 
 Panel 1 aggregation reuses completed immutable statistics and permutation
@@ -95,6 +98,17 @@ from the existing network-dynamics bundle. It presents CO and CE OUT-minus-IN
 effects separately as corrected t-statistic matrices and cortical maps for all
 nine features. A complete CSV reports every corrected test. This is
 an equal-window, Yeo-7 network analysis; it is not a parcel-level Panel 1 rerun.
+
+The independent `analysis.outcome-modulation` derivative tests Lapse minus
+Correct separately within IN and OUT. Its primary analysis pools all eligible
+windows into one mean per participant/state/outcome, preventing unequal trial
+counts from weighting the group test. Parcel inference uses synchronized
+cluster-mass FWER correction across all nine corrected features within each
+state; Yeo-7 inference uses synchronized maximum-|t| FWER correction across all
+63 network-feature cells. A hierarchical sensitivity repeatedly downsamples
+the two outcome cells to equal within-run counts and bootstraps participants.
+Render the resulting network heatmaps
+and genuine Schaefer-400 maps with `invoke viz.correct-vs-lapse`.
 
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 
