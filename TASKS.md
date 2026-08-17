@@ -21,6 +21,7 @@ invoke viz.panel1 [--analysis-root=PATH] \
   [--weighting=equal_window|equal_run]
 invoke analysis.panel4 [--analysis-root=PATH] [--permutations=10000]
 invoke viz.panels --panel=panel4
+invoke viz.outcome-state [--analysis-root=PATH] [--analysis-id=ID]
 ```
 
 If Panel 1 aggregation or validation fails after its immutable partials have
@@ -43,6 +44,16 @@ curves needed to reproduce Panel 1 mean and SEM ribbons.
 Both equal-window (primary) and equal-run feature-modulation maps and selected
 spectra are retained. Primary masks use a two-sided, surface-adjacency
 cluster-mass sign-flip test; per-feature BH-FDR is retained for sensitivity.
+
+### `invoke viz.outcome-state`
+
+Renders CO-specific and CE-specific OUT-minus-IN Yeo-7 network modulation from
+the existing `network_dynamics/observed.*` bundle. The panel combines two
+corrected t-statistic matrices with 18 cortical maps covering every outcome and
+feature. Significance dots and map-title counts reuse the original synchronized
+max-|t| FWER inference; no tests are recomputed by the renderer. A CSV reports
+all 126 displayed tests. Outputs are written to
+`reports/figures/manuscript/supplement_outcome_state_modulation.*`.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.

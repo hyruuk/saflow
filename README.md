@@ -18,6 +18,7 @@ invoke pipeline.all --slurm --analyses=feature_modulation \
 invoke pipeline.resume --slurm
 invoke viz.panel1
 invoke analysis.panel4 && invoke viz.panels --panel=panel4
+invoke viz.outcome-state                     # CO and CE OUT-minus-IN network maps
 ```
 
 Panel 1 aggregation reuses completed immutable statistics and permutation
@@ -88,6 +89,12 @@ does not rerun source reconstruction, spectral estimation, or classification.
 
 Legacy paper outputs are not changed. Create their hash inventory with
 `invoke analysis.legacy-inventory`.
+
+`invoke viz.outcome-state` renders a supplementary four-part panel directly
+from the existing network-dynamics bundle. It presents CO and CE OUT-minus-IN
+effects separately as corrected t-statistic matrices and cortical maps for all
+nine features. A complete CSV reports every corrected test. This is
+an equal-window, Yeo-7 network analysis; it is not a parcel-level Panel 1 rerun.
 
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 

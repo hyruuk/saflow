@@ -4525,6 +4525,38 @@ def panel1(
 
 
 @task
+def outcome_state_panel(
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    reports_root="reports",
+    config="config.yaml",
+):
+    """Render CO- and CE-specific OUT-minus-IN network modulation."""
+    if analysis_root is None:
+        from code.utils.config import load_config
+
+        loaded = load_config(config)
+        analysis_root = str(
+            Path(loaded["paths"]["data_root"])
+            / "processed"
+            / loaded.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
+        )
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.visualization.outcome_state_panel",
+        "--analysis-root",
+        analysis_root,
+        "--reports-root",
+        reports_root,
+    ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
 def classify_aggregate(
     c,
     feature,
@@ -5399,6 +5431,7 @@ viz.add_task(stats_classif_panel, name="stats-classif-panel")
 viz.add_task(behavior)
 viz.add_task(viz_panels, name="panels")
 viz.add_task(panel1, name="panel1")
+viz.add_task(outcome_state_panel, name="outcome-state")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

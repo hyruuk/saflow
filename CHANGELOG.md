@@ -34,6 +34,11 @@
 
 ## Unreleased
 
+- Add a supplementary outcome-stratified state-modulation panel that renders
+  correct-omission and commission-error OUT-minus-IN Yeo-7 effects, corrected
+  significance matrices, all-feature cortical maps, and a complete corrected-test
+  table directly from the existing network bundle.
+
 - Add Panel 4 network attribution of IN-versus-OUT effects, combining corrected
   Yeo-7 modulation with population and personalized held-out feature×network
   reliance. The compact analysis reuses validated Panel 2/3 outputs and applies
