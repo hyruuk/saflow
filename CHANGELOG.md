@@ -1,5 +1,10 @@
 # Changelog
 
+- Make generated analysis IDs optional in the user-facing corrected-analysis
+  workflow. `analysis.plan`, `pipeline.resume`, rendering, and audit now resolve
+  the active `main/` analysis while preserving IDs internally for provenance
+  and legacy recovery.
+
 - Redesign Panel 2 around the contrast between unsuccessful cross-person
   generalization and successful participant-specific decoding, adding paired
   participant scores, held-out-run stability, and subject-level feature and

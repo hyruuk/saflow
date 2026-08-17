@@ -3374,13 +3374,15 @@ def analysis_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
 
 
 @task
-def analysis_run(c, analysis_id, analysis_root=None, n_permutations=1000,
+def analysis_run(c, analysis_id=None, analysis_root=None, n_permutations=1000,
                 minimum_circular_offset=24, seed=42, config="config.yaml"):
     """Configure corrected sensor and Schaefer-400 fitting/permutation inference."""
     cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "run",
-           "--analysis-id", analysis_id, "--config", config,
+           "--config", config,
            "--n-permutations", str(n_permutations),
            "--minimum-circular-offset", str(minimum_circular_offset), "--seed", str(seed)]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
     if analysis_root:
         cmd.extend(["--analysis-root", analysis_root])
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -3474,7 +3476,7 @@ def analysis_synthetic(c, output_dir="reports/synthetic/analysis", seed=42):
 
 
 @task
-def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, runs=None,
+def analysis_execution_plan(c, analysis_id=None, analysis_root=None, subjects=None, runs=None,
                          spaces="sensor schaefer_400",
                          analyses="feature_modulation multifeature_decoding network_dynamics",
                          start_at=None, stop_after=None, skip=None,
@@ -3485,8 +3487,6 @@ def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, r
         "-m",
         "code.analysis.workflow",
         "plan",
-        "--analysis-id",
-        analysis_id,
         "--config",
         config,
         "--spaces",
@@ -3494,6 +3494,8 @@ def analysis_execution_plan(c, analysis_id, analysis_root=None, subjects=None, r
         "--analyses",
         analyses,
     ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
     for flag, value in (
         ("--analysis-root", analysis_root),
         ("--subjects", subjects),
@@ -3525,7 +3527,7 @@ def analysis_export(c, analysis_root, analysis_id=None, destination=None, force=
 
 @task
 def analysis_audit(
-    c, analysis_id, analysis_root=None, reports_root="reports",
+    c, analysis_id=None, analysis_root=None, reports_root="reports",
     config="config.yaml",
 ):
     """Require complete real bundles and matching rendered composite provenance."""
@@ -3534,13 +3536,13 @@ def analysis_audit(
         "-m",
         "code.analysis.workflow",
         "audit",
-        "--analysis-id",
-        analysis_id,
         "--reports-root",
         reports_root,
         "--config",
         config,
     ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
     if analysis_root:
         cmd.extend(["--analysis-root", analysis_root])
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
@@ -4288,6 +4290,7 @@ analysis.add_task(analysis_run, name="run")
 analysis.add_task(state_multifeature, name="state-multifeature")
 analysis.add_task(analysis_synthetic, name="synthetic")
 analysis.add_task(analysis_execution_plan, name="execution-plan")
+analysis.add_task(analysis_execution_plan, name="plan")
 analysis.add_task(analysis_export, name="export")
 analysis.add_task(analysis_audit, name="audit")
 analysis.add_task(analysis_legacy_inventory, name="legacy-inventory")

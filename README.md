@@ -135,6 +135,7 @@ Saflow implements a complete MEG analysis pipeline for the gradCPT (gradual Cont
 - ✅ **Group statistics** - paired t-tests with tmax/FDR/Bonferroni corrections
 - ✅ **Classification** - single-feature, multi-feature (4 axes), and Yeo-network-restricted
 - ✅ **Publication panels** - Panel 3 labels its matrices with full Yeo-7 network and feature names
+- ✅ **ID-free active workflow** - Planning, recovery, rendering, and auditing default to `main/`; generated analysis IDs remain internal provenance
 - ✅ **Interaction-first network figure** - complete corrected heatmaps, factorial profiles, and effect-size intervals
 - ✅ **Composite figures** - publication-ready stats+classif panels, FOOOF spectral decomposition, network story panels
 - ✅ **Modern Python** - type hints, dataclasses, invoke task runner

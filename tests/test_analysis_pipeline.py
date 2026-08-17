@@ -21,6 +21,7 @@ from code.analysis.workflow import (
     _capacity_limited_wave,
     _downstream_nodes,
     _invalid_cell_reason,
+    _resolve_analysis,
     _resume_submission_wave,
     build_parser,
 )
@@ -425,3 +426,23 @@ def test_all_pipeline_requires_explicit_slurm_flag():
     cluster = build_parser().parse_args(["all", "--slurm", "--dry-run"])
     assert not local.slurm
     assert cluster.slurm
+
+
+def test_user_facing_commands_default_to_active_analysis(tmp_path: Path):
+    analysis_id = "analysis-20260102T030405Z-gabc-c123456789abc"
+    active = tmp_path / "processed" / "panel_analysis" / "main"
+    active.mkdir(parents=True)
+    (active / "provenance.json").write_text(
+        json.dumps({"analysis_id": analysis_id}) + "\n"
+    )
+    config = {
+        "paths": {"data_root": str(tmp_path)},
+        "analysis_workflow": {"processed_directory": "panel_analysis"},
+    }
+
+    resolved_id, resolved_directory = _resolve_analysis(config, None, None)
+
+    assert resolved_id == analysis_id
+    assert resolved_directory == active
+    assert build_parser().parse_args(["plan"]).analysis_id is None
+    assert build_parser().parse_args(["run"]).analysis_id is None

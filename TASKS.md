@@ -9,7 +9,7 @@ top-level directory on every run:
 ```bash
 invoke analysis.preflight [--analysis-root=PATH] [--force]
   [--subjects="04 05"] [--runs="02 03"]
-invoke analysis.execution-plan --analysis-id=analysis-... [--subjects="04 05"] \
+invoke analysis.plan [--subjects="04 05"] \
   [--runs="02 03"] [--spaces="sensor schaefer_400"] \
   [--analyses="feature_modulation network_dynamics"] \
   [--start-at=analyses] [--stop-after=analyses] \
@@ -40,6 +40,11 @@ cluster-mass sign-flip test; per-feature BH-FDR is retained for sensitivity.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.
+`analysis.plan` is its preferred short name. All user-facing analysis commands
+resolve the active `main/` analysis automatically. The optional
+`--analysis-id` argument is retained only for advanced legacy recovery and
+precise debugging; routine planning, resume, rendering, and audit commands do
+not require it.
 Regenerate this plan after changing the canonical feature contract; recovery
 then excludes retired cells such as FOOOF R². Panel 1 cluster inference uses
 the configured `paths.freesurfer_subjects_dir/fsaverage` surfaces and atlas

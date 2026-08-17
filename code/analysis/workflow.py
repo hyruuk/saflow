@@ -66,6 +66,14 @@ def _analysis_root(config: dict, override: str | None) -> Path:
     return Path(config["paths"]["data_root"]) / "processed" / directory
 
 
+def _resolve_analysis(config: dict, override: str | None, analysis_id: str | None) -> tuple[str, Path]:
+    """Resolve an optional advanced ID to the active analysis by default."""
+    root = _analysis_root(config, override)
+    resolved_id = analysis_id or active_analysis_id(root)
+    validate_analysis_id(resolved_id)
+    return resolved_id, resolve_analysis_directory(root, resolved_id)
+
+
 def run_preflight(args: argparse.Namespace) -> Path:
     """Initialize the active analysis and record required input checks."""
     config = _load_config(Path(args.config))
@@ -122,9 +130,10 @@ def run_analysis(args: argparse.Namespace) -> Path:
     ``classification/chunks`` and ``statistics/chunks``. This command never
     replaces completed bundles and refuses an uninitialized analysis ID.
     """
-    validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
-    analysis_dir = _analysis_root(config, args.analysis_root) / args.analysis_id
+    analysis_id, analysis_dir = _resolve_analysis(
+        config, args.analysis_root, args.analysis_id
+    )
     preflight = analysis_dir / "preflight_report.json"
     if (
         not preflight.exists()
@@ -132,7 +141,7 @@ def run_analysis(args: argparse.Namespace) -> Path:
     ):
         raise RuntimeError("a passing analysis_workflow-preflight report is required")
     manifest = {
-        "analysis_id": args.analysis_id,
+        "analysis_id": analysis_id,
         "n_permutations": args.n_permutations,
         "seed": args.seed,
         "minimum_circular_offset": args.minimum_circular_offset,
@@ -149,17 +158,16 @@ def run_analysis(args: argparse.Namespace) -> Path:
 
 def plan_execution(args: argparse.Namespace) -> Path:
     """Write a complete inspectable execution plan without submitting any jobs."""
-    validate_analysis_id(args.analysis_id)
     config = _load_config(Path(args.config))
-    analysis_dir = resolve_analysis_directory(
-        _analysis_root(config, args.analysis_root), args.analysis_id
+    analysis_id, analysis_dir = _resolve_analysis(
+        config, args.analysis_root, args.analysis_id
     )
     subjects = args.subjects.split() if args.subjects else config["bids"]["subjects"]
     runs = args.runs.split() if args.runs else config["bids"]["task_runs"]
     spaces = args.spaces.split()
     analysis_workflow_config = config.get("analysis_workflow", {})
     manifest = build_execution_plan(
-        args.analysis_id,
+        analysis_id,
         subjects,
         runs,
         spaces,
@@ -192,7 +200,7 @@ def plan_execution(args: argparse.Namespace) -> Path:
     )
     provenance = json.loads((analysis_dir / "provenance.json").read_text())
     manifest["provenance"].update({
-        "analysis_id": args.analysis_id,
+        "analysis_id": analysis_id,
         "config_hash": provenance.get("config_hash", config_hash(config)),
         "git_commit": provenance["git"]["commit"],
         "git_dirty": provenance["git"]["dirty"],
@@ -887,14 +895,14 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--force", action="store_true")
     run = commands.add_parser("run")
     run.add_argument("--config", default="config.yaml")
-    run.add_argument("--analysis-id", required=True)
+    run.add_argument("--analysis-id")
     run.add_argument("--analysis-root")
     run.add_argument("--n-permutations", type=int, default=1000)
     run.add_argument("--minimum-circular-offset", type=int, default=24)
     run.add_argument("--seed", type=int, default=42)
     plan = commands.add_parser("plan")
     plan.add_argument("--config", default="config.yaml")
-    plan.add_argument("--analysis-id", required=True)
+    plan.add_argument("--analysis-id")
     plan.add_argument("--analysis-root")
     plan.add_argument("--subjects")
     plan.add_argument("--runs")
