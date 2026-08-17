@@ -19,6 +19,8 @@ invoke pipeline.resume [--analysis-root=PATH]
 invoke analysis.export --analysis-root=PATH
 invoke viz.panel1 [--analysis-root=PATH] \
   [--weighting=equal_window|equal_run]
+invoke analysis.panel4 [--analysis-root=PATH] [--permutations=10000]
+invoke viz.panels --panel=panel4
 ```
 
 If Panel 1 aggregation or validation fails after its immutable partials have
@@ -388,6 +390,15 @@ written under `reports/figures/slides/`. Both panels also write their captions
 into their slide directories. Every artifact has a JSON sidecar; manuscript composite
 sidecars use the clean `<figure>.json` name.
 Synthetic rendering cannot overwrite real output.
+
+### `invoke analysis.panel4`
+
+Build the compact Panel 4 network-attribution bundle without repeating any
+upstream HPC analysis. The task count-weights the existing four outcome-cell
+means to recover participant-level IN and OUT means for all nine corrected
+features, tests the complete Yeo-7 × feature modulation matrices with 10,000
+synchronized sign flips, and imports the held-out feature×network reliance
+families from Panel 2. Render with `invoke viz.panels --panel=panel4`.
 
 ### `invoke analysis.audit`
 

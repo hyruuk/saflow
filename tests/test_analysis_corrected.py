@@ -72,9 +72,7 @@ def test_reflected_filter_is_boundary_safe():
 def test_strict_eight_trial_labels():
     values = np.arange(40.0)
     indices = np.asarray([np.arange(8), np.arange(16, 24), np.arange(32, 40)])
-    np.testing.assert_array_equal(
-        reconstruct_strict_labels(values, indices), [-1, 0, 1]
-    )
+    np.testing.assert_array_equal(reconstruct_strict_labels(values, indices), [-1, 0, 1])
     with pytest.raises(ValueError, match="shape"):
         reconstruct_strict_labels(values, indices[:, :7])
 
@@ -101,9 +99,7 @@ def test_matched_anchor_outcome_and_any_bad_rejection():
     outcomes[23] = "commission_error"
     indices = np.asarray([np.arange(8), np.arange(8, 16), np.arange(16, 24)])
     matched = label_matched_rare_outcomes(outcomes, indices)
-    np.testing.assert_array_equal(
-        matched, [OUTCOME_CORRECT_OMISSION, 0, OUTCOME_COMMISSION_ERROR]
-    )
+    np.testing.assert_array_equal(matched, [OUTCOME_CORRECT_OMISSION, 0, OUTCOME_COMMISSION_ERROR])
     bad = np.zeros((3, 8), dtype=bool)
     bad[2, 0] = True
     vtc = np.repeat([0.0, 1.0, 2.0], 8)
@@ -176,18 +172,14 @@ def test_synchronized_cluster_family_is_deterministic():
     second = synchronized_cluster_mass_test(
         values, adjacency, n_permutations=19, cluster_threshold=2, seed=8
     )
-    np.testing.assert_array_equal(
-        first["null_max_cluster_mass"], second["null_max_cluster_mass"]
-    )
+    np.testing.assert_array_equal(first["null_max_cluster_mass"], second["null_max_cluster_mass"])
 
 
 def test_label_qc_and_immutable_id(tmp_path: Path):
     summary = summarize_label_overlap(np.asarray([-1, 0, 1]), np.asarray([-1, 1, 0]))
     assert summary["retained"] == 1 and summary["gained"] == 1 and summary["lost"] == 1
     config = {"paths": {"data_root": str(tmp_path)}}
-    analysis_id = create_analysis_id(
-        config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc)
-    )
+    analysis_id = create_analysis_id(config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc))
     initialize(tmp_path, analysis_id, config, {}, Path.cwd())
     with pytest.raises(FileExistsError, match="immutable"):
         initialize(tmp_path, analysis_id, config, {}, Path.cwd())
@@ -195,46 +187,43 @@ def test_label_qc_and_immutable_id(tmp_path: Path):
 
 def test_active_main_analysis_reuses_metadata_id_and_force_replaces(tmp_path: Path):
     config = {"paths": {"data_root": str(tmp_path)}}
-    first_id = create_analysis_id(
-        config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc)
-    )
-    active = initialize(
-        tmp_path, first_id, config, {}, Path.cwd(), active=True
-    )
+    first_id = create_analysis_id(config, Path.cwd(), datetime(2026, 1, 2, tzinfo=timezone.utc))
+    active = initialize(tmp_path, first_id, config, {}, Path.cwd(), active=True)
     assert active == tmp_path / "main"
     assert resolve_analysis_directory(tmp_path) == active
     assert active_analysis_id(tmp_path) == first_id
     with pytest.raises(FileExistsError, match="already exists"):
         initialize(tmp_path, first_id, config, {}, Path.cwd(), active=True)
-    second_id = create_analysis_id(
-        config, Path.cwd(), datetime(2026, 1, 3, tzinfo=timezone.utc)
-    )
-    initialize(
-        tmp_path, second_id, config, {}, Path.cwd(), active=True, force=True
-    )
+    second_id = create_analysis_id(config, Path.cwd(), datetime(2026, 1, 3, tzinfo=timezone.utc))
+    initialize(tmp_path, second_id, config, {}, Path.cwd(), active=True, force=True)
     assert active_analysis_id(tmp_path) == second_id
 
 
 def test_selected_subject_spectra_average_runs_then_parcels():
     contexts = tuple(
         RunLabelContext(
-            start=index, stop=index + 1, subject=subject, run=run,
-            vtc=np.empty(0), contributing_indices=np.empty((0, 8), dtype=int),
+            start=index,
+            stop=index + 1,
+            subject=subject,
+            run=run,
+            vtc=np.empty(0),
+            contributing_indices=np.empty((0, 8), dtype=int),
             contributing_bad_flags=np.empty((0, 8), dtype=bool),
         )
-        for index, (subject, run) in enumerate(
-            (("04", "02"), ("04", "03"), ("05", "02"))
-        )
+        for index, (subject, run) in enumerate((("04", "02"), ("04", "03"), ("05", "02")))
     )
     inputs = type(
-        "Inputs", (),
+        "Inputs",
+        (),
         {"run_label_contexts": contexts, "states": np.asarray(["IN"] * 3)},
     )()
-    values = np.asarray([
-        [[1.0, 3.0], [3.0, 5.0]],
-        [[3.0, 5.0], [5.0, 7.0]],
-        [[9.0, 11.0], [11.0, 13.0]],
-    ])
+    values = np.asarray(
+        [
+            [[1.0, 3.0], [3.0, 5.0]],
+            [[3.0, 5.0], [5.0, 7.0]],
+            [[9.0, 11.0], [11.0, 13.0]],
+        ]
+    )
     observed = _subject_selected_spectra(values, np.asarray([0, 1]), inputs)
     np.testing.assert_array_equal(observed, [[3.0, 5.0], [10.0, 12.0]])
 
@@ -249,12 +238,8 @@ def test_feature_modulation_retains_equal_window_and_equal_run_weighting():
     states = np.tile(states, 2)
     subjects = np.concatenate([subjects, np.asarray(["05"] * 6)])
     runs = np.tile(runs, 2)
-    window_in, _, _ = _subject_state_means(
-        values, states, subjects, runs, weighting="equal_window"
-    )
-    run_in, _, _ = _subject_state_means(
-        values, states, subjects, runs, weighting="equal_run"
-    )
+    window_in, _, _ = _subject_state_means(values, states, subjects, runs, weighting="equal_window")
+    run_in, _, _ = _subject_state_means(values, states, subjects, runs, weighting="equal_run")
     assert window_in[0, 0] == pytest.approx(14.0)
     assert run_in[0, 0] == pytest.approx(8.75)
 
@@ -264,24 +249,15 @@ def test_panel1_spectral_pairs_share_main_and_difference_y_axes():
     arrays = {"frequency": frequency}
     for prefix in ("", "aperiodic_", "corrected_", "periodic_"):
         baseline = -np.log10(frequency)
-        arrays[f"subject_{prefix}spectrum_in"] = np.stack(
-            [baseline, baseline + 0.01]
-        )
-        arrays[f"subject_{prefix}spectrum_out"] = np.stack(
-            [baseline - 0.1, baseline - 0.09]
-        )
+        arrays[f"subject_{prefix}spectrum_in"] = np.stack([baseline, baseline + 0.01])
+        arrays[f"subject_{prefix}spectrum_out"] = np.stack([baseline - 0.1, baseline - 0.09])
         arrays[f"{prefix}spectrum_in"] = baseline
         arrays[f"{prefix}spectrum_out"] = baseline - 0.1
     figure = plt.figure()
     groups = _spectral_rows(figure, figure.add_gridspec(6, 16), arrays)
-    for left, right in ((PANEL_NAMES[2], PANEL_NAMES[3]),
-                        (PANEL_NAMES[4], PANEL_NAMES[5])):
-        assert groups[left][0].get_shared_y_axes().joined(
-            groups[left][0], groups[right][0]
-        )
-        assert groups[left][1].get_shared_y_axes().joined(
-            groups[left][1], groups[right][1]
-        )
+    for left, right in ((PANEL_NAMES[2], PANEL_NAMES[3]), (PANEL_NAMES[4], PANEL_NAMES[5])):
+        assert groups[left][0].get_shared_y_axes().joined(groups[left][0], groups[right][0])
+        assert groups[left][1].get_shared_y_axes().joined(groups[left][1], groups[right][1])
     for name in PANEL_NAMES[2:6]:
         condition_lines = groups[name][0].lines[:2]
         assert condition_lines[0].get_linestyle() == "--"
@@ -295,12 +271,8 @@ def test_panel1_defaults_to_equal_window_and_can_select_equal_run():
         "raw_psd_modulation_equal_run": np.asarray([2.0]),
     }
     metadata = {"summary": {"available_weightings": ["equal_window", "equal_run"]}}
-    assert _select_weighting(arrays, metadata, "equal_window")[
-        "raw_psd_modulation"
-    ] == 1.0
-    assert _select_weighting(arrays, metadata, "equal_run")[
-        "raw_psd_modulation"
-    ] == 2.0
+    assert _select_weighting(arrays, metadata, "equal_window")["raw_psd_modulation"] == 1.0
+    assert _select_weighting(arrays, metadata, "equal_run")["raw_psd_modulation"] == 2.0
 
 
 def test_panel1_periodic_spectra_are_modeled_peak_fits(monkeypatch):
@@ -341,13 +313,17 @@ def test_brain_raster_cache_reuses_identical_map(tmp_path, monkeypatch):
         calls.append((args[2], args[3]))
         return np.full((12, 16, 3), 127, dtype=np.uint8)
 
-    monkeypatch.setattr(
-        "code.visualization.plot_surface.render_inflated_view", fake_render
-    )
+    monkeypatch.setattr("code.visualization.plot_surface.render_inflated_view", fake_render)
     figure, axes = plt.subplots(1, 2)
     arguments = (
-        np.asarray([1.0, 2.0]), np.asarray([True, False]),
-        ["parcel-lh", "parcel-rh"], "schaefer_400", {}, -3.0, 3.0, "RdBu_r",
+        np.asarray([1.0, 2.0]),
+        np.asarray([True, False]),
+        ["parcel-lh", "parcel-rh"],
+        "schaefer_400",
+        {},
+        -3.0,
+        3.0,
+        "RdBu_r",
     )
     _plot_brain(axes[0], *arguments, cache_directory=tmp_path)
     _plot_brain(axes[1], *arguments, cache_directory=tmp_path)
@@ -377,9 +353,12 @@ def test_panel1_slide_exports_are_native_and_combine_spectral_progression(tmp_pa
         arrays[f"{prefix}spectrum_out"] = baseline - 0.1
     groups = {}
     for name, count in (
-        (PANEL_NAMES[0], 7), (PANEL_NAMES[1], 7),
-        (PANEL_NAMES[6], 2), (PANEL_NAMES[7], 2),
-        (PANEL_NAMES[8], 7), (PANEL_NAMES[9], 7),
+        (PANEL_NAMES[0], 7),
+        (PANEL_NAMES[1], 7),
+        (PANEL_NAMES[6], 2),
+        (PANEL_NAMES[7], 2),
+        (PANEL_NAMES[8], 7),
+        (PANEL_NAMES[9], 7),
     ):
         figure, axes = plt.subplots(1, count)
         for axis in np.atleast_1d(axes):
@@ -387,7 +366,9 @@ def test_panel1_slide_exports_are_native_and_combine_spectral_progression(tmp_pa
         groups[name] = np.atleast_1d(axes).tolist()
         plt.close(figure)
     outputs = _write_slides(
-        arrays, groups, tmp_path,
+        arrays,
+        groups,
+        tmp_path,
         {"weighting": "equal_window", "map_correction": "FDR"},
     )
     assert len(outputs) == 7
@@ -407,8 +388,7 @@ def test_band_and_feature_contract_excludes_delta():
     )
     assert canonical_band_key("low_beta") == "lobeta"
     assert not any(
-        "delta" in feature
-        for feature in (*FEATURE_MODULATION_FEATURES, *CORRECTED_FEATURES)
+        "delta" in feature for feature in (*FEATURE_MODULATION_FEATURES, *CORRECTED_FEATURES)
     )
     with pytest.raises(ValueError, match="not a canonical"):
         canonical_band_key("delta")
@@ -429,9 +409,7 @@ def test_fsaverage_resolver_prefers_configured_shared_copy(tmp_path: Path, monke
 def test_fsaverage_resolver_fails_before_network_for_invalid_config(tmp_path: Path):
     subjects_dir = tmp_path / "missing_fs_subjects"
     with pytest.raises(FileNotFoundError, match="must contain surf/ and label/"):
-        _resolve_fsaverage_subjects_dir(
-            {"paths": {"freesurfer_subjects_dir": str(subjects_dir)}}
-        )
+        _resolve_fsaverage_subjects_dir({"paths": {"freesurfer_subjects_dir": str(subjects_dir)}})
 
 
 def test_panel1_adjacency_passes_project_config(monkeypatch):
@@ -457,15 +435,11 @@ def test_panel1_adjacency_passes_project_config(monkeypatch):
 
 
 def test_panel_and_schema_contracts_are_complete():
-    assert set(PANEL_SPECS) == {"panel1", "panel2", "panel3"}
-    assert (
-        PANEL_SPECS["panel1"]["composite_filename"] == "panel1_feature_modulation.png"
-    )
-    assert (
-        PANEL_SPECS["panel2"]["composite_filename"]
-        == "panel2_multifeature_decoding.png"
-    )
+    assert set(PANEL_SPECS) == {"panel1", "panel2", "panel3", "panel4"}
+    assert PANEL_SPECS["panel1"]["composite_filename"] == "panel1_feature_modulation.png"
+    assert PANEL_SPECS["panel2"]["composite_filename"] == "panel2_multifeature_decoding.png"
     assert PANEL_SPECS["panel3"]["composite_filename"] == "panel3_network_dynamics.png"
+    assert PANEL_SPECS["panel4"]["composite_filename"] == "panel4_network_state_attribution.png"
     assert set(schema_catalog()) == {
         "labels",
         "maps",
@@ -491,8 +465,7 @@ def test_dry_run_dag_has_aligned_arrays_and_validator_barriers():
         {"index": 3, "subject": "05", "run": "03"},
     ]
     edges = {
-        (edge["upstream"], edge["downstream"], edge["dependency"])
-        for edge in manifest["edges"]
+        (edge["upstream"], edge["downstream"], edge["dependency"]) for edge in manifest["edges"]
     }
     assert ("run_preprocessing", "run_source", "aftercorr") in edges
     assert ("run_source", "run_features", "aftercorr") in edges
@@ -525,8 +498,7 @@ def test_preflight_reads_corrected_events_and_exact_window_metadata(tmp_path: Pa
         {
             "onset": np.arange(24.0),
             "trial_type": [
-                "Rare" if value != "correct_commission" else "Freq"
-                for value in outcomes
+                "Rare" if value != "correct_commission" else "Freq" for value in outcomes
             ],
             "trial_idx": np.arange(24),
             "VTC_raw": np.repeat([0.0, 1.0, 2.0], 8),
@@ -554,9 +526,7 @@ def test_preflight_reads_corrected_events_and_exact_window_metadata(tmp_path: Pa
     for directory, filename in files.items():
         feature_dir = features_root / directory / "sub-04"
         feature_dir.mkdir(parents=True)
-        np.savez_compressed(
-            feature_dir / filename, trial_metadata=metadata, ch_names=names
-        )
+        np.savez_compressed(feature_dir / filename, trial_metadata=metadata, ch_names=names)
 
     report = inspect_inputs(config, ["04"], ["02"])
 

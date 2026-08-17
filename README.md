@@ -5,7 +5,7 @@
 The corrected workflow keeps one active analysis under
 `processed/<configured-analysis-directory>/main/`. It rebuilds strict eight-trial labels
 from reflected-boundary filtered VTC, runs the scientific analyses, and
-generates three final panels from compact exports. The authoritative frequency policy contains
+generates four final panels from compact exports. The authoritative frequency policy contains
 Theta through Gamma 3; Delta and complexity are excluded from the primary branch.
 
 ```bash
@@ -17,6 +17,7 @@ invoke pipeline.all --slurm --analyses=feature_modulation \
   --start-at=analyses --stop-after=analyses  # Panel 1 analysis only
 invoke pipeline.resume --slurm
 invoke viz.panel1
+invoke analysis.panel4 && invoke viz.panels --panel=panel4
 ```
 
 Panel 1 aggregation reuses completed immutable statistics and permutation
@@ -77,6 +78,13 @@ modulation/coupling eligibility. Coupling alone uses clean opposite-state-free
 IN/MID or OUT/MID windows; other primary analyses retain strict eight-trial
 state labels. Coupling removes run-specific network means and pools the
 remaining windows across runs before estimating subject-level correlations.
+
+Panel 4 attributes the nine corrected spectral features to the Yeo-7 networks.
+`invoke analysis.panel4` reconstructs exact equal-window IN and OUT means from
+the existing participant-level network cells, applies synchronized maximum-|t|
+correction separately to FOOOF and corrected-PSD modulation, and reuses the
+independently held-out feature-by-network reliance estimates from Panel 2. It
+does not rerun source reconstruction, spectral estimation, or classification.
 
 Legacy paper outputs are not changed. Create their hash inventory with
 `invoke analysis.legacy-inventory`.

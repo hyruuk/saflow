@@ -48,10 +48,7 @@ MULTIFEATURE_FEATURES = tuple(
 FEATURE_DISPLAY_NAMES = {
     "fooof_exponent": "FOOOF exponent",
     "fooof_offset": "FOOOF offset",
-    **{
-        f"psd_corrected_{band.key}": f"Corrected {band.display_name}"
-        for band in CANONICAL_BANDS
-    },
+    **{f"psd_corrected_{band.key}": f"Corrected {band.display_name}" for band in CANONICAL_BANDS},
 }
 PANEL_COMPONENTS = {
     "panel1": (
@@ -81,6 +78,13 @@ PANEL_COMPONENTS = {
         "D_network_summary",
         "E_dmn_dan_coupling",
         "F_coupling_contrasts",
+    ),
+    "panel4": (
+        "A_network_modulation",
+        "B_modulation_effect_sizes",
+        "C_population_reliance",
+        "D_individual_reliance",
+        "E_modulation_prediction",
     ),
 }
 PANEL1_SLIDE_COMPONENTS = (
@@ -144,11 +148,19 @@ PANEL_SPECS = {
         "layout": "four-cell modulation, contrasts, and DMN-DAN coupling",
         "features": CORRECTED_FEATURES,
     },
+    "panel4": {
+        "composite_filename": "panel4_network_state_attribution.png",
+        "composite_directory": "manuscript",
+        "slide_directory": "panel4_network_state_attribution",
+        "layout": "network modulation, held-out reliance, and modulation-prediction correspondence",
+        "features": CORRECTED_FEATURES,
+    },
 }
 PANEL_ANALYSES = {
     "panel1": "feature_modulation",
     "panel2": "multifeature_decoding",
     "panel3": "network_dynamics",
+    "panel4": "network_state_attribution",
 }
 
 RESULT_SCHEMA_NAMES = (

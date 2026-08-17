@@ -67,17 +67,19 @@ def get_python_executable(config_path="config.yaml"):
                 venv_path = PROJECT_ROOT / venv_path
     candidate = (venv_path / "bin" / "python") if venv_path else Path(sys.executable)
     if not candidate.exists():
-        raise RuntimeError(
-            f"Configured Python does not exist: {candidate}. Run ./setup.sh first."
-        )
+        raise RuntimeError(f"Configured Python does not exist: {candidate}. Run ./setup.sh first.")
     version = subprocess.run(
-        [str(candidate), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
-        check=True, capture_output=True, text=True,
+        [
+            str(candidate),
+            "-c",
+            "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     if version not in {"3.11", "3.12"}:
-        raise RuntimeError(
-            f"Saflow requires Python 3.11-3.12; {candidate} is Python {version}."
-        )
+        raise RuntimeError(f"Saflow requires Python 3.11-3.12; {candidate} is Python {version}.")
     return str(candidate)
 
 
@@ -109,17 +111,17 @@ def resolve_features(features):
     from code.utils.config import load_config
 
     if not features:
-        raise ValueError("--features is required (single name, list, or shortcut: "
-                         "psds, psds_corrected, fooof, complexity, all)")
+        raise ValueError(
+            "--features is required (single name, list, or shortcut: "
+            "psds, psds_corrected, fooof, complexity, all)"
+        )
 
     tokens = features.split() if isinstance(features, str) else list(features)
     config = None
     resolved = []
     for tok in tokens:
         if tok == "fooof_r_squared":
-            raise ValueError(
-                "fooof_r_squared is QC-only and cannot be used as an analysis feature"
-            )
+            raise ValueError("fooof_r_squared is QC-only and cannot be used as an analysis feature")
         if tok in _FEATURE_SHORTCUTS:
             if config is None:
                 config = load_config()
@@ -183,6 +185,7 @@ def resolve_spaces(space):
 # ==============================================================================
 # dev.check.* Tasks - Validation & Quality Checks
 # ==============================================================================
+
 
 @task
 def check_dataset(c, verbose=False):
@@ -310,6 +313,7 @@ def check_code(c, fix=False):
 # dev.* Tasks - Development & Testing
 # ==============================================================================
 
+
 @task
 def test(c, verbose=False, coverage=True, markers=None):
     """Run tests with pytest.
@@ -420,6 +424,7 @@ def docs_mermaid(c, check=False, target=None):
 # env.* Tasks - Environment Management
 # ==============================================================================
 
+
 @task
 def setup(c, mode="basic", python=None, force=False):
     """Run the setup script to create development environment.
@@ -472,10 +477,11 @@ def validate_config(c):
     """Validate configuration file."""
     print("Validating configuration...")
     cmd = [
-        "python", "-c",
+        "python",
+        "-c",
         "'from code.utils.config import load_config; "
         "config = load_config(); "
-        "print(\"✓ Configuration is valid\")'"
+        'print("✓ Configuration is valid")\'',
     ]
     c.run(" ".join(cmd), pty=True)
 
@@ -489,6 +495,7 @@ def rebuild(c, mode="dev"):
 # ==============================================================================
 # get.* Tasks - Data Downloads
 # ==============================================================================
+
 
 @task
 def get_atlases(c):
@@ -519,6 +526,7 @@ def get_atlases(c):
 # ==============================================================================
 # pipeline.* Tasks - Data Processing Pipeline
 # ==============================================================================
+
 
 @task
 def validate_inputs(c, data_root=None, verbose=False):
@@ -563,8 +571,15 @@ def validate_all(c, space=None, families=None, subjects=None, window=8, jobs=1):
         invoke validate.all --subjects 17,18,26
     """
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.utils.validate_pipeline",
-           "--window", str(window), "--jobs", str(jobs)]
+    cmd = [
+        python_exe,
+        "-m",
+        "code.utils.validate_pipeline",
+        "--window",
+        str(window),
+        "--jobs",
+        str(jobs),
+    ]
     if space:
         cmd.extend(["--space", space])
     if families:
@@ -575,8 +590,17 @@ def validate_all(c, space=None, families=None, subjects=None, window=8, jobs=1):
 
 
 @task
-def bids(c, input_dir=None, output_dir=None, subjects=None, runs=None,
-         log_level="INFO", skip_valid=True, slurm=False, dry_run=False):
+def bids(
+    c,
+    input_dir=None,
+    output_dir=None,
+    subjects=None,
+    runs=None,
+    log_level="INFO",
+    skip_valid=True,
+    slurm=False,
+    dry_run=False,
+):
     """Run BIDS conversion (Stage 0).
 
     Examples:
@@ -615,9 +639,18 @@ def bids(c, input_dir=None, output_dir=None, subjects=None, runs=None,
 
 
 @task
-def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
-               skip_existing=True, crop=None, skip_report=False, slurm=False,
-               dry_run=False):
+def preprocess(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    crop=None,
+    skip_report=False,
+    slurm=False,
+    dry_run=False,
+):
     """Run MEG preprocessing (Stage 1).
 
     Pipeline: Filter -> Epoch (Freq+Rare only) -> AR1 -> ICA -> AR2 (fit+transform)
@@ -639,15 +672,22 @@ def preprocess(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         _preprocess_slurm(c, subject, runs, bids_root, log_level, skip_existing, dry_run)
     else:
         from code.utils.config import load_config
+
         config = load_config()
         subjects = [subject] if subject else config["bids"]["subjects"]
         print(f"Processing {len(subjects)} subject(s): {', '.join(subjects)}\n")
         for subj in subjects:
-            print(f"\n{'='*40}")
+            print(f"\n{'=' * 40}")
             print(f"Subject: {subj}")
-            print(f"{'='*40}")
+            print(f"{'=' * 40}")
             _preprocess_local(
-                c, subj, runs, bids_root, log_level, skip_existing, crop,
+                c,
+                subj,
+                runs,
+                bids_root,
+                log_level,
+                skip_existing,
+                crop,
                 skip_report,
             )
 
@@ -662,6 +702,7 @@ def preprocess_report(c, subject=None, dataset=False):
         invoke pipeline.preprocess-report --subject=04 --dataset
     """
     from code.utils.config import load_config
+
     config = load_config()
 
     # Default: all subjects + dataset report
@@ -684,8 +725,16 @@ def preprocess_report(c, subject=None, dataset=False):
 
 
 @task
-def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
-                 skip_existing=True, slurm=False, dry_run=False):
+def source_recon(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    slurm=False,
+    dry_run=False,
+):
     """Run source reconstruction (Stage 2).
 
     By default processes all subjects from config. Use --subject for a single subject.
@@ -709,9 +758,9 @@ def source_recon(c, subject=None, runs=None, bids_root=None, log_level="INFO",
         print(f"Processing {len(subjects)} subject(s): {', '.join(subjects)}\n")
 
         for subj in subjects:
-            print(f"\n{'='*40}")
+            print(f"\n{'=' * 40}")
             print(f"Subject: {subj}")
-            print(f"{'='*40}")
+            print(f"{'=' * 40}")
             _source_recon_local(c, subj, runs, bids_root, log_level, skip_existing)
 
 
@@ -751,9 +800,9 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
     python_exe = get_python_executable()
 
     for subj in subjects:
-        print(f"\n{'='*40}")
+        print(f"\n{'=' * 40}")
         print(f"Subject: {subj}")
-        print(f"{'='*40}")
+        print(f"{'=' * 40}")
 
         cmd = [python_exe, "-m", "code.source_reconstruction.apply_atlas"]
         cmd.extend(["--subject", subj])
@@ -776,9 +825,20 @@ def atlas(c, subject=None, runs=None, atlases=None, skip_existing=True, slurm=Fa
 
 
 @task
-def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="INFO",
-         skip_existing=True, atlases=None, space="sensor schaefer_400",
-         feature_type="all", n_events_window=8, skip=None, dry_run=False):
+def full_features_legacy(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    atlases=None,
+    space="sensor schaefer_400",
+    feature_type="all",
+    n_events_window=8,
+    skip=None,
+    dry_run=False,
+):
     """Submit the full per-run pipeline as a chained SLURM job graph.
 
     Chains preprocess → source-recon → atlas → features as four (or more)
@@ -843,8 +903,7 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
         unknown = skip_set - valid_stages
         if unknown:
             raise ValueError(
-                f"Unknown --skip stage(s): {sorted(unknown)}. "
-                f"Valid: {sorted(valid_stages)}"
+                f"Unknown --skip stage(s): {sorted(unknown)}. Valid: {sorted(valid_stages)}"
             )
     else:
         skip_set = set()
@@ -885,8 +944,13 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
     else:
         print(f"\n{'#' * 80}\n# Stage 1/4: preprocessing\n{'#' * 80}")
         prep_id = _preprocess_slurm(
-            c, subject=subject, runs=runs, bids_root=bids_root,
-            log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
+            c,
+            subject=subject,
+            runs=runs,
+            bids_root=bids_root,
+            log_level=log_level,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
         )
 
     # Stage 2: source reconstruction (aftercorr on preprocessing if it ran).
@@ -895,12 +959,20 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
         src_id = None
     else:
         src_dep = _upstream_dep(prep_id)
-        print(f"\n{'#' * 80}\n# Stage 2/4: source reconstruction "
-              f"(aftercorr:{prep_id or '<none>'})\n{'#' * 80}")
+        print(
+            f"\n{'#' * 80}\n# Stage 2/4: source reconstruction "
+            f"(aftercorr:{prep_id or '<none>'})\n{'#' * 80}"
+        )
         src_id = _source_recon_slurm(
-            c, subject=subject, runs=runs, bids_root=bids_root,
-            log_level=log_level, skip_existing=skip_existing, dry_run=dry_run,
-            dependencies=src_dep, dep_type="aftercorr",
+            c,
+            subject=subject,
+            runs=runs,
+            bids_root=bids_root,
+            log_level=log_level,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
+            dependencies=src_dep,
+            dep_type="aftercorr",
         )
 
     # Stage 3: atlas application (aftercorr on the nearest upstream stage).
@@ -910,13 +982,20 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
     else:
         atlas_dep = _upstream_dep(src_id, prep_id)
         upstream_label = src_id and "src" or prep_id and "prep" or "<none>"
-        atlas_dep_str = (atlas_dep[0] if atlas_dep else "<none>")
-        print(f"\n{'#' * 80}\n# Stage 3/4: atlas application "
-              f"(aftercorr:{atlas_dep_str} [{upstream_label}])\n{'#' * 80}")
+        atlas_dep_str = atlas_dep[0] if atlas_dep else "<none>"
+        print(
+            f"\n{'#' * 80}\n# Stage 3/4: atlas application "
+            f"(aftercorr:{atlas_dep_str} [{upstream_label}])\n{'#' * 80}"
+        )
         atlas_id = _atlas_slurm(
-            c, subject=subject, runs=runs, atlases=atlases,
-            skip_existing=skip_existing, dry_run=dry_run,
-            dependencies=atlas_dep, dep_type="aftercorr",
+            c,
+            subject=subject,
+            runs=runs,
+            atlases=atlases,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
+            dependencies=atlas_dep,
+            dep_type="aftercorr",
         )
 
     # Stage 4: feature extraction — one array per requested space.
@@ -935,20 +1014,32 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
                 # non-sensor features prefer atlas → source-recon → preprocess.
                 up_dep = _upstream_dep(atlas_id, src_id, prep_id)
                 up_label = (
-                    "atlas" if atlas_id
-                    else "source-recon" if src_id
-                    else "preprocess" if prep_id
+                    "atlas"
+                    if atlas_id
+                    else "source-recon"
+                    if src_id
+                    else "preprocess"
+                    if prep_id
                     else "<none>"
                 )
             up_dep_str = up_dep[0] if up_dep else "<none>"
-            print(f"\n{'#' * 80}\n# Stage 4/4 [{i}/{len(space_list)}]: features "
-                  f"({feature_type}, space={sp}, aftercorr:{up_dep_str} [{up_label}])"
-                  f"\n{'#' * 80}")
+            print(
+                f"\n{'#' * 80}\n# Stage 4/4 [{i}/{len(space_list)}]: features "
+                f"({feature_type}, space={sp}, aftercorr:{up_dep_str} [{up_label}])"
+                f"\n{'#' * 80}"
+            )
             feat_id = _features_slurm(
-                c, feature_type, subject=subject, runs=runs, space=sp,
-                skip_existing=skip_existing, log_level=log_level,
-                dry_run=dry_run, n_events_window=n_events_window,
-                dependencies=up_dep, dep_type="aftercorr",
+                c,
+                feature_type,
+                subject=subject,
+                runs=runs,
+                space=sp,
+                skip_existing=skip_existing,
+                log_level=log_level,
+                dry_run=dry_run,
+                n_events_window=n_events_window,
+                dependencies=up_dep,
+                dep_type="aftercorr",
                 array_name=f"{feature_type}_{sp}_array",
             )
             feature_array_ids[sp] = feat_id
@@ -957,34 +1048,49 @@ def full_features_legacy(c, subject=None, runs=None, bids_root=None, log_level="
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "pipeline_full"
     log_dir.mkdir(parents=True, exist_ok=True)
-    all_ids = [j for j in (
-        prep_id, src_id, atlas_id, *feature_array_ids.values(),
-    ) if j]
+    all_ids = [
+        j
+        for j in (
+            prep_id,
+            src_id,
+            atlas_id,
+            *feature_array_ids.values(),
+        )
+        if j
+    ]
     manifest_path = log_dir / f"pipeline_full_manifest_{timestamp}.json"
-    save_job_manifest(all_ids, manifest_path, metadata={
-        "stage": "pipeline_full",
-        "timestamp": timestamp,
-        "subjects": subjects,
-        "runs": run_list,
-        "feature_type": feature_type,
-        "spaces": space_list,
-        "skip_existing": skip_existing,
-        "skipped_stages": sorted(skip_set),
-        "preprocess_array_id": prep_id,
-        "source_recon_array_id": src_id,
-        "atlas_array_id": atlas_id,
-        "features_array_ids": feature_array_ids,
-        "dry_run": dry_run,
-    })
+    save_job_manifest(
+        all_ids,
+        manifest_path,
+        metadata={
+            "stage": "pipeline_full",
+            "timestamp": timestamp,
+            "subjects": subjects,
+            "runs": run_list,
+            "feature_type": feature_type,
+            "spaces": space_list,
+            "skip_existing": skip_existing,
+            "skipped_stages": sorted(skip_set),
+            "preprocess_array_id": prep_id,
+            "source_recon_array_id": src_id,
+            "atlas_array_id": atlas_id,
+            "features_array_ids": feature_array_ids,
+            "dry_run": dry_run,
+        },
+    )
 
     print("\n" + "=" * 80)
     if dry_run:
-        print(f"[DRY RUN] pipeline.all chain planned for "
-              f"{len(subjects)} subject(s) × {len(run_list)} run(s); "
-              f"manifest: {manifest_path}")
+        print(
+            f"[DRY RUN] pipeline.all chain planned for "
+            f"{len(subjects)} subject(s) × {len(run_list)} run(s); "
+            f"manifest: {manifest_path}"
+        )
     else:
-        print(f"✓ pipeline.all submitted: prep={prep_id}, src={src_id}, "
-              f"atlas={atlas_id}, features={feature_array_ids}")
+        print(
+            f"✓ pipeline.all submitted: prep={prep_id}, src={src_id}, "
+            f"atlas={atlas_id}, features={feature_array_ids}"
+        )
         print(f"  manifest: {manifest_path}")
     print("=" * 80)
 
@@ -1044,8 +1150,7 @@ def all_pipeline(
 
 @task
 def resume(
-    c, analysis_id=None, analysis_root=None, slurm=False, dry_run=False,
-    config="config.yaml"
+    c, analysis_id=None, analysis_root=None, slurm=False, dry_run=False, config="config.yaml"
 ):
     """Submit a dependency-safe wave containing only missing or invalid cells."""
     cmd = [
@@ -1071,9 +1176,18 @@ def resume(
 # pipeline.features.* Tasks - Feature Extraction
 # ==============================================================================
 
+
 @task
-def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False,
-          n_events_window=8):
+def fooof(
+    c,
+    subject=None,
+    runs=None,
+    space="sensor",
+    skip_existing=True,
+    slurm=False,
+    dry_run=False,
+    n_events_window=8,
+):
     """Extract FOOOF aperiodic parameters and corrected PSDs.
 
     Computes:
@@ -1099,23 +1213,47 @@ def fooof(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "fooof", subject, runs, space, skip_existing=skip_existing,
-                        dry_run=dry_run, n_events_window=n_events_window)
+        _features_slurm(
+            c,
+            "fooof",
+            subject,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
+            n_events_window=n_events_window,
+        )
         return
 
     from code.utils.config import load_config
+
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
     print(f"Processing {len(subjects)} subject(s)\n")
     for subj in subjects:
-        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing,
-                        n_events_window=n_events_window)
+        _features_local(
+            c,
+            "fooof",
+            subj,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            n_events_window=n_events_window,
+        )
     print(f"\n✓ FOOOF extraction complete")
 
 
 @task
-def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=False, dry_run=False,
-        n_events_window=8):
+def psd(
+    c,
+    subject=None,
+    runs=None,
+    space="sensor",
+    skip_existing=True,
+    slurm=False,
+    dry_run=False,
+    n_events_window=8,
+):
     """Extract power spectral density features.
 
     Computes:
@@ -1137,23 +1275,48 @@ def psd(c, subject=None, runs=None, space="sensor", skip_existing=True, slurm=Fa
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "psd", subject, runs, space, skip_existing=skip_existing,
-                        dry_run=dry_run, n_events_window=n_events_window)
+        _features_slurm(
+            c,
+            "psd",
+            subject,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            dry_run=dry_run,
+            n_events_window=n_events_window,
+        )
         return
 
     from code.utils.config import load_config
+
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
     print(f"Processing {len(subjects)} subject(s)\n")
     for subj in subjects:
-        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing,
-                        n_events_window=n_events_window)
+        _features_local(
+            c,
+            "psd",
+            subj,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            n_events_window=n_events_window,
+        )
     print(f"\n✓ PSD extraction complete")
 
 
 @task
-def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc entropy fractal",
-               overwrite=False, slurm=False, dry_run=False, n_events_window=8):
+def complexity(
+    c,
+    subject=None,
+    runs=None,
+    space="sensor",
+    complexity_type="lzc entropy fractal",
+    overwrite=False,
+    slurm=False,
+    dry_run=False,
+    n_events_window=8,
+):
     """Extract complexity and entropy measures.
 
     Computes:
@@ -1175,24 +1338,49 @@ def complexity(c, subject=None, runs=None, space="sensor", complexity_type="lzc 
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "complexity", subject, runs, space, skip_existing=not overwrite,
-                        complexity_types=complexity_type, dry_run=dry_run,
-                        n_events_window=n_events_window)
+        _features_slurm(
+            c,
+            "complexity",
+            subject,
+            runs,
+            space,
+            skip_existing=not overwrite,
+            complexity_types=complexity_type,
+            dry_run=dry_run,
+            n_events_window=n_events_window,
+        )
         return
 
     from code.utils.config import load_config
+
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
     print(f"Processing {len(subjects)} subject(s)\n")
     for subj in subjects:
-        _features_local(c, "complexity", subj, runs, space, skip_existing=not overwrite,
-                        complexity_types=complexity_type, n_events_window=n_events_window)
+        _features_local(
+            c,
+            "complexity",
+            subj,
+            runs,
+            space,
+            skip_existing=not overwrite,
+            complexity_types=complexity_type,
+            n_events_window=n_events_window,
+        )
     print(f"\n✓ Complexity extraction complete")
 
 
 @task
-def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slurm=False, dry_run=False,
-                n_events_window=8):
+def extract_all(
+    c,
+    subject=None,
+    runs=None,
+    space="sensor",
+    overwrite=False,
+    slurm=False,
+    dry_run=False,
+    n_events_window=8,
+):
     """Extract all feature types (PSD, FOOOF, complexity).
 
     Order: PSD -> FOOOF -> Complexity (FOOOF depends on PSD)
@@ -1212,27 +1400,57 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
     print("=" * 80)
 
     if slurm:
-        _features_slurm(c, "all", subject, runs, space, skip_existing=not overwrite,
-                        dry_run=dry_run, n_events_window=n_events_window)
+        _features_slurm(
+            c,
+            "all",
+            subject,
+            runs,
+            space,
+            skip_existing=not overwrite,
+            dry_run=dry_run,
+            n_events_window=n_events_window,
+        )
         return
 
     from code.utils.config import load_config
+
     config = load_config()
     subjects = [subject] if subject else config["bids"]["subjects"]
     skip_existing = not overwrite
     print(f"Processing {len(subjects)} subject(s)\n")
 
     for subj in subjects:
-        print(f"\n{'='*40}\nSubject: {subj}\n{'='*40}")
+        print(f"\n{'=' * 40}\nSubject: {subj}\n{'=' * 40}")
         print("\n[1/3] Extracting PSD features...")
-        _features_local(c, "psd", subj, runs, space, skip_existing=skip_existing,
-                        n_events_window=n_events_window)
+        _features_local(
+            c,
+            "psd",
+            subj,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            n_events_window=n_events_window,
+        )
         print("\n[2/3] Extracting FOOOF features...")
-        _features_local(c, "fooof", subj, runs, space, skip_existing=skip_existing,
-                        n_events_window=n_events_window)
+        _features_local(
+            c,
+            "fooof",
+            subj,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            n_events_window=n_events_window,
+        )
         print("\n[3/3] Extracting Complexity features...")
-        _features_local(c, "complexity", subj, runs, space, skip_existing=skip_existing,
-                        n_events_window=n_events_window)
+        _features_local(
+            c,
+            "complexity",
+            subj,
+            runs,
+            space,
+            skip_existing=skip_existing,
+            n_events_window=n_events_window,
+        )
 
     print("\n" + "=" * 80)
     print("✓ All feature extraction complete!")
@@ -1243,14 +1461,29 @@ def extract_all(c, subject=None, runs=None, space="sensor", overwrite=False, slu
 # analysis.* Tasks - Statistical Analysis
 # ==============================================================================
 
+
 @task
-def stats(c, features="all", space="both", test="paired_ttest",
-          correction="cluster", alpha=0.05, n_permutations=1024,
-          n_jobs=1, analysis_level="both", aggregate="median", visualize=False,
-          continue_on_error=True,
-          trial_type="all", n_events_window=8,
-          slurm_time=None, slurm_mem=None, slurm_cpus=None,
-          slurm=False, dry_run=False):
+def stats(
+    c,
+    features="all",
+    space="both",
+    test="paired_ttest",
+    correction="cluster",
+    alpha=0.05,
+    n_permutations=1024,
+    n_jobs=1,
+    analysis_level="both",
+    aggregate="median",
+    visualize=False,
+    continue_on_error=True,
+    trial_type="all",
+    n_events_window=8,
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    slurm=False,
+    dry_run=False,
+):
     """Run group-level statistical analysis (IN vs OUT) on one or more features.
 
     With no arguments, runs every feature through every trial-type variant at
@@ -1303,9 +1536,11 @@ def stats(c, features="all", space="both", test="paired_ttest",
     print("=" * 80)
 
     if slurm:
-        print(f"\n{'#' * 80}\n# SLURM submit (one array for "
-              f"{len(space_list)} space × {len(trial_types)} trial-type)\n"
-              f"{'#' * 80}")
+        print(
+            f"\n{'#' * 80}\n# SLURM submit (one array for "
+            f"{len(space_list)} space × {len(trial_types)} trial-type)\n"
+            f"{'#' * 80}"
+        )
         _stats_slurm(
             c,
             feature_list=feature_list,
@@ -1333,25 +1568,45 @@ def stats(c, features="all", space="both", test="paired_ttest",
     for sp in space_list:
         for tt in trial_types:
             print(f"\n{'#' * 80}\n# space: {sp} | trial-type: {tt}\n{'#' * 80}")
-            cmd = [python_exe, "-m", "code.statistics.run_group_statistics",
-                   "--feature-type", *feature_list,
-                   "--space", sp, "--test", test,
-                   "--correction", correction, "--alpha", str(alpha),
-                   "--n-permutations", str(n_permutations), "--n-jobs", str(n_jobs),
-                   "--analysis-level", analysis_level,
-                   "--aggregate", aggregate,
-                   "--trial-type", tt,
-                   "--n-events-window", str(n_events_window)]
+            cmd = [
+                python_exe,
+                "-m",
+                "code.statistics.run_group_statistics",
+                "--feature-type",
+                *feature_list,
+                "--space",
+                sp,
+                "--test",
+                test,
+                "--correction",
+                correction,
+                "--alpha",
+                str(alpha),
+                "--n-permutations",
+                str(n_permutations),
+                "--n-jobs",
+                str(n_jobs),
+                "--analysis-level",
+                analysis_level,
+                "--aggregate",
+                aggregate,
+                "--trial-type",
+                tt,
+                "--n-events-window",
+                str(n_events_window),
+            ]
             if visualize:
                 cmd.append("--visualize")
-            print(f"\n>>> run_group_statistics on {len(feature_list)} feature(s) "
-                  f"(level={analysis_level}, space={sp})")
+            print(
+                f"\n>>> run_group_statistics on {len(feature_list)} feature(s) "
+                f"(level={analysis_level}, space={sp})"
+            )
             print(f"Running: {' '.join(cmd)}\n")
-            result = c.run(" ".join(cmd), pty=True,
-                           env=get_env_with_pythonpath(), warn=continue_on_error)
+            result = c.run(
+                " ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=continue_on_error
+            )
             if result is not None and getattr(result, "exited", 0) != 0:
-                failures.append(
-                    (f"run_group_statistics[{sp}/{tt}]", f"exit {result.exited}"))
+                failures.append((f"run_group_statistics[{sp}/{tt}]", f"exit {result.exited}"))
 
     print("\n" + "=" * 80)
     if failures:
@@ -1364,15 +1619,34 @@ def stats(c, features="all", space="both", test="paired_ttest",
 
 
 @task
-def classify(c, features="all", clf="logistic", cv="auto",
-             space="both", mode="univariate", n_permutations=1000,
-             no_balance=False, n_jobs=-1, continue_on_error=False,
-             combine_features=False, importances=False, label=None,
-             n_chunks=1, seed=42, aggregate=True, delete_chunks=False,
-             trial_type="all", n_events_window=8,
-             analysis_level="both", standardize="auto",
-             slurm_time=None, slurm_mem=None, slurm_cpus=None,
-             slurm=False, dry_run=False):
+def classify(
+    c,
+    features="all",
+    clf="logistic",
+    cv="auto",
+    space="both",
+    mode="univariate",
+    n_permutations=1000,
+    no_balance=False,
+    n_jobs=-1,
+    continue_on_error=False,
+    combine_features=False,
+    importances=False,
+    label=None,
+    n_chunks=1,
+    seed=42,
+    aggregate=True,
+    delete_chunks=False,
+    trial_type="all",
+    n_events_window=8,
+    analysis_level="both",
+    standardize="auto",
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    slurm=False,
+    dry_run=False,
+):
     """Run classification analysis (IN vs OUT) on one or more features.
 
     With no arguments, runs every feature through every trial-type variant,
@@ -1449,9 +1723,11 @@ def classify(c, features="all", clf="logistic", cv="auto",
     print(f"Spaces ({len(space_list)}): {' '.join(space_list)}")
 
     if slurm:
-        print(f"\n{'#' * 80}\n# SLURM submit (one array for "
-              f"{len(space_list)} space × {len(trial_types)} trial-type)\n"
-              f"{'#' * 80}")
+        print(
+            f"\n{'#' * 80}\n# SLURM submit (one array for "
+            f"{len(space_list)} space × {len(trial_types)} trial-type)\n"
+            f"{'#' * 80}"
+        )
         _classify_slurm(
             c,
             feature_list=feature_list,
@@ -1493,8 +1769,13 @@ def classify(c, features="all", clf="logistic", cv="auto",
     for sp in space_list:
         for tt in trial_types:
             print(f"\n{'#' * 80}\n# space: {sp} | trial-type: {tt}\n{'#' * 80}")
-            cmd = [python_exe, "-m", "code.classification.run_classification",
-                   "--feature", *feature_list]
+            cmd = [
+                python_exe,
+                "-m",
+                "code.classification.run_classification",
+                "--feature",
+                *feature_list,
+            ]
             cmd.extend(["--clf", clf])
             cmd.extend(["--cv", cv])
             cmd.extend(["--space", sp])
@@ -1525,9 +1806,18 @@ def classify(c, features="all", clf="logistic", cv="auto",
 # viz.* Tasks - Visualization
 # ==============================================================================
 
+
 @task
-def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
-              trial_type="alltrials", cmap=None, show=False, save=True):
+def viz_stats(
+    c,
+    feature_type="fooof_exponent",
+    space="sensor",
+    alpha=0.05,
+    trial_type="alltrials",
+    cmap=None,
+    show=False,
+    save=True,
+):
     """Visualize saved statistical results as topographic or surface maps.
 
     For sensor space: creates a panel of topomaps (t-values).
@@ -1572,10 +1862,24 @@ def viz_stats(c, feature_type="fooof_exponent", space="sensor", alpha=0.05,
 
 
 @task
-def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
-             family=None, clf="lda", cv="logo", mode="univariate",
-             test="paired_ttest", trial_type="alltrials", correction="auto",
-             alpha=0.05, cmap=None, output_subdir=None, config="config.yaml"):
+def viz_maps(
+    c,
+    metric,
+    space="sensor",
+    feature=None,
+    feature_set=None,
+    family=None,
+    clf="lda",
+    cv="logo",
+    mode="univariate",
+    test="paired_ttest",
+    trial_type="alltrials",
+    correction="auto",
+    alpha=0.05,
+    cmap=None,
+    output_subdir=None,
+    config="config.yaml",
+):
     """Unified rows-of-maps viz (stats + classification, sensor + atlas).
 
     One row of topomaps (sensor) or inflated-brain panels (source/atlas) per
@@ -1607,12 +1911,31 @@ def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
         invoke viz.maps --metric=contrast --space=sensor --feature-set=psds --trial-type=lapse
     """
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.visualization.run_viz",
-           "--metric", metric, "--space", space,
-           "--clf", clf, "--cv", cv, "--mode", mode,
-           "--test", test, "--trial-type", trial_type,
-           "--correction", correction,
-           "--alpha", str(alpha), "--config", config]
+    cmd = [
+        python_exe,
+        "-m",
+        "code.visualization.run_viz",
+        "--metric",
+        metric,
+        "--space",
+        space,
+        "--clf",
+        clf,
+        "--cv",
+        cv,
+        "--mode",
+        mode,
+        "--test",
+        test,
+        "--trial-type",
+        trial_type,
+        "--correction",
+        correction,
+        "--alpha",
+        str(alpha),
+        "--config",
+        config,
+    ]
     if feature:
         cmd.extend(["--feature"] + feature.split())
     if feature_set:
@@ -1629,9 +1952,17 @@ def viz_maps(c, metric, space="sensor", feature=None, feature_set=None,
 
 
 @task
-def spectra(c, space="sensor", stat_feature="fooof_exponent", select_by="corrected",
-            subject=None, n_events_window=8, show=False, save=True,
-            config="config.yaml"):
+def spectra(
+    c,
+    space="sensor",
+    stat_feature="fooof_exponent",
+    select_by="corrected",
+    subject=None,
+    n_events_window=8,
+    show=False,
+    save=True,
+    config="config.yaml",
+):
     """Reproduce Figure 3 C-F: the FOOOF spectral decomposition panel.
 
     Selects the most significant sensor/region from the FOOOF exponent
@@ -1662,10 +1993,21 @@ def spectra(c, space="sensor", stat_feature="fooof_exponent", select_by="correct
         invoke viz.spectra --subject=07
     """
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.visualization.run_viz_spectra",
-           "--space", space, "--stat-feature", stat_feature,
-           "--select-by", select_by, "--n-events-window", str(n_events_window),
-           "--config", config]
+    cmd = [
+        python_exe,
+        "-m",
+        "code.visualization.run_viz_spectra",
+        "--space",
+        space,
+        "--stat-feature",
+        stat_feature,
+        "--select-by",
+        select_by,
+        "--n-events-window",
+        str(n_events_window),
+        "--config",
+        config,
+    ]
     if subject:
         cmd.extend(["--subject", str(subject)])
     if show:
@@ -1678,14 +2020,24 @@ def spectra(c, space="sensor", stat_feature="fooof_exponent", select_by="correct
 
 
 @task
-def stats_classif_panel(c, space="sensor", trial_type="alltrials",
-                        stats_correction="cluster", stats_level="average",
-                        classif_correction="tmax", classif_level="epoch",
-                        classif_cv=None, clf="logistic",
-                        alpha=0.05, n_events_window=8,
-                        region_mode="pool",
-                        output=None, config="config.yaml",
-                        correction=None, cv=None):
+def stats_classif_panel(
+    c,
+    space="sensor",
+    trial_type="alltrials",
+    stats_correction="cluster",
+    stats_level="average",
+    classif_correction="tmax",
+    classif_level="epoch",
+    classif_cv=None,
+    clf="logistic",
+    alpha=0.05,
+    n_events_window=8,
+    region_mode="pool",
+    output=None,
+    config="config.yaml",
+    correction=None,
+    cv=None,
+):
     """Render the publication-ready stats + classification multi-panel (Fig. 3).
 
     A single composite figure (panels A-J): per-band t-values and AUC for
@@ -1729,18 +2081,33 @@ def stats_classif_panel(c, space="sensor", trial_type="alltrials",
         invoke viz.stats-classif-panel --space=schaefer_400 --region-mode=max  # single peak region
     """
     python_exe = get_python_executable()
-    cmd = [python_exe, "-m", "code.visualization.stats_classif_panel",
-           "--config", config,
-           "--space", space,
-           "--trial-type", trial_type,
-           "--stats-correction", stats_correction,
-           "--stats-level", stats_level,
-           "--classif-correction", classif_correction,
-           "--classif-level", classif_level,
-           "--clf", clf,
-           "--alpha", str(alpha),
-           "--n-events-window", str(n_events_window),
-           "--region-mode", region_mode]
+    cmd = [
+        python_exe,
+        "-m",
+        "code.visualization.stats_classif_panel",
+        "--config",
+        config,
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--stats-correction",
+        stats_correction,
+        "--stats-level",
+        stats_level,
+        "--classif-correction",
+        classif_correction,
+        "--classif-level",
+        classif_level,
+        "--clf",
+        clf,
+        "--alpha",
+        str(alpha),
+        "--n-events-window",
+        str(n_events_window),
+        "--region-mode",
+        region_mode,
+    ]
     if classif_cv is not None:
         cmd.extend(["--classif-cv", classif_cv])
     if correction is not None:
@@ -1785,10 +2152,24 @@ def behavior(c, subject="07", run="4", inout_bounds="25 75", output=None, verbos
 
 
 @task
-def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
-             clf=None, cv=None, mode=None, test=None, feature_set="all",
-             correction="auto", alpha=0.05, cmap=None, dry_run=False,
-             continue_on_error=True, config="config.yaml"):
+def viz_auto(
+    c,
+    results_dir=None,
+    metric=None,
+    space=None,
+    trial_type=None,
+    clf=None,
+    cv=None,
+    mode=None,
+    test=None,
+    feature_set="all",
+    correction="auto",
+    alpha=0.05,
+    cmap=None,
+    dry_run=False,
+    continue_on_error=True,
+    config="config.yaml",
+):
     """Scan the results folder and render every available visualization.
 
     Walks <data_root>/<paths.results>/ for `statistics_<space>` and
@@ -1845,14 +2226,14 @@ def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
     plan = []
     for mn in metric_names:
         m = METRICS[mn]
-        family = m.results_subdir.split("_{space}")[0]   # statistics | classification
+        family = m.results_subdir.split("_{space}")[0]  # statistics | classification
         is_classif = "{clf}" in m.results_glob
-        value_suffix = "_" + m.results_glob.rsplit("_", 1)[-1]   # _results.npz | _scores.npz
+        value_suffix = "_" + m.results_glob.rsplit("_", 1)[-1]  # _results.npz | _scores.npz
 
         for space_dir in sorted(results_root.glob(f"{family}_*")):
             if not space_dir.is_dir():
                 continue
-            disc_space = space_dir.name[len(family) + 1:]
+            disc_space = space_dir.name[len(family) + 1 :]
             if space and disc_space != space:
                 continue
             file_dir = results_root / m.results_subdir.format(space=disc_space)
@@ -1886,11 +2267,18 @@ def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
                     combos.add((tt, None, None, None, ftest))
 
             for tt, fclf, fcv, fmode, ftest in sorted(combos):
-                plan.append({
-                    "metric": mn, "space": disc_space, "trial_type": tt,
-                    "clf": fclf, "cv": fcv, "mode": fmode, "test": ftest,
-                    "output_subdir": family,
-                })
+                plan.append(
+                    {
+                        "metric": mn,
+                        "space": disc_space,
+                        "trial_type": tt,
+                        "clf": fclf,
+                        "cv": fcv,
+                        "mode": fmode,
+                        "test": ftest,
+                        "output_subdir": family,
+                    }
+                )
 
     if not plan:
         print("\nNo result files discovered — nothing to render.")
@@ -1899,21 +2287,37 @@ def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
 
     print(f"\nDiscovered {len(plan)} visualization(s) to render:")
     for p in plan:
-        extra = (f"clf={p['clf']} cv={p['cv']} mode={p['mode']}"
-                 if p["test"] is None else f"test={p['test']}")
-        print(f"  - {p['metric']:18s} space={p['space']:14s} "
-              f"type={p['trial_type']:12s} {extra}")
+        extra = (
+            f"clf={p['clf']} cv={p['cv']} mode={p['mode']}"
+            if p["test"] is None
+            else f"test={p['test']}"
+        )
+        print(f"  - {p['metric']:18s} space={p['space']:14s} type={p['trial_type']:12s} {extra}")
 
     python_exe = get_python_executable()
     failures = []
     for i, p in enumerate(plan, 1):
-        cmd = [python_exe, "-m", "code.visualization.run_viz",
-               "--metric", p["metric"], "--space", p["space"],
-               "--feature-set", feature_set,
-               "--trial-type", p["trial_type"],
-               "--correction", correction, "--alpha", str(alpha),
-               "--output-subdir", p["output_subdir"],
-               "--config", config]
+        cmd = [
+            python_exe,
+            "-m",
+            "code.visualization.run_viz",
+            "--metric",
+            p["metric"],
+            "--space",
+            p["space"],
+            "--feature-set",
+            feature_set,
+            "--trial-type",
+            p["trial_type"],
+            "--correction",
+            correction,
+            "--alpha",
+            str(alpha),
+            "--output-subdir",
+            p["output_subdir"],
+            "--config",
+            config,
+        ]
         if p["clf"]:
             cmd.extend(["--clf", p["clf"]])
         if p["cv"]:
@@ -1925,13 +2329,16 @@ def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
         if cmap:
             cmd.extend(["--cmap", cmap])
 
-        print(f"\n{'#' * 80}\n# [{i}/{len(plan)}] {p['metric']} | "
-              f"space={p['space']} | type={p['trial_type']}\n{'#' * 80}")
+        print(
+            f"\n{'#' * 80}\n# [{i}/{len(plan)}] {p['metric']} | "
+            f"space={p['space']} | type={p['trial_type']}\n{'#' * 80}"
+        )
         print(f"Running: {' '.join(cmd)}\n")
         if dry_run:
             continue
-        result = c.run(" ".join(cmd), pty=True,
-                       env=get_env_with_pythonpath(), warn=continue_on_error)
+        result = c.run(
+            " ".join(cmd), pty=True, env=get_env_with_pythonpath(), warn=continue_on_error
+        )
         if result is not None and getattr(result, "exited", 0) != 0:
             failures.append((p, f"exit {result.exited}"))
 
@@ -1951,9 +2358,16 @@ def viz_auto(c, results_dir=None, metric=None, space=None, trial_type=None,
 # Helper Functions (Private)
 # ==============================================================================
 
+
 def _preprocess_local(
-    c, subject, runs=None, bids_root=None, log_level="INFO",
-    skip_existing=True, crop=None, skip_report=False,
+    c,
+    subject,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    crop=None,
+    skip_report=False,
 ):
     """Run preprocessing locally."""
     python_exe = get_python_executable()
@@ -1975,8 +2389,7 @@ def _preprocess_local(
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
-def _bids_slurm(c, subjects=None, runs=None, log_level="INFO",
-                skip_valid=True, dry_run=False):
+def _bids_slurm(c, subjects=None, runs=None, log_level="INFO", skip_valid=True, dry_run=False):
     """Submit one corrected BIDSification array cell per subject/run."""
     from datetime import datetime
 
@@ -1987,9 +2400,7 @@ def _bids_slurm(c, subjects=None, runs=None, log_level="INFO",
     subject_list = subjects.split() if subjects else config["bids"]["subjects"]
     run_list = runs.split() if runs else config["bids"]["task_runs"]
     slurm_config = config["computing"]["slurm"]
-    resources = slurm_config.get(
-        "bids", {"cpus": 2, "mem": "8G", "time": "02:00:00"}
-    )
+    resources = slurm_config.get("bids", {"cpus": 2, "mem": "8G", "time": "02:00:00"})
     log_dir = Path(config["paths"]["logs"]) / "slurm" / "bids"
     script_dir = PROJECT_ROOT / "slurm" / "scripts" / "bids"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -2035,9 +2446,17 @@ def _bids_slurm(c, subjects=None, runs=None, log_level="INFO",
     )
 
 
-def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
-                      log_level="INFO", skip_existing=True, dry_run=False,
-                      dependencies=None, dep_type="afterok"):
+def _preprocess_slurm(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    dry_run=False,
+    dependencies=None,
+    dep_type="afterok",
+):
     """Submit preprocessing jobs to SLURM.
 
     Returns the array job id for the preprocessing array (the report job is
@@ -2047,7 +2466,10 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, submit_slurm_job, submit_job_array, save_job_manifest,
+        render_slurm_script,
+        submit_slurm_job,
+        submit_job_array,
+        save_job_manifest,
     )
 
     print("\n[SLURM Mode] Submitting preprocessing job array to cluster\n")
@@ -2107,9 +2529,14 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
             task_scripts.append(script_path)
 
     array_job_id = submit_job_array(
-        task_scripts, "preproc_array", base_resources, script_dir, timestamp,
+        task_scripts,
+        "preproc_array",
+        base_resources,
+        script_dir,
+        timestamp,
         max_concurrent=max_concurrent,
-        dependencies=dependencies, dep_type=dep_type,
+        dependencies=dependencies,
+        dep_type=dep_type,
         dry_run=dry_run,
     )
 
@@ -2138,24 +2565,34 @@ def _preprocess_slurm(c, subject=None, runs=None, bids_root=None,
     all_job_ids = [j for j in (array_job_id, report_job_id) if j]
     if all_job_ids:
         manifest_path = log_dir / f"preprocessing_manifest_{timestamp}.json"
-        save_job_manifest(all_job_ids, manifest_path, metadata={
-            "stage": "preprocessing",
-            "timestamp": timestamp,
-            "subjects": subjects,
-            "runs": run_list,
-            "preprocessing_array_job_id": array_job_id,
-            "report_job_id": report_job_id,
-        })
-        print(f"\n✓ Submitted preprocessing array ({len(task_scripts)} tasks)"
-              f" + 1 dependent report job")
+        save_job_manifest(
+            all_job_ids,
+            manifest_path,
+            metadata={
+                "stage": "preprocessing",
+                "timestamp": timestamp,
+                "subjects": subjects,
+                "runs": run_list,
+                "preprocessing_array_job_id": array_job_id,
+                "report_job_id": report_job_id,
+            },
+        )
+        print(
+            f"\n✓ Submitted preprocessing array ({len(task_scripts)} tasks)"
+            f" + 1 dependent report job"
+        )
     elif dry_run:
-        print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task preprocessing "
-              f"array + 1 report job")
+        print(
+            f"\n[DRY RUN] Would submit a {len(task_scripts)}-task preprocessing "
+            f"array + 1 report job"
+        )
 
     return array_job_id
 
 
-def _source_recon_local(c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True):
+def _source_recon_local(
+    c, subject, runs=None, bids_root=None, log_level="INFO", skip_existing=True
+):
     """Run source reconstruction locally."""
     python_exe = get_python_executable()
     cmd = [python_exe, "-m", "code.source_reconstruction.run_inverse_solution"]
@@ -2172,14 +2609,25 @@ def _source_recon_local(c, subject, runs=None, bids_root=None, log_level="INFO",
     c.run(" ".join(cmd), env=get_env_with_pythonpath(), pty=True)
 
 
-def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
-                        log_level="INFO", skip_existing=True, dry_run=False,
-                        dependencies=None, dep_type="afterok"):
+def _source_recon_slurm(
+    c,
+    subject=None,
+    runs=None,
+    bids_root=None,
+    log_level="INFO",
+    skip_existing=True,
+    dry_run=False,
+    dependencies=None,
+    dep_type="afterok",
+):
     """Submit source reconstruction jobs to SLURM. Returns the array job id."""
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_slurm_job,
+        submit_job_array,
     )
 
     config = load_config()
@@ -2245,20 +2693,29 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
             task_scripts.append(script_path)
 
     array_job_id = submit_job_array(
-        task_scripts, "srcrecon_array", base_resources, script_dir, timestamp,
+        task_scripts,
+        "srcrecon_array",
+        base_resources,
+        script_dir,
+        timestamp,
         max_concurrent=max_concurrent,
-        dependencies=dependencies, dep_type=dep_type,
+        dependencies=dependencies,
+        dep_type=dep_type,
         dry_run=dry_run,
     )
 
     if array_job_id:
         manifest_path = log_dir / f"source_reconstruction_manifest_{timestamp}.json"
-        save_job_manifest([array_job_id], manifest_path, metadata={
-            "stage": "source_reconstruction",
-            "timestamp": timestamp,
-            "subjects": subjects,
-            "runs": run_list,
-        })
+        save_job_manifest(
+            [array_job_id],
+            manifest_path,
+            metadata={
+                "stage": "source_reconstruction",
+                "timestamp": timestamp,
+                "subjects": subjects,
+                "runs": run_list,
+            },
+        )
         print(f"\n✓ Submitted source reconstruction array ({len(task_scripts)} tasks)")
     elif dry_run:
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
@@ -2266,9 +2723,16 @@ def _source_recon_slurm(c, subject=None, runs=None, bids_root=None,
     return array_job_id
 
 
-def _atlas_slurm(c, subject=None, runs=None, atlases=None,
-                 skip_existing=True, dry_run=False,
-                 dependencies=None, dep_type="afterok"):
+def _atlas_slurm(
+    c,
+    subject=None,
+    runs=None,
+    atlases=None,
+    skip_existing=True,
+    dry_run=False,
+    dependencies=None,
+    dep_type="afterok",
+):
     """Submit atlas application jobs to SLURM as a per-(sub, run) array.
 
     Returns the array job id. Task ordering matches preprocess/source-recon
@@ -2277,7 +2741,10 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_slurm_job,
+        submit_job_array,
     )
 
     print("\n[SLURM Mode] Submitting atlas application jobs to cluster\n")
@@ -2342,20 +2809,29 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
             task_scripts.append(script_path)
 
     array_job_id = submit_job_array(
-        task_scripts, "atlas_array", base_resources, script_dir, timestamp,
+        task_scripts,
+        "atlas_array",
+        base_resources,
+        script_dir,
+        timestamp,
         max_concurrent=max_concurrent,
-        dependencies=dependencies, dep_type=dep_type,
+        dependencies=dependencies,
+        dep_type=dep_type,
         dry_run=dry_run,
     )
 
     if array_job_id:
         manifest_path = log_dir / f"atlas_manifest_{timestamp}.json"
-        save_job_manifest([array_job_id], manifest_path, metadata={
-            "stage": "atlas",
-            "timestamp": timestamp,
-            "subjects": subjects,
-            "runs": run_list,
-        })
+        save_job_manifest(
+            [array_job_id],
+            manifest_path,
+            metadata={
+                "stage": "atlas",
+                "timestamp": timestamp,
+                "subjects": subjects,
+                "runs": run_list,
+            },
+        )
         print(f"\n✓ Submitted atlas application array ({len(task_scripts)} tasks)")
     elif dry_run:
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
@@ -2363,9 +2839,17 @@ def _atlas_slurm(c, subject=None, runs=None, atlases=None,
     return array_job_id
 
 
-def _features_local(c, feature_type, subject, runs=None, space="sensor",
-                    skip_existing=True, complexity_types=None, log_level="INFO",
-                    n_events_window=8):
+def _features_local(
+    c,
+    feature_type,
+    subject,
+    runs=None,
+    space="sensor",
+    skip_existing=True,
+    complexity_types=None,
+    log_level="INFO",
+    n_events_window=8,
+):
     """Run feature extraction locally."""
     from code.utils.config import load_config
 
@@ -2409,11 +2893,21 @@ def _features_local(c, feature_type, subject, runs=None, space="sensor",
             print(f"WARNING: Run {run} failed")
 
 
-def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
-                    skip_existing=True, complexity_types=None, log_level="INFO", dry_run=False,
-                    n_events_window=8,
-                    dependencies=None, dep_type="afterok",
-                    array_name=None):
+def _features_slurm(
+    c,
+    feature_type,
+    subject=None,
+    runs=None,
+    space="sensor",
+    skip_existing=True,
+    complexity_types=None,
+    log_level="INFO",
+    dry_run=False,
+    n_events_window=8,
+    dependencies=None,
+    dep_type="afterok",
+    array_name=None,
+):
     """Submit feature extraction jobs to SLURM. Returns the array job id.
 
     array_name overrides the default ``{feature_type}_array`` so multiple
@@ -2423,7 +2917,10 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_slurm_job,
+        submit_job_array,
     )
 
     print(f"\n[SLURM Mode] Submitting {feature_type} feature extraction jobs to cluster\n")
@@ -2492,38 +2989,58 @@ def _features_slurm(c, feature_type, subject=None, runs=None, space="sensor",
 
     resolved_array_name = array_name or f"{feature_type}_array"
     array_job_id = submit_job_array(
-        task_scripts, resolved_array_name, base_resources, script_dir, timestamp,
+        task_scripts,
+        resolved_array_name,
+        base_resources,
+        script_dir,
+        timestamp,
         max_concurrent=max_concurrent,
-        dependencies=dependencies, dep_type=dep_type,
+        dependencies=dependencies,
+        dep_type=dep_type,
         dry_run=dry_run,
     )
 
     if array_job_id:
         manifest_name = f"{resolved_array_name}_manifest_{timestamp}.json"
         manifest_path = log_dir / manifest_name
-        save_job_manifest([array_job_id], manifest_path, metadata={
-            "stage": f"features_{feature_type}",
-            "feature_type": feature_type,
-            "space": space,
-            "timestamp": timestamp,
-            "subjects": subjects,
-            "runs": run_list,
-        })
-        print(f"\n✓ Submitted {feature_type} feature extraction array "
-              f"({len(task_scripts)} tasks)")
+        save_job_manifest(
+            [array_job_id],
+            manifest_path,
+            metadata={
+                "stage": f"features_{feature_type}",
+                "feature_type": feature_type,
+                "space": space,
+                "timestamp": timestamp,
+                "subjects": subjects,
+                "runs": run_list,
+            },
+        )
+        print(f"\n✓ Submitted {feature_type} feature extraction array ({len(task_scripts)} tasks)")
     elif dry_run:
         print(f"\n[DRY RUN] Would submit a {len(task_scripts)}-task array")
 
     return array_job_id
 
 
-def _stats_slurm(c, feature_list, spaces, trial_types,
-                 test="paired_ttest", correction="cluster", alpha=0.05,
-                 n_permutations=1024, n_jobs=1, analysis_level="both",
-                 aggregate="median", visualize=False,
-                 n_events_window=8,
-                 slurm_time=None, slurm_mem=None, slurm_cpus=None,
-                 dry_run=False):
+def _stats_slurm(
+    c,
+    feature_list,
+    spaces,
+    trial_types,
+    test="paired_ttest",
+    correction="cluster",
+    alpha=0.05,
+    n_permutations=1024,
+    n_jobs=1,
+    analysis_level="both",
+    aggregate="median",
+    visualize=False,
+    n_events_window=8,
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    dry_run=False,
+):
     """Submit all statistics work as ONE SLURM array.
 
     Renders one task script per (feature × space × trial-type × level) cell
@@ -2533,7 +3050,9 @@ def _stats_slurm(c, feature_list, spaces, trial_types,
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_job_array,
     )
 
     print(f"\n[SLURM Mode] Submitting statistics array to cluster\n")
@@ -2572,11 +3091,12 @@ def _stats_slurm(c, feature_list, spaces, trial_types,
     mem_resolved = slurm_mem if slurm_mem is not None else stats_resources["mem"]
     time_resolved = slurm_time if slurm_time is not None else stats_resources["time"]
     print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
-    print(f"Grid: {len(features)} feature(s) × {len(spaces)} space(s) × "
-          f"{len(trial_types)} trial-type(s) × {len(levels)} level(s) "
-          f"= {len(features) * len(spaces) * len(trial_types) * len(levels)} task(s)")
-    print(f"Test: {test}  Correction: {correction}  alpha: {alpha}  "
-          f"n_perm: {n_permutations}")
+    print(
+        f"Grid: {len(features)} feature(s) × {len(spaces)} space(s) × "
+        f"{len(trial_types)} trial-type(s) × {len(levels)} level(s) "
+        f"= {len(features) * len(spaces) * len(trial_types) * len(levels)} task(s)"
+    )
+    print(f"Test: {test}  Correction: {correction}  alpha: {alpha}  n_perm: {n_permutations}")
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -2619,14 +3139,19 @@ def _stats_slurm(c, feature_list, spaces, trial_types,
 
     array_name = "stats_array"
     array_job_id = submit_job_array(
-        task_scripts, array_name, base_resources,
-        script_dir, timestamp, max_concurrent=max_concurrent,
+        task_scripts,
+        array_name,
+        base_resources,
+        script_dir,
+        timestamp,
+        max_concurrent=max_concurrent,
         dry_run=dry_run,
     )
 
     manifest_path = log_dir / f"statistics_manifest_{timestamp}.json"
     save_job_manifest(
-        [array_job_id] if array_job_id else [], manifest_path,
+        [array_job_id] if array_job_id else [],
+        manifest_path,
         metadata={
             "stage": "statistics",
             "test": test,
@@ -2647,23 +3172,43 @@ def _stats_slurm(c, feature_list, spaces, trial_types,
         },
     )
     if array_job_id:
-        print(f"\n✓ Submitted statistics array ({len(task_scripts)} tasks); "
-              f"manifest: {manifest_path}")
+        print(
+            f"\n✓ Submitted statistics array ({len(task_scripts)} tasks); manifest: {manifest_path}"
+        )
     elif dry_run:
-        print(f"\n[DRY RUN] Would submit 1 statistics array ({len(task_scripts)} tasks); "
-              f"manifest: {manifest_path}")
+        print(
+            f"\n[DRY RUN] Would submit 1 statistics array ({len(task_scripts)} tasks); "
+            f"manifest: {manifest_path}"
+        )
 
 
-def _classify_slurm(c, feature_list, spaces, trial_types,
-                    clf="logistic", cv="auto", mode="univariate",
-                    n_permutations=1000, no_balance=False, n_jobs=-1,
-                    continue_on_error=False, combine_features=False,
-                    importances=False, label=None, n_chunks=1, seed=42,
-                    aggregate=True, delete_chunks=False,
-                    n_events_window=8, analysis_level="both",
-                    standardize="auto",
-                    slurm_time=None, slurm_mem=None, slurm_cpus=None,
-                    dry_run=False):
+def _classify_slurm(
+    c,
+    feature_list,
+    spaces,
+    trial_types,
+    clf="logistic",
+    cv="auto",
+    mode="univariate",
+    n_permutations=1000,
+    no_balance=False,
+    n_jobs=-1,
+    continue_on_error=False,
+    combine_features=False,
+    importances=False,
+    label=None,
+    n_chunks=1,
+    seed=42,
+    aggregate=True,
+    delete_chunks=False,
+    n_events_window=8,
+    analysis_level="both",
+    standardize="auto",
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    dry_run=False,
+):
     """Submit all classification work as ONE SLURM array (+ one aggregate
     array when chunked).
 
@@ -2675,7 +3220,10 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_slurm_job, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_slurm_job,
+        submit_job_array,
     )
     from code.classification.run_classification import _cv_for_level
 
@@ -2698,7 +3246,9 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
         return
 
     if n_chunks > 1 and mode != "univariate":
-        print("ERROR: --n-chunks requires --mode=univariate (multivariate has no spatial dim to split)")
+        print(
+            "ERROR: --n-chunks requires --mode=univariate (multivariate has no spatial dim to split)"
+        )
         return
 
     features = list(feature_list)
@@ -2721,11 +3271,13 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
     # One classification per feature, OR one combined classification.
     # Each entry: (label_for_filename, feature_args_for_cli, feature_list)
     if combine_features:
-        classifications = [(
-            label or f"combined-{len(features)}",
-            "--feature " + " ".join(features),
-            features,
-        )]
+        classifications = [
+            (
+                label or f"combined-{len(features)}",
+                "--feature " + " ".join(features),
+                features,
+            )
+        ]
     else:
         classifications = [(feat, f"--feature {feat}", [feat]) for feat in features]
 
@@ -2735,19 +3287,23 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
     time_resolved = slurm_time if slurm_time is not None else classification_resources["time"]
     print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
     n_classify_tasks = (
-        len(classifications) * len(spaces) * len(trial_types)
-        * len(levels) * n_chunks
+        len(classifications) * len(spaces) * len(trial_types) * len(levels) * n_chunks
     )
     n_agg_tasks = (
         len(classifications) * len(spaces) * len(trial_types) * len(levels)
-        if (n_chunks > 1 and aggregate) else 0
+        if (n_chunks > 1 and aggregate)
+        else 0
     )
-    print(f"Grid: {len(classifications)} classifications × {len(spaces)} space(s) "
-          f"× {len(trial_types)} trial-type(s) × {len(levels)} level(s) × "
-          f"{n_chunks} chunk(s) = {n_classify_tasks} classify task(s)" +
-          (f" + {n_agg_tasks} aggregate task(s)" if n_agg_tasks else ""))
-    print(f"Mode: {mode}  Classifier: {clf}  CV: {cv}  "
-          f"n_perm: {n_permutations}  combine: {combine_features}")
+    print(
+        f"Grid: {len(classifications)} classifications × {len(spaces)} space(s) "
+        f"× {len(trial_types)} trial-type(s) × {len(levels)} level(s) × "
+        f"{n_chunks} chunk(s) = {n_classify_tasks} classify task(s)"
+        + (f" + {n_agg_tasks} aggregate task(s)" if n_agg_tasks else "")
+    )
+    print(
+        f"Mode: {mode}  Classifier: {clf}  CV: {cv}  "
+        f"n_perm: {n_permutations}  combine: {combine_features}"
+    )
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -2775,9 +3331,7 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
                 cv_resolved = _cv_for_lvl(level)
                 for feat_label, feature_args, feat_list in classifications:
                     for chunk_idx in range(n_chunks):
-                        chunk_suffix = (
-                            f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
-                        )
+                        chunk_suffix = f"_chunk-{chunk_idx}of{n_chunks}" if n_chunks > 1 else ""
                         job_name = (
                             f"classify_{feat_label}_{sp}_{mode}_{clf}_"
                             f"{tt}_level-{level}{chunk_suffix}"
@@ -2809,13 +3363,14 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
                         }
                         script_path = script_dir / f"{job_name}_{timestamp}.sh"
                         render_slurm_script(
-                            "classification.sh.j2", context, output_path=script_path,
+                            "classification.sh.j2",
+                            context,
+                            output_path=script_path,
                         )
                         task_scripts.append(script_path)
                     if n_chunks > 1 and aggregate:
                         agg_job_name = (
-                            f"aggregate_{feat_label}_{sp}_{mode}_{clf}_"
-                            f"{tt}_level-{level}"
+                            f"aggregate_{feat_label}_{sp}_{mode}_{clf}_{tt}_level-{level}"
                         )
                         agg_context = {
                             **agg_resources,
@@ -2833,28 +3388,40 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
                         }
                         agg_script_path = script_dir / f"{agg_job_name}_{timestamp}.sh"
                         render_slurm_script(
-                            "classification_aggregate.sh.j2", agg_context,
+                            "classification_aggregate.sh.j2",
+                            agg_context,
                             output_path=agg_script_path,
                         )
                         agg_scripts.append(agg_script_path)
 
     classify_array_id = submit_job_array(
-        task_scripts, "classify_array", base_resources,
-        script_dir, timestamp, max_concurrent=max_concurrent, dry_run=dry_run,
+        task_scripts,
+        "classify_array",
+        base_resources,
+        script_dir,
+        timestamp,
+        max_concurrent=max_concurrent,
+        dry_run=dry_run,
     )
 
     agg_array_id = None
     if agg_scripts:
         agg_array_id = submit_job_array(
-            agg_scripts, "classify_aggregate_array", agg_resources,
-            script_dir, timestamp, max_concurrent=max_concurrent,
+            agg_scripts,
+            "classify_aggregate_array",
+            agg_resources,
+            script_dir,
+            timestamp,
+            max_concurrent=max_concurrent,
             dependencies=[classify_array_id] if classify_array_id else None,
-            dep_type="afterany", dry_run=dry_run,
+            dep_type="afterany",
+            dry_run=dry_run,
         )
 
     manifest_path = log_dir / f"classification_manifest_{timestamp}.json"
     save_job_manifest(
-        [j for j in (classify_array_id, agg_array_id) if j], manifest_path,
+        [j for j in (classify_array_id, agg_array_id) if j],
+        manifest_path,
         metadata={
             "stage": "classification",
             "mode": mode,
@@ -2878,26 +3445,44 @@ def _classify_slurm(c, feature_list, spaces, trial_types,
         },
     )
     if classify_array_id:
-        msg = (f"\n✓ Submitted classify array ({len(task_scripts)} tasks)")
+        msg = f"\n✓ Submitted classify array ({len(task_scripts)} tasks)"
         if agg_array_id:
             msg += f" + aggregate array ({len(agg_scripts)} tasks, afterok)"
         print(msg + f"; manifest: {manifest_path}")
     elif dry_run:
-        msg = (f"\n[DRY RUN] Would submit 1 classify array "
-               f"({len(task_scripts)} tasks)")
+        msg = f"\n[DRY RUN] Would submit 1 classify array ({len(task_scripts)} tasks)"
         if agg_scripts:
             msg += f" + 1 aggregate array ({len(agg_scripts)} tasks, afterok)"
         print(msg + f"; manifest: {manifest_path}")
 
 
-def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
-                                 importance, n_permutations, n_jobs,
-                                 per_feature_scale, no_balance, seed,
-                                 trial_types, n_events_window,
-                                 standardize, analysis_level, n_chunks,
-                                 importance_n_repeats, keep_bad_trials,
-                                 aggregate, slurm_time, slurm_mem, slurm_cpus,
-                                 dry_run):
+def _classify_multifeature_slurm(
+    c,
+    feature_list,
+    label,
+    clf,
+    cv,
+    spaces,
+    axis,
+    importance,
+    n_permutations,
+    n_jobs,
+    per_feature_scale,
+    no_balance,
+    seed,
+    trial_types,
+    n_events_window,
+    standardize,
+    analysis_level,
+    n_chunks,
+    importance_n_repeats,
+    keep_bad_trials,
+    aggregate,
+    slurm_time,
+    slurm_mem,
+    slurm_cpus,
+    dry_run,
+):
     """Submit all multifeature work as ONE SLURM array (+ one aggregate array
     when chunked).
 
@@ -2908,7 +3493,9 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_job_array,
     )
     from code.classification.run_multifeature import AXES
 
@@ -2922,8 +3509,7 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
 
     classification_resources = slurm_config.get("classification", {})
     if not classification_resources:
-        print("ERROR: No classification resources in config.yaml "
-              "(computing.slurm.classification)")
+        print("ERROR: No classification resources in config.yaml (computing.slurm.classification)")
         return
 
     # Resolve axis × space × trial-type lists.
@@ -2942,21 +3528,15 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
         venv_path = PROJECT_ROOT / venv_path
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    script_dir = (PROJECT_ROOT / "slurm" / "scripts"
-                  / "classify_multifeature")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "classify_multifeature"
     script_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = (PROJECT_ROOT / config["paths"]["logs"] / "slurm"
-               / "classify_multifeature")
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "classify_multifeature"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    cpus_resolved = (slurm_cpus if slurm_cpus is not None
-                     else classification_resources["cpus"])
-    mem_resolved = (slurm_mem if slurm_mem is not None
-                    else classification_resources["mem"])
-    time_resolved = (slurm_time if slurm_time is not None
-                     else classification_resources["time"])
-    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  "
-          f"time={time_resolved}")
+    cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources["cpus"]
+    mem_resolved = slurm_mem if slurm_mem is not None else classification_resources["mem"]
+    time_resolved = slurm_time if slurm_time is not None else classification_resources["time"]
+    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -2980,10 +3560,8 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
         for sp in spaces:
             for tr in trial_types:
                 for ck in range(ax_chunks):
-                    chunk_suffix = (f"_chunk-{ck}of{ax_chunks}"
-                                    if ax_chunks > 1 else "")
-                    job_name = (f"mfclassify_{actual_label}_{sp}_{ax}_"
-                                f"{tr}{chunk_suffix}")
+                    chunk_suffix = f"_chunk-{ck}of{ax_chunks}" if ax_chunks > 1 else ""
+                    job_name = f"mfclassify_{actual_label}_{sp}_{ax}_{tr}{chunk_suffix}"
                     context = {
                         **base_resources,
                         "job_name": job_name,
@@ -3010,8 +3588,9 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
                         "chunk_idx": ck,
                     }
                     script_path = script_dir / f"{job_name}_{timestamp}.sh"
-                    render_slurm_script("classify_multifeature.sh.j2", context,
-                                        output_path=script_path)
+                    render_slurm_script(
+                        "classify_multifeature.sh.j2", context, output_path=script_path
+                    )
                     task_scripts.append(script_path)
                 if ax_chunks > 1 and aggregate:
                     agg_targets.append((ax, sp, tr))
@@ -3019,17 +3598,24 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
     chunked_axes_in_run = [ax for ax in axes if ax in chunkable_axes]
     chunk_note = (
         f" × {n_chunks} chunk(s) for {'+'.join(chunked_axes_in_run)}"
-        if n_chunks > 1 and chunked_axes_in_run else ""
+        if n_chunks > 1 and chunked_axes_in_run
+        else ""
     )
-    print(f"Grid: {len(axes)} axis × {len(spaces)} space × "
-          f"{len(trial_types)} trial-type{chunk_note} = "
-          f"{len(task_scripts)} classify task(s)"
-          + (f" + {len(agg_targets)} aggregate task(s)" if agg_targets else ""))
+    print(
+        f"Grid: {len(axes)} axis × {len(spaces)} space × "
+        f"{len(trial_types)} trial-type{chunk_note} = "
+        f"{len(task_scripts)} classify task(s)"
+        + (f" + {len(agg_targets)} aggregate task(s)" if agg_targets else "")
+    )
 
     classify_array_id = submit_job_array(
-        task_scripts, f"mfclassify_array_{actual_label}",
-        base_resources, script_dir, timestamp,
-        max_concurrent=max_concurrent, dry_run=dry_run,
+        task_scripts,
+        f"mfclassify_array_{actual_label}",
+        base_resources,
+        script_dir,
+        timestamp,
+        max_concurrent=max_concurrent,
+        dry_run=dry_run,
     )
 
     # Aggregation array (only when chunkable axes were chunked).
@@ -3038,7 +3624,7 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
     if agg_targets:
         agg_resources = dict(base_resources, cpus=1, mem="8G", time="0:30:00")
         for ax, sp, tr in agg_targets:
-            job_name = (f"mfclassify_agg_{actual_label}_{sp}_{ax}_{tr}")
+            job_name = f"mfclassify_agg_{actual_label}_{sp}_{ax}_{tr}"
             context = {
                 **agg_resources,
                 "job_name": job_name,
@@ -3053,20 +3639,25 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
             }
             script_path = script_dir / f"{job_name}_{timestamp}.sh"
             render_slurm_script(
-                "classify_multifeature_aggregate.sh.j2", context,
-                output_path=script_path)
+                "classify_multifeature_aggregate.sh.j2", context, output_path=script_path
+            )
             agg_scripts.append(script_path)
         agg_array_id = submit_job_array(
             agg_scripts,
-            f"mfclassify_agg_array_{actual_label}", agg_resources,
-            script_dir, timestamp, max_concurrent=max_concurrent,
+            f"mfclassify_agg_array_{actual_label}",
+            agg_resources,
+            script_dir,
+            timestamp,
+            max_concurrent=max_concurrent,
             dependencies=[classify_array_id] if classify_array_id else None,
-            dep_type="afterany", dry_run=dry_run,
+            dep_type="afterany",
+            dry_run=dry_run,
         )
 
     manifest_path = log_dir / f"mfclassify_manifest_{timestamp}.json"
     save_job_manifest(
-        [j for j in (classify_array_id, agg_array_id) if j], manifest_path,
+        [j for j in (classify_array_id, agg_array_id) if j],
+        manifest_path,
         metadata={
             "stage": "classify_multifeature",
             "clf": clf,
@@ -3090,30 +3681,51 @@ def _classify_multifeature_slurm(c, feature_list, label, clf, cv, spaces, axis,
         },
     )
     if classify_array_id:
-        print(f"\n✓ Submitted mf classify array ({len(task_scripts)} tasks)" +
-              (f" + aggregator array ({len(agg_scripts)} tasks)" if agg_array_id else "") +
-              f"; manifest: {manifest_path}")
+        print(
+            f"\n✓ Submitted mf classify array ({len(task_scripts)} tasks)"
+            + (f" + aggregator array ({len(agg_scripts)} tasks)" if agg_array_id else "")
+            + f"; manifest: {manifest_path}"
+        )
     elif dry_run:
         n_total = len(task_scripts)
-        print(f"\n[DRY RUN] Would submit {n_total} mf classify task(s)" +
-              (" + aggregator array" if agg_targets else ""))
+        print(
+            f"\n[DRY RUN] Would submit {n_total} mf classify task(s)"
+            + (" + aggregator array" if agg_targets else "")
+        )
 
 
 @task
-def classify_multifeature(c, features="all", label=None,
-                          clf="logistic", cv="logo", space="both",
-                          axis="all", importance="permutation",
-                          n_permutations=1000, n_jobs=-1,
-                          per_feature_scale=True, no_balance=False,
-                          seed=42, trial_type="all",
-                          n_events_window=8,
-                          standardize="per-subject", analysis_level="epoch",
-                          n_chunks=40, chunk_idx=0,
-                          importance_n_repeats=5,
-                          keep_bad_trials=False, output_dir=None,
-                          aggregate=True, config="config.yaml",
-                          slurm=False, slurm_time=None, slurm_mem=None,
-                          slurm_cpus=None, dry_run=False):
+def classify_multifeature(
+    c,
+    features="all",
+    label=None,
+    clf="logistic",
+    cv="logo",
+    space="both",
+    axis="all",
+    importance="permutation",
+    n_permutations=1000,
+    n_jobs=-1,
+    per_feature_scale=True,
+    no_balance=False,
+    seed=42,
+    trial_type="all",
+    n_events_window=8,
+    standardize="per-subject",
+    analysis_level="epoch",
+    n_chunks=40,
+    chunk_idx=0,
+    importance_n_repeats=5,
+    keep_bad_trials=False,
+    output_dir=None,
+    aggregate=True,
+    config="config.yaml",
+    slurm=False,
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    dry_run=False,
+):
     """Run multi-feature classification (IN vs OUT) along one or all axes.
 
     Loads all selected features as one stacked tensor (n_trials, n_spatial,
@@ -3169,20 +3781,36 @@ def classify_multifeature(c, features="all", label=None,
     trial_type_list = resolve_trial_types(trial_type)
 
     if slurm:
-        print(f"\n{'#' * 80}\n# SLURM submit (one array for "
-              f"{len(space_list)} space × {len(trial_type_list)} trial-type)\n"
-              f"{'#' * 80}")
+        print(
+            f"\n{'#' * 80}\n# SLURM submit (one array for "
+            f"{len(space_list)} space × {len(trial_type_list)} trial-type)\n"
+            f"{'#' * 80}"
+        )
         _classify_multifeature_slurm(
-            c, feature_list=feature_list, label=label, clf=clf, cv=cv,
-            spaces=space_list, axis=axis, importance=importance,
-            n_permutations=n_permutations, n_jobs=n_jobs,
-            per_feature_scale=per_feature_scale, no_balance=no_balance,
-            seed=seed, trial_types=trial_type_list,
-            n_events_window=n_events_window, standardize=standardize,
-            analysis_level=analysis_level, n_chunks=n_chunks,
+            c,
+            feature_list=feature_list,
+            label=label,
+            clf=clf,
+            cv=cv,
+            spaces=space_list,
+            axis=axis,
+            importance=importance,
+            n_permutations=n_permutations,
+            n_jobs=n_jobs,
+            per_feature_scale=per_feature_scale,
+            no_balance=no_balance,
+            seed=seed,
+            trial_types=trial_type_list,
+            n_events_window=n_events_window,
+            standardize=standardize,
+            analysis_level=analysis_level,
+            n_chunks=n_chunks,
             importance_n_repeats=importance_n_repeats,
-            keep_bad_trials=keep_bad_trials, aggregate=aggregate,
-            slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
+            keep_bad_trials=keep_bad_trials,
+            aggregate=aggregate,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
             dry_run=dry_run,
         )
         return
@@ -3202,8 +3830,13 @@ def classify_multifeature(c, features="all", label=None,
     for sp in space_list:
         for tt in trial_type_list:
             print(f"\n{'#' * 80}\n# space: {sp} | trial-type: {tt}\n{'#' * 80}")
-            cmd = [python_exe, "-m", "code.classification.run_multifeature",
-                   "--feature", *feature_list]
+            cmd = [
+                python_exe,
+                "-m",
+                "code.classification.run_multifeature",
+                "--feature",
+                *feature_list,
+            ]
             cmd.extend(["--clf", clf])
             cmd.extend(["--cv", cv])
             cmd.extend(["--space", sp])
@@ -3237,15 +3870,25 @@ def classify_multifeature(c, features="all", label=None,
             if aggregate and axis == "all":
                 actual_label = label or f"combined-{len(feature_list)}"
                 agg_cmd = [
-                    python_exe, "-m", "code.classification.aggregate_multifeature",
-                    "--label", actual_label,
-                    "--space", sp,
-                    "--clf", clf,
-                    "--cv", cv,
-                    "--importance", importance,
-                    "--trial-type", tt,
-                    "--analysis-level", analysis_level,
-                    "--config", config,
+                    python_exe,
+                    "-m",
+                    "code.classification.aggregate_multifeature",
+                    "--label",
+                    actual_label,
+                    "--space",
+                    sp,
+                    "--clf",
+                    clf,
+                    "--cv",
+                    cv,
+                    "--importance",
+                    importance,
+                    "--trial-type",
+                    tt,
+                    "--analysis-level",
+                    analysis_level,
+                    "--config",
+                    config,
                 ]
                 if output_dir:
                     agg_cmd.extend(["--output-dir", output_dir])
@@ -3254,12 +3897,19 @@ def classify_multifeature(c, features="all", label=None,
 
 
 @task
-def classify_multifeature_aggregate(c, label, space, clf="logistic", cv="logo",
-                                    importance="permutation",
-                                    trial_type="alltrials",
-                                    analysis_level="epoch",
-                                    axes=None,
-                                    output_dir=None, config="config.yaml"):
+def classify_multifeature_aggregate(
+    c,
+    label,
+    space,
+    clf="logistic",
+    cv="logo",
+    importance="permutation",
+    trial_type="alltrials",
+    analysis_level="epoch",
+    axes=None,
+    output_dir=None,
+    config="config.yaml",
+):
     """Bundle per-axis multi-feature classification outputs into one file.
 
     Examples:
@@ -3267,15 +3917,25 @@ def classify_multifeature_aggregate(c, label, space, clf="logistic", cv="logo",
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.classification.aggregate_multifeature",
-        "--label", label,
-        "--space", space,
-        "--clf", clf,
-        "--cv", cv,
-        "--importance", importance,
-        "--trial-type", trial_type,
-        "--analysis-level", analysis_level,
-        "--config", config,
+        python_exe,
+        "-m",
+        "code.classification.aggregate_multifeature",
+        "--label",
+        label,
+        "--space",
+        space,
+        "--clf",
+        clf,
+        "--cv",
+        cv,
+        "--importance",
+        importance,
+        "--trial-type",
+        trial_type,
+        "--analysis-level",
+        analysis_level,
+        "--config",
+        config,
     ]
     if axes:
         cmd.extend(["--axes", *axes.split()])
@@ -3286,17 +3946,33 @@ def classify_multifeature_aggregate(c, label, space, clf="logistic", cv="logo",
 
 
 @task
-def multifeature_preflight(c, features="all", space="sensor",
-                           trial_type="alltrials", n_events_window=8,
-                           subjects=None, analysis_id=None, output_root=None,
-                           config="config.yaml"):
+def multifeature_preflight(
+    c,
+    features="all",
+    space="sensor",
+    trial_type="alltrials",
+    n_events_window=8,
+    subjects=None,
+    analysis_id=None,
+    output_root=None,
+    config="config.yaml",
+):
     """Validate corrected multifeature inputs before any HPC submission."""
     cmd = [
-        get_python_executable(config), "-m",
-        "code.classification.multifeature_workflow", "preflight",
-        "--features", features, "--space", space,
-        "--trial-type", trial_type,
-        "--n-events-window", str(n_events_window), "--config", config,
+        get_python_executable(config),
+        "-m",
+        "code.classification.multifeature_workflow",
+        "preflight",
+        "--features",
+        features,
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--n-events-window",
+        str(n_events_window),
+        "--config",
+        config,
     ]
     if subjects:
         cmd.extend(["--subjects", *subjects.split()])
@@ -3313,9 +3989,14 @@ def multifeature_export(c, analysis_id, analysis_root, destination=None):
     source = Path(analysis_root) / analysis_id
     target = Path(destination) if destination else Path("reports/exports") / analysis_id
     cmd = [
-        get_python_executable(), "-m",
-        "code.classification.multifeature_workflow", "export",
-        "--analysis-dir", str(source), "--destination", str(target),
+        get_python_executable(),
+        "-m",
+        "code.classification.multifeature_workflow",
+        "export",
+        "--analysis-dir",
+        str(source),
+        "--destination",
+        str(target),
     ]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
@@ -3324,30 +4005,58 @@ def multifeature_export(c, analysis_id, analysis_root, destination=None):
 def multifeature_legacy_inventory(c, source, manifest="reports/legacy/combined-24.json"):
     """Inventory legacy combined-24 files; never move or delete them."""
     cmd = [
-        get_python_executable(), "-m",
-        "code.classification.multifeature_workflow", "legacy-inventory",
-        "--source", source, "--manifest", manifest,
+        get_python_executable(),
+        "-m",
+        "code.classification.multifeature_workflow",
+        "legacy-inventory",
+        "--source",
+        source,
+        "--manifest",
+        manifest,
     ]
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
-def multifeature_run(c, analysis_id, analysis_root, features="all",
-                     space="sensor", trial_type="alltrials",
-                     n_events_window=8, n_permutations=1000,
-                     inner_splits=5, seed=42, subjects=None,
-                     config="config.yaml"):
+def multifeature_run(
+    c,
+    analysis_id,
+    analysis_root,
+    features="all",
+    space="sensor",
+    trial_type="alltrials",
+    n_events_window=8,
+    n_permutations=1000,
+    inner_splits=5,
+    seed=42,
+    subjects=None,
+    config="config.yaml",
+):
     """Run all corrected primary endpoints after a passing preflight."""
     cmd = [
-        get_python_executable(config), "-m",
+        get_python_executable(config),
+        "-m",
         "code.classification.run_corrected_multifeature",
-        "--analysis-id", analysis_id, "--analysis-root", analysis_root,
-        "--features", features, "--space", space,
-        "--trial-type", trial_type,
-        "--n-events-window", str(n_events_window),
-        "--n-permutations", str(n_permutations),
-        "--inner-splits", str(inner_splits), "--seed", str(seed),
-        "--config", config,
+        "--analysis-id",
+        analysis_id,
+        "--analysis-root",
+        analysis_root,
+        "--features",
+        features,
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--n-events-window",
+        str(n_events_window),
+        "--n-permutations",
+        str(n_permutations),
+        "--inner-splits",
+        str(inner_splits),
+        "--seed",
+        str(seed),
+        "--config",
+        config,
     ]
     if subjects:
         cmd.extend(["--subjects", *subjects.split()])
@@ -3355,11 +4064,24 @@ def multifeature_run(c, analysis_id, analysis_root, features="all",
 
 
 @task
-def analysis_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
-                    runs=None, force=False, config="config.yaml"):
+def analysis_preflight(
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    subjects=None,
+    runs=None,
+    force=False,
+    config="config.yaml",
+):
     """Create and validate a new immutable final analysis."""
-    cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "preflight",
-           "--config", config]
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.analysis.workflow",
+        "preflight",
+        "--config",
+        config,
+    ]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])
     if analysis_root:
@@ -3374,13 +4096,30 @@ def analysis_preflight(c, analysis_id=None, analysis_root=None, subjects=None,
 
 
 @task
-def analysis_run(c, analysis_id=None, analysis_root=None, n_permutations=1000,
-                minimum_circular_offset=24, seed=42, config="config.yaml"):
+def analysis_run(
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    n_permutations=1000,
+    minimum_circular_offset=24,
+    seed=42,
+    config="config.yaml",
+):
     """Configure corrected sensor and Schaefer-400 fitting/permutation inference."""
-    cmd = [get_python_executable(config), "-m", "code.analysis.workflow", "run",
-           "--config", config,
-           "--n-permutations", str(n_permutations),
-           "--minimum-circular-offset", str(minimum_circular_offset), "--seed", str(seed)]
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.analysis.workflow",
+        "run",
+        "--config",
+        config,
+        "--n-permutations",
+        str(n_permutations),
+        "--minimum-circular-offset",
+        str(minimum_circular_offset),
+        "--seed",
+        str(seed),
+    ]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])
     if analysis_root:
@@ -3389,29 +4128,49 @@ def analysis_run(c, analysis_id=None, analysis_root=None, n_permutations=1000,
 
 
 @task
-def state_multifeature(c, slurm=False, n_permutations=1000,
-                       permutations_per_job=10,
-                       within_permutations_per_job=100,
-                       reliance_repeats=20, sign_flip_permutations=10000,
-                       array_throttle=25, subject_throttle=16,
-                       alpha="1.0", tolerance="0.0001", account=None,
-                       analysis_root=None, config="config.yaml"):
+def state_multifeature(
+    c,
+    slurm=False,
+    n_permutations=1000,
+    permutations_per_job=10,
+    within_permutations_per_job=100,
+    reliance_repeats=20,
+    sign_flip_permutations=10000,
+    array_throttle=25,
+    subject_throttle=16,
+    alpha="1.0",
+    tolerance="0.0001",
+    account=None,
+    analysis_root=None,
+    config="config.yaml",
+):
     """Run population and within-subject state decoding and reliance."""
     common = ["--config", config]
     if analysis_root:
         common.extend(["--analysis-root", analysis_root])
     submission = [
-        get_python_executable(config), "-m",
+        get_python_executable(config),
+        "-m",
         "code.analysis.state_multifeature_submit",
         *common,
-        "--n-permutations", str(n_permutations),
-        "--permutations-per-job", str(permutations_per_job),
-        "--within-permutations-per-job", str(within_permutations_per_job),
-        "--reliance-repeats", str(reliance_repeats),
-        "--sign-flip-permutations", str(sign_flip_permutations),
-        "--array-throttle", str(array_throttle),
-        "--subject-throttle", str(subject_throttle),
-        "--alpha", str(alpha), "--tolerance", str(tolerance),
+        "--n-permutations",
+        str(n_permutations),
+        "--permutations-per-job",
+        str(permutations_per_job),
+        "--within-permutations-per-job",
+        str(within_permutations_per_job),
+        "--reliance-repeats",
+        str(reliance_repeats),
+        "--sign-flip-permutations",
+        str(sign_flip_permutations),
+        "--array-throttle",
+        str(array_throttle),
+        "--subject-throttle",
+        str(subject_throttle),
+        "--alpha",
+        str(alpha),
+        "--tolerance",
+        str(tolerance),
     ]
     if account:
         submission.extend(["--account", account])
@@ -3424,38 +4183,112 @@ def state_multifeature(c, slurm=False, n_permutations=1000,
     subject_count = len(configured["bids"]["subjects"])
     python = get_python_executable(config)
     prepare = [
-        python, "-m", "code.analysis.state_multifeature_workflow", "prepare",
-        *common, "--n-permutations", str(n_permutations), "--alpha", str(alpha),
-        "--tolerance", str(tolerance), "--reliance-repeats", str(reliance_repeats),
+        python,
+        "-m",
+        "code.analysis.state_multifeature_workflow",
+        "prepare",
+        *common,
+        "--n-permutations",
+        str(n_permutations),
+        "--alpha",
+        str(alpha),
+        "--tolerance",
+        str(tolerance),
+        "--reliance-repeats",
+        str(reliance_repeats),
     ]
     c.run(shlex.join(prepare), pty=True, env=get_env_with_pythonpath())
     stages = [
-        [python, "-m", "code.analysis.state_multifeature_workflow", "population", *common, "--observed", "--skip-valid"],
+        [
+            python,
+            "-m",
+            "code.analysis.state_multifeature_workflow",
+            "population",
+            *common,
+            "--observed",
+            "--skip-valid",
+        ],
     ]
     population_batches = math.ceil(int(n_permutations) / int(permutations_per_job))
-    stages.extend([
-        [python, "-m", "code.analysis.state_multifeature_workflow", "population", *common, "--batch-index", str(index), "--permutations-per-job", str(permutations_per_job), "--skip-valid"]
-        for index in range(population_batches)
-    ])
-    stages.extend([
-        [python, "-m", "code.analysis.state_multifeature_workflow", "within", *common, "--observed", "--cell-index", str(index), "--skip-valid"]
-        for index in range(subject_count)
-    ])
-    within_batches = math.ceil(int(n_permutations) / int(within_permutations_per_job))
-    stages.extend([
-        [python, "-m", "code.analysis.state_multifeature_workflow", "within", *common, "--cell-index", str(index), "--permutations-per-job", str(within_permutations_per_job), "--skip-valid"]
-        for index in range(subject_count * within_batches)
-    ])
-    for regime in ("population", "within_subject"):
-        stages.extend([
-            [python, "-m", "code.analysis.state_multifeature_workflow", "reliance", *common, "--regime", regime, "--cell-index", str(index), "--skip-valid"]
+    stages.extend(
+        [
+            [
+                python,
+                "-m",
+                "code.analysis.state_multifeature_workflow",
+                "population",
+                *common,
+                "--batch-index",
+                str(index),
+                "--permutations-per-job",
+                str(permutations_per_job),
+                "--skip-valid",
+            ]
+            for index in range(population_batches)
+        ]
+    )
+    stages.extend(
+        [
+            [
+                python,
+                "-m",
+                "code.analysis.state_multifeature_workflow",
+                "within",
+                *common,
+                "--observed",
+                "--cell-index",
+                str(index),
+                "--skip-valid",
+            ]
             for index in range(subject_count)
-        ])
+        ]
+    )
+    within_batches = math.ceil(int(n_permutations) / int(within_permutations_per_job))
+    stages.extend(
+        [
+            [
+                python,
+                "-m",
+                "code.analysis.state_multifeature_workflow",
+                "within",
+                *common,
+                "--cell-index",
+                str(index),
+                "--permutations-per-job",
+                str(within_permutations_per_job),
+                "--skip-valid",
+            ]
+            for index in range(subject_count * within_batches)
+        ]
+    )
+    for regime in ("population", "within_subject"):
+        stages.extend(
+            [
+                [
+                    python,
+                    "-m",
+                    "code.analysis.state_multifeature_workflow",
+                    "reliance",
+                    *common,
+                    "--regime",
+                    regime,
+                    "--cell-index",
+                    str(index),
+                    "--skip-valid",
+                ]
+                for index in range(subject_count)
+            ]
+        )
     for command in stages:
         c.run(shlex.join(command), pty=True, env=get_env_with_pythonpath())
     aggregate = [
-        python, "-m", "code.analysis.state_multifeature_workflow", "aggregate",
-        *common, "--sign-flip-permutations", str(sign_flip_permutations),
+        python,
+        "-m",
+        "code.analysis.state_multifeature_workflow",
+        "aggregate",
+        *common,
+        "--sign-flip-permutations",
+        str(sign_flip_permutations),
     ]
     c.run(shlex.join(aggregate), pty=True, env=get_env_with_pythonpath())
 
@@ -3476,11 +4309,20 @@ def analysis_synthetic(c, output_dir="reports/synthetic/analysis", seed=42):
 
 
 @task
-def analysis_execution_plan(c, analysis_id=None, analysis_root=None, subjects=None, runs=None,
-                         spaces="sensor schaefer_400",
-                         analyses="feature_modulation multifeature_decoding network_dynamics",
-                         start_at=None, stop_after=None, skip=None,
-                         include_exploratory=True, config="config.yaml"):
+def analysis_execution_plan(
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    subjects=None,
+    runs=None,
+    spaces="sensor schaefer_400",
+    analyses="feature_modulation multifeature_decoding network_dynamics",
+    start_at=None,
+    stop_after=None,
+    skip=None,
+    include_exploratory=True,
+    config="config.yaml",
+):
     """Write the complete raw-to-panels execution plan without submission."""
     cmd = [
         get_python_executable(config),
@@ -3515,9 +4357,16 @@ def analysis_execution_plan(c, analysis_id=None, analysis_root=None, subjects=No
 def analysis_export(c, analysis_root, analysis_id=None, destination=None, force=False):
     """Export analysis bundles without subject-level feature matrices."""
     target = destination or str(Path("reports/exports") / "main")
-    cmd = [get_python_executable(), "-m", "code.analysis.workflow", "export",
-           "--analysis-root", analysis_root,
-           "--destination", target]
+    cmd = [
+        get_python_executable(),
+        "-m",
+        "code.analysis.workflow",
+        "export",
+        "--analysis-root",
+        analysis_root,
+        "--destination",
+        target,
+    ]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])
     if force:
@@ -3527,7 +4376,10 @@ def analysis_export(c, analysis_root, analysis_id=None, destination=None, force=
 
 @task
 def analysis_audit(
-    c, analysis_id=None, analysis_root=None, reports_root="reports",
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    reports_root="reports",
     config="config.yaml",
 ):
     """Require complete real bundles and matching rendered composite provenance."""
@@ -3551,15 +4403,59 @@ def analysis_audit(
 @task
 def analysis_legacy_inventory(c, source, manifest="reports/legacy/analysis.json"):
     """Write a read-only hash inventory of existing analysis outputs."""
-    cmd = [get_python_executable(), "-m", "code.analysis.workflow", "legacy-inventory",
-           "--source", source, "--manifest", manifest]
+    cmd = [
+        get_python_executable(),
+        "-m",
+        "code.analysis.workflow",
+        "legacy-inventory",
+        "--source",
+        source,
+        "--manifest",
+        manifest,
+    ]
+    c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
+@task
+def analysis_panel4(
+    c,
+    analysis_id=None,
+    analysis_root=None,
+    permutations=10000,
+    config="config.yaml",
+):
+    """Build Panel 4 from existing Panel 2/3 participant-level bundles."""
+    if analysis_root is None:
+        from code.utils.config import load_config
+
+        loaded = load_config(config)
+        analysis_root = str(
+            Path(loaded["paths"]["data_root"])
+            / "processed"
+            / loaded.get("analysis_workflow", {}).get("processed_directory", "analysis_workflow")
+        )
+    cmd = [
+        get_python_executable(config),
+        "-m",
+        "code.analysis.panel4",
+        "--analysis-root",
+        analysis_root,
+        "--permutations",
+        str(permutations),
+    ]
+    if analysis_id:
+        cmd.extend(["--analysis-id", analysis_id])
     c.run(shlex.join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
 def viz_panels(
-    c, panel="all", analysis_id=None, analysis_root=None,
-    reports_root="reports", config="config.yaml",
+    c,
+    panel="all",
+    analysis_id=None,
+    analysis_root=None,
+    reports_root="reports",
+    config="config.yaml",
 ):
     """Render real analysis bundles or protected watermarked synthetic fallbacks."""
     if analysis_root is None:
@@ -3589,8 +4485,12 @@ def viz_panels(
 
 @task
 def panel1(
-    c, bundle_directory=None, analysis_root=None, reports_root="reports",
-    weighting="equal_window", config="config.yaml",
+    c,
+    bundle_directory=None,
+    analysis_root=None,
+    reports_root="reports",
+    weighting="equal_window",
+    config="config.yaml",
 ):
     """Render corrected Panel 1 data with the established manuscript layout."""
     if bundle_directory is None:
@@ -3598,16 +4498,18 @@ def panel1(
         from code.utils.config import load_config
 
         loaded = load_config(config)
-        root = Path(analysis_root) if analysis_root else (
-            Path(loaded["paths"]["data_root"])
-            / "processed"
-            / loaded.get("analysis_workflow", {}).get(
-                "processed_directory", "analysis_workflow"
+        root = (
+            Path(analysis_root)
+            if analysis_root
+            else (
+                Path(loaded["paths"]["data_root"])
+                / "processed"
+                / loaded.get("analysis_workflow", {}).get(
+                    "processed_directory", "analysis_workflow"
+                )
             )
         )
-        bundle_directory = str(
-            resolve_analysis_directory(root) / "feature_modulation"
-        )
+        bundle_directory = str(resolve_analysis_directory(root) / "feature_modulation")
     cmd = [
         get_python_executable(config),
         "-m",
@@ -3623,10 +4525,18 @@ def panel1(
 
 
 @task
-def classify_aggregate(c, feature, space, clf="lda", cv="logo",
-                       mode="univariate", combined=False,
-                       delete_chunks=False, trial_type="alltrials",
-                       config="config.yaml"):
+def classify_aggregate(
+    c,
+    feature,
+    space,
+    clf="lda",
+    cv="logo",
+    mode="univariate",
+    combined=False,
+    delete_chunks=False,
+    trial_type="alltrials",
+    config="config.yaml",
+):
     """Manually aggregate per-chunk classification outputs.
 
     Use this if --aggregate=False was used at submission, or if the afterok
@@ -3638,14 +4548,23 @@ def classify_aggregate(c, feature, space, clf="lda", cv="logo",
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.classification.aggregate_chunks",
-        "--feature", feature,
-        "--space", space,
-        "--mode", mode,
-        "--clf", clf,
-        "--cv", cv,
-        "--trial-type", trial_type,
-        "--config", config,
+        python_exe,
+        "-m",
+        "code.classification.aggregate_chunks",
+        "--feature",
+        feature,
+        "--space",
+        space,
+        "--mode",
+        mode,
+        "--clf",
+        clf,
+        "--cv",
+        cv,
+        "--trial-type",
+        trial_type,
+        "--config",
+        config,
     ]
     if combined:
         cmd.append("--combined")
@@ -3659,10 +4578,17 @@ def classify_aggregate(c, feature, space, clf="lda", cv="logo",
 # analysis.networks.* — Yeo-network aggregation, coherence, classification
 # ==============================================================================
 
+
 @task
-def networks_aggregate_stats(c, space="schaefer_400", trial_type="all",
-                             correction="fdr", yeo=7, alpha=0.05,
-                             inout_token="2575"):
+def networks_aggregate_stats(
+    c,
+    space="schaefer_400",
+    trial_type="all",
+    correction="fdr",
+    yeo=7,
+    alpha=0.05,
+    inout_token="2575",
+):
     """Aggregate per-parcel stats to Yeo networks.
 
     Examples:
@@ -3671,21 +4597,30 @@ def networks_aggregate_stats(c, space="schaefer_400", trial_type="all",
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.statistics.aggregate_networks",
-        "--space", space,
-        "--trial-type", trial_type,
-        "--correction", correction,
-        "--yeo", str(yeo),
-        "--alpha", str(alpha),
-        "--inout-token", inout_token,
+        python_exe,
+        "-m",
+        "code.statistics.aggregate_networks",
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--correction",
+        correction,
+        "--yeo",
+        str(yeo),
+        "--alpha",
+        str(alpha),
+        "--inout-token",
+        inout_token,
     ]
     print(f"Running: {' '.join(cmd)}")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
 @task
-def networks_coherence(c, space="schaefer_400", trial_type="all",
-                       feature=None, yeo=7, aggregate="median"):
+def networks_coherence(
+    c, space="schaefer_400", trial_type="all", feature=None, yeo=7, aggregate="median"
+):
     """Compute within/between Yeo-network coherence of IN-OUT contrasts.
 
     Examples:
@@ -3694,11 +4629,17 @@ def networks_coherence(c, space="schaefer_400", trial_type="all",
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.statistics.network_coherence",
-        "--space", space,
-        "--trial-type", trial_type,
-        "--yeo", str(yeo),
-        "--aggregate", aggregate,
+        python_exe,
+        "-m",
+        "code.statistics.network_coherence",
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--yeo",
+        str(yeo),
+        "--aggregate",
+        aggregate,
     ]
     if feature:
         cmd.extend(["--feature", feature])
@@ -3707,12 +4648,27 @@ def networks_coherence(c, space="schaefer_400", trial_type="all",
 
 
 @task
-def networks_classify(c, space="schaefer_400", scope="all", trial_type="all",
-                      yeo=7, clf="logistic", cv="logo", n_permutations=1000,
-                      n_jobs=-1, families=None, per_feature_features=None,
-                      subjects=None, slurm=False,
-                      slurm_time=None, slurm_mem=None, slurm_cpus=None,
-                      aggregate=True, delete_partials=False, dry_run=False):
+def networks_classify(
+    c,
+    space="schaefer_400",
+    scope="all",
+    trial_type="all",
+    yeo=7,
+    clf="logistic",
+    cv="logo",
+    n_permutations=1000,
+    n_jobs=-1,
+    families=None,
+    per_feature_features=None,
+    subjects=None,
+    slurm=False,
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    aggregate=True,
+    delete_partials=False,
+    dry_run=False,
+):
     """Yeo-network-restricted IN-vs-OUT classification (3 scopes).
 
     Scopes: per-family | per-feature | joint | all
@@ -3730,26 +4686,47 @@ def networks_classify(c, space="schaefer_400", scope="all", trial_type="all",
     """
     if slurm:
         _network_classify_slurm(
-            c, space=space, scope=scope, trial_type=trial_type, yeo=yeo,
-            clf=clf, cv=cv, n_permutations=n_permutations, n_jobs=n_jobs,
-            families=families, per_feature_features=per_feature_features,
-            slurm_time=slurm_time, slurm_mem=slurm_mem, slurm_cpus=slurm_cpus,
-            aggregate=aggregate, delete_partials=delete_partials,
+            c,
+            space=space,
+            scope=scope,
+            trial_type=trial_type,
+            yeo=yeo,
+            clf=clf,
+            cv=cv,
+            n_permutations=n_permutations,
+            n_jobs=n_jobs,
+            families=families,
+            per_feature_features=per_feature_features,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
+            aggregate=aggregate,
+            delete_partials=delete_partials,
             dry_run=dry_run,
         )
         return
 
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.classification.run_network_classification",
-        "--space", space,
-        "--scope", scope,
-        "--trial-type", trial_type,
-        "--yeo", str(yeo),
-        "--clf", clf,
-        "--cv", cv,
-        "--n-permutations", str(n_permutations),
-        "--n-jobs", str(n_jobs),
+        python_exe,
+        "-m",
+        "code.classification.run_network_classification",
+        "--space",
+        space,
+        "--scope",
+        scope,
+        "--trial-type",
+        trial_type,
+        "--yeo",
+        str(yeo),
+        "--clf",
+        clf,
+        "--cv",
+        cv,
+        "--n-permutations",
+        str(n_permutations),
+        "--n-jobs",
+        str(n_jobs),
     ]
     if families:
         cmd.extend(["--families", families])
@@ -3762,9 +4739,16 @@ def networks_classify(c, space="schaefer_400", scope="all", trial_type="all",
 
 
 @task
-def networks_classify_aggregate(c, space="schaefer_400", scope="all",
-                                trial_type="all", yeo=7, clf="logistic",
-                                cv="logo", delete_partials=False):
+def networks_classify_aggregate(
+    c,
+    space="schaefer_400",
+    scope="all",
+    trial_type="all",
+    yeo=7,
+    clf="logistic",
+    cv="logo",
+    delete_partials=False,
+):
     """Merge per-network classification partials into combined bundles.
 
     Use after a SLURM run if the afterok aggregator job failed and partials
@@ -3776,13 +4760,21 @@ def networks_classify_aggregate(c, space="schaefer_400", scope="all",
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.classification.aggregate_network_classification",
-        "--space", space,
-        "--scope", scope,
-        "--trial-type", trial_type,
-        "--yeo", str(yeo),
-        "--clf", clf,
-        "--cv", cv,
+        python_exe,
+        "-m",
+        "code.classification.aggregate_network_classification",
+        "--space",
+        space,
+        "--scope",
+        scope,
+        "--trial-type",
+        trial_type,
+        "--yeo",
+        str(yeo),
+        "--clf",
+        clf,
+        "--cv",
+        cv,
     ]
     if delete_partials:
         cmd.append("--delete-partials")
@@ -3790,10 +4782,25 @@ def networks_classify_aggregate(c, space="schaefer_400", scope="all",
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
-def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
-                            n_permutations, n_jobs, families,
-                            per_feature_features, slurm_time, slurm_mem,
-                            slurm_cpus, aggregate, delete_partials, dry_run):
+def _network_classify_slurm(
+    c,
+    space,
+    scope,
+    trial_type,
+    yeo,
+    clf,
+    cv,
+    n_permutations,
+    n_jobs,
+    families,
+    per_feature_features,
+    slurm_time,
+    slurm_mem,
+    slurm_cpus,
+    aggregate,
+    delete_partials,
+    dry_run,
+):
     """Submit network-restricted classification as a SLURM array job.
 
     One array task per (scope × trial-type × network). A second array
@@ -3802,11 +4809,15 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
     from datetime import datetime
     from code.utils.config import load_config
     from code.utils.slurm import (
-        render_slurm_script, save_job_manifest, submit_job_array,
+        render_slurm_script,
+        save_job_manifest,
+        submit_job_array,
     )
     from code.utils.yeo_networks import network_order
     from code.classification.run_network_classification import (
-        SCOPES, DEFAULT_FAMILIES, DEFAULT_PER_FEATURE,
+        SCOPES,
+        DEFAULT_FAMILIES,
+        DEFAULT_PER_FEATURE,
     )
 
     print(f"\n[SLURM Mode] Submitting network classification array(s)\n")
@@ -3819,14 +4830,12 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
 
     classification_resources = slurm_config.get("classification", {})
     if not classification_resources:
-        print("ERROR: No classification resources in config.yaml "
-              "(computing.slurm.classification)")
+        print("ERROR: No classification resources in config.yaml (computing.slurm.classification)")
         return
 
     # Resolve scope / trial-type / network lists.
     scopes = list(SCOPES) if scope == "all" else [scope]
-    trial_types = (["alltrials", "correct", "lapse"]
-                   if trial_type == "all" else [trial_type])
+    trial_types = ["alltrials", "correct", "lapse"] if trial_type == "all" else [trial_type]
     nets = list(network_order(yeo))
 
     fams_str = families or " ".join(DEFAULT_FAMILIES)
@@ -3837,21 +4846,15 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
         venv_path = PROJECT_ROOT / venv_path
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    script_dir = (PROJECT_ROOT / "slurm" / "scripts"
-                  / "network_classification")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "network_classification"
     script_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = (PROJECT_ROOT / config["paths"]["logs"] / "slurm"
-               / "network_classification")
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "network_classification"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    cpus_resolved = (slurm_cpus if slurm_cpus is not None
-                     else classification_resources["cpus"])
-    mem_resolved = (slurm_mem if slurm_mem is not None
-                    else classification_resources["mem"])
-    time_resolved = (slurm_time if slurm_time is not None
-                     else classification_resources["time"])
-    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  "
-          f"time={time_resolved}")
+    cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources["cpus"]
+    mem_resolved = slurm_mem if slurm_mem is not None else classification_resources["mem"]
+    time_resolved = slurm_time if slurm_time is not None else classification_resources["time"]
+    print(f"Resources: cpus={cpus_resolved}  mem={mem_resolved}  time={time_resolved}")
 
     base_resources = dict(
         account=slurm_config["account"],
@@ -3870,8 +4873,7 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
     for sc in scopes:
         for tr in trial_types:
             for net in nets:
-                job_name = (f"netclassify_{space}_yeo{yeo}_{sc}_"
-                            f"{tr}_{net}")
+                job_name = f"netclassify_{space}_yeo{yeo}_{sc}_{tr}_{net}"
                 context = {
                     **base_resources,
                     "job_name": job_name,
@@ -3891,18 +4893,24 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
                     "per_feature_features": pfeat_str,
                 }
                 script_path = script_dir / f"{job_name}_{timestamp}.sh"
-                render_slurm_script("network_classification.sh.j2", context,
-                                    output_path=script_path)
+                render_slurm_script(
+                    "network_classification.sh.j2", context, output_path=script_path
+                )
                 task_scripts.append(script_path)
 
-    print(f"Submitting {len(task_scripts)} array task(s) "
-          f"({len(scopes)} scopes × {len(trial_types)} trial-types "
-          f"× {len(nets)} networks)")
+    print(
+        f"Submitting {len(task_scripts)} array task(s) "
+        f"({len(scopes)} scopes × {len(trial_types)} trial-types "
+        f"× {len(nets)} networks)"
+    )
 
     classify_array_id = submit_job_array(
         task_scripts,
-        f"netclassify_array_yeo{yeo}", base_resources,
-        script_dir, timestamp, max_concurrent=max_concurrent,
+        f"netclassify_array_yeo{yeo}",
+        base_resources,
+        script_dir,
+        timestamp,
+        max_concurrent=max_concurrent,
         dry_run=dry_run,
     )
 
@@ -3914,7 +4922,7 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
         agg_scripts = []
         for sc in scopes:
             for tr in trial_types:
-                job_name = (f"netclassify_agg_{space}_yeo{yeo}_{sc}_{tr}")
+                job_name = f"netclassify_agg_{space}_yeo{yeo}_{sc}_{tr}"
                 context = {
                     **agg_resources,
                     "job_name": job_name,
@@ -3929,48 +4937,68 @@ def _network_classify_slurm(c, space, scope, trial_type, yeo, clf, cv,
                 }
                 script_path = script_dir / f"{job_name}_{timestamp}.sh"
                 render_slurm_script(
-                    "network_classification_aggregate.sh.j2", context,
-                    output_path=script_path)
+                    "network_classification_aggregate.sh.j2", context, output_path=script_path
+                )
                 agg_scripts.append(script_path)
         agg_array_id = submit_job_array(
             agg_scripts,
-            f"netclassify_agg_array_yeo{yeo}", agg_resources,
-            script_dir, timestamp, max_concurrent=max_concurrent,
+            f"netclassify_agg_array_yeo{yeo}",
+            agg_resources,
+            script_dir,
+            timestamp,
+            max_concurrent=max_concurrent,
             dependencies=[classify_array_id] if classify_array_id else None,
-            dep_type="afterok", dry_run=dry_run,
+            dep_type="afterok",
+            dry_run=dry_run,
         )
 
     all_ids = [j for j in (classify_array_id, agg_array_id) if j]
     if all_ids:
-        manifest_path = (log_dir
-                         / f"netclassify_manifest_{timestamp}.json")
-        save_job_manifest(all_ids, manifest_path, metadata={
-            "stage": "network_classification",
-            "space": space,
-            "yeo": yeo,
-            "scopes": scopes,
-            "trial_types": trial_types,
-            "networks": nets,
-            "clf": clf,
-            "cv": cv,
-            "n_permutations": n_permutations,
-            "classify_array_job_id": classify_array_id,
-            "aggregate_array_job_id": agg_array_id,
-            "timestamp": timestamp,
-        })
-        print(f"\n✓ Submitted network-classify array ({len(task_scripts)} "
-              f"tasks)" + (f" + aggregator array" if agg_array_id else "") +
-              f"; manifest: {manifest_path}")
+        manifest_path = log_dir / f"netclassify_manifest_{timestamp}.json"
+        save_job_manifest(
+            all_ids,
+            manifest_path,
+            metadata={
+                "stage": "network_classification",
+                "space": space,
+                "yeo": yeo,
+                "scopes": scopes,
+                "trial_types": trial_types,
+                "networks": nets,
+                "clf": clf,
+                "cv": cv,
+                "n_permutations": n_permutations,
+                "classify_array_job_id": classify_array_id,
+                "aggregate_array_job_id": agg_array_id,
+                "timestamp": timestamp,
+            },
+        )
+        print(
+            f"\n✓ Submitted network-classify array ({len(task_scripts)} "
+            f"tasks)"
+            + (f" + aggregator array" if agg_array_id else "")
+            + f"; manifest: {manifest_path}"
+        )
     elif dry_run:
-        print(f"\n[DRY RUN] Would submit {len(task_scripts)} classify task(s)" +
-              (" + aggregator array" if aggregate else ""))
+        print(
+            f"\n[DRY RUN] Would submit {len(task_scripts)} classify task(s)"
+            + (" + aggregator array" if aggregate else "")
+        )
 
 
 @task
-def networks_importance(c, space="schaefer_400", label="all", trial_type="all",
-                        yeo=7, clf="logistic", cv="logo",
-                        importance="permutation", analysis_level="epoch",
-                        input=None):
+def networks_importance(
+    c,
+    space="schaefer_400",
+    label="all",
+    trial_type="all",
+    yeo=7,
+    clf="logistic",
+    cv="logo",
+    importance="permutation",
+    analysis_level="epoch",
+    input=None,
+):
     """Aggregate joint-axis multifeature permutation importance to networks.
 
     Requires that run_multifeature has been executed with --axis=joint and
@@ -3982,15 +5010,25 @@ def networks_importance(c, space="schaefer_400", label="all", trial_type="all",
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.classification.aggregate_network_importance",
-        "--space", space,
-        "--label", label,
-        "--trial-type", trial_type,
-        "--yeo", str(yeo),
-        "--clf", clf,
-        "--cv", cv,
-        "--importance", importance,
-        "--analysis-level", analysis_level,
+        python_exe,
+        "-m",
+        "code.classification.aggregate_network_importance",
+        "--space",
+        space,
+        "--label",
+        label,
+        "--trial-type",
+        trial_type,
+        "--yeo",
+        str(yeo),
+        "--clf",
+        clf,
+        "--cv",
+        cv,
+        "--importance",
+        importance,
+        "--analysis-level",
+        analysis_level,
     ]
     if input:
         cmd.extend(["--input", input])
@@ -3999,11 +5037,22 @@ def networks_importance(c, space="schaefer_400", label="all", trial_type="all",
 
 
 @task
-def networks_all(c, space="schaefer_400", trial_type="all", yeo=7,
-                 correction="fdr", clf="logistic", cv="logo",
-                 n_permutations=1000, label="all", slurm=False,
-                 slurm_time=None, slurm_mem=None, slurm_cpus=None,
-                 dry_run=False):
+def networks_all(
+    c,
+    space="schaefer_400",
+    trial_type="all",
+    yeo=7,
+    correction="fdr",
+    clf="logistic",
+    cv="logo",
+    n_permutations=1000,
+    label="all",
+    slurm=False,
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    dry_run=False,
+):
     """Run the full network-layer pipeline (stats agg + coherence + classif + importance).
 
     With --slurm, the heavy classification stage is submitted as a SLURM
@@ -4019,33 +5068,62 @@ def networks_all(c, space="schaefer_400", trial_type="all", yeo=7,
         invoke analysis.networks.all --space=schaefer_400 --yeo=17
     """
     print("=" * 80)
-    print("Network analysis pipeline (4 stages)" +
-          (" — classify via SLURM" if slurm else ""))
+    print("Network analysis pipeline (4 stages)" + (" — classify via SLURM" if slurm else ""))
     print("=" * 80)
     networks_aggregate_stats(
-        c, space=space, trial_type=trial_type, correction=correction, yeo=yeo,
+        c,
+        space=space,
+        trial_type=trial_type,
+        correction=correction,
+        yeo=yeo,
     )
     networks_coherence(c, space=space, trial_type=trial_type, yeo=yeo)
     networks_classify(
-        c, space=space, scope="all", trial_type=trial_type, yeo=yeo,
-        clf=clf, cv=cv, n_permutations=n_permutations,
-        slurm=slurm, slurm_time=slurm_time, slurm_mem=slurm_mem,
-        slurm_cpus=slurm_cpus, dry_run=dry_run,
+        c,
+        space=space,
+        scope="all",
+        trial_type=trial_type,
+        yeo=yeo,
+        clf=clf,
+        cv=cv,
+        n_permutations=n_permutations,
+        slurm=slurm,
+        slurm_time=slurm_time,
+        slurm_mem=slurm_mem,
+        slurm_cpus=slurm_cpus,
+        dry_run=dry_run,
     )
     networks_importance(
-        c, space=space, label=label, trial_type=trial_type, yeo=yeo,
-        clf=clf, cv=cv,
+        c,
+        space=space,
+        label=label,
+        trial_type=trial_type,
+        yeo=yeo,
+        clf=clf,
+        cv=cv,
     )
 
 
 @task
-def viz_network_panel(c, space="schaefer_400", trial_type="correct", yeo=7,
-                      stats_correction="fdr", stats_level="average",
-                      classif_correction="tmax", classif_level="epoch",
-                      classif_cv=None, alpha=0.05, clf="logistic",
-                      mf_label="all", no_yeo_overlay=False, output=None,
-                      config="config.yaml",
-                      correction=None, cv=None):
+def viz_network_panel(
+    c,
+    space="schaefer_400",
+    trial_type="correct",
+    yeo=7,
+    stats_correction="fdr",
+    stats_level="average",
+    classif_correction="tmax",
+    classif_level="epoch",
+    classif_cv=None,
+    alpha=0.05,
+    clf="logistic",
+    mf_label="all",
+    no_yeo_overlay=False,
+    output=None,
+    config="config.yaml",
+    correction=None,
+    cv=None,
+):
     """Render the composite Yeo-network story panel (single PNG, 4 tiers).
 
     Reads from results/statistics_<space>/group/networks/ and
@@ -4068,18 +5146,31 @@ def viz_network_panel(c, space="schaefer_400", trial_type="correct", yeo=7,
     """
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.visualization.network_story_panel",
-        "--space", space,
-        "--trial-type", trial_type,
-        "--yeo", str(yeo),
-        "--stats-correction", stats_correction,
-        "--stats-level", stats_level,
-        "--classif-correction", classif_correction,
-        "--classif-level", classif_level,
-        "--alpha", str(alpha),
-        "--clf", clf,
-        "--mf-label", mf_label,
-        "--config", config,
+        python_exe,
+        "-m",
+        "code.visualization.network_story_panel",
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--yeo",
+        str(yeo),
+        "--stats-correction",
+        stats_correction,
+        "--stats-level",
+        stats_level,
+        "--classif-correction",
+        classif_correction,
+        "--classif-level",
+        classif_level,
+        "--alpha",
+        str(alpha),
+        "--clf",
+        clf,
+        "--mf-label",
+        mf_label,
+        "--config",
+        config,
     ]
     if classif_cv is not None:
         cmd.extend(["--classif-cv", classif_cv])
@@ -4183,8 +5274,7 @@ def slurm_jobs(c, pattern=None, state=None, user=None):
 
 
 @task
-def slurm_cancel(c, pattern=None, job_ids=None, state=None, user=None,
-                 dry_run=False, yes=False):
+def slurm_cancel(c, pattern=None, job_ids=None, state=None, user=None, dry_run=False, yes=False):
     """Cancel SLURM jobs matching a name glob (or explicit IDs).
 
     Safety: by default, prints what would be cancelled and asks for confirmation.
@@ -4278,13 +5368,11 @@ analysis.add_task(stats)
 analysis.add_task(classify)
 analysis.add_task(classify_aggregate, name="classify-aggregate")
 analysis.add_task(classify_multifeature, name="classify-multifeature")
-analysis.add_task(classify_multifeature_aggregate,
-                  name="classify-multifeature-aggregate")
+analysis.add_task(classify_multifeature_aggregate, name="classify-multifeature-aggregate")
 analysis.add_task(multifeature_preflight, name="multifeature-preflight")
 analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")
-analysis.add_task(multifeature_legacy_inventory,
-                  name="multifeature-legacy-inventory")
+analysis.add_task(multifeature_legacy_inventory, name="multifeature-legacy-inventory")
 analysis.add_task(analysis_preflight, name="preflight")
 analysis.add_task(analysis_run, name="run")
 analysis.add_task(state_multifeature, name="state-multifeature")
@@ -4294,6 +5382,7 @@ analysis.add_task(analysis_execution_plan, name="plan")
 analysis.add_task(analysis_export, name="export")
 analysis.add_task(analysis_audit, name="audit")
 analysis.add_task(analysis_legacy_inventory, name="legacy-inventory")
+analysis.add_task(analysis_panel4, name="panel4")
 analysis.add_collection(networks)  # Nested: analysis.networks.*
 
 # viz.networks.* subcollection
@@ -4319,14 +5408,17 @@ slurm.add_task(slurm_cancel, name="cancel")
 
 
 # Manuscript helpers
-@task(help={
-    "fig": "Which figure to export (2, 3, 4, 5, or 'all').",
-    "space": "Spatial label for the stats/classif files (default: schaefer_400).",
-    "trial_type": "Trial-type token in the result filenames (default: alltrials).",
-    "alpha": "Significance threshold for the n_significant counts (default: 0.05).",
-})
-def manuscript_export_tables(c, fig="all", space="schaefer_400",
-                              trial_type="alltrials", alpha=0.05):
+@task(
+    help={
+        "fig": "Which figure to export (2, 3, 4, 5, or 'all').",
+        "space": "Spatial label for the stats/classif files (default: schaefer_400).",
+        "trial_type": "Trial-type token in the result filenames (default: alltrials).",
+        "alpha": "Significance threshold for the n_significant counts (default: 0.05).",
+    }
+)
+def manuscript_export_tables(
+    c, fig="all", space="schaefer_400", trial_type="alltrials", alpha=0.05
+):
     """Export per-figure CSV tables of values plotted in the manuscript figures.
 
     Writes long-format and summary CSVs to reports/manuscript/tables/. Tables
@@ -4335,10 +5427,14 @@ def manuscript_export_tables(c, fig="all", space="schaefer_400",
     cmd = [
         get_python_executable(),
         "scripts/export_figure_tables.py",
-        "--fig", fig,
-        "--space", space,
-        "--trial-type", trial_type,
-        "--alpha", str(alpha),
+        "--fig",
+        fig,
+        "--space",
+        space,
+        "--trial-type",
+        trial_type,
+        "--alpha",
+        str(alpha),
     ]
     print(f"Running: {' '.join(cmd)}")
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())

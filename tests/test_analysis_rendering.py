@@ -25,9 +25,7 @@ def test_synthetic_panel_writes_watermarked_composite_and_exact_slide_exports(
         analysis_root=None,
         reports_root=tmp_path,
     )
-    composite = (
-        tmp_path / "figures" / "manuscript" / "panel2_multifeature_decoding.png"
-    )
+    composite = tmp_path / "figures" / "manuscript" / "panel2_multifeature_decoding.png"
     slide = (
         tmp_path
         / "figures"
@@ -46,9 +44,7 @@ def test_synthetic_panel_writes_watermarked_composite_and_exact_slide_exports(
     assert "SYNTHETIC DATA" in svg.read_text()
     assert composite.with_suffix(".json").exists()
     assert composite.with_suffix(".txt").exists()
-    assert (
-        slide.parent / "panel2_multifeature_decoding.txt"
-    ).exists()
+    assert (slide.parent / "panel2_multifeature_decoding.txt").exists()
 
 
 def test_synthetic_cannot_overwrite_real_but_real_can_replace_synthetic(
@@ -73,20 +69,24 @@ def test_panel3_writes_manuscript_composite_and_captions(tmp_path: Path):
         analysis_root=None,
         reports_root=tmp_path,
     )
-    composite = (
-        tmp_path / "figures" / "manuscript" / "panel3_network_dynamics.png"
-    )
+    composite = tmp_path / "figures" / "manuscript" / "panel3_network_dynamics.png"
     slide_caption = (
-        tmp_path
-        / "figures"
-        / "slides"
-        / "panel3_network_dynamics"
-        / "panel3_network_dynamics.txt"
+        tmp_path / "figures" / "slides" / "panel3_network_dynamics" / "panel3_network_dynamics.txt"
     )
     assert composite in outputs
     assert composite.with_suffix(".json").exists()
     assert composite.with_suffix(".txt").exists()
     assert slide_caption.exists()
+
+
+def test_panel4_writes_manuscript_composite_and_captions(tmp_path: Path):
+    outputs = render_panels(
+        panel="panel4", analysis_id=None, analysis_root=None, reports_root=tmp_path
+    )
+    composite = tmp_path / "figures" / "manuscript" / "panel4_network_state_attribution.png"
+    assert composite in outputs
+    assert composite.with_suffix(".json").exists()
+    assert composite.with_suffix(".txt").exists()
 
 
 def test_panel3_matrix_uses_yeo_and_feature_display_names():
@@ -139,6 +139,8 @@ def test_panel3_rejects_stale_ten_feature_bundle():
 def test_generic_renderer_rejects_panel1_alternate():
     with pytest.raises(ValueError, match="invoke viz.panel1"):
         render_panels(
-            panel="panel1", analysis_id=None, analysis_root=None,
+            panel="panel1",
+            analysis_id=None,
+            analysis_root=None,
             reports_root=Path("reports"),
         )

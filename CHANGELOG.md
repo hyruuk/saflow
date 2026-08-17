@@ -34,6 +34,11 @@
 
 ## Unreleased
 
+- Add Panel 4 network attribution of IN-versus-OUT effects, combining corrected
+  Yeo-7 modulation with population and personalized held-out feature×network
+  reliance. The compact analysis reuses validated Panel 2/3 outputs and applies
+  synchronized maximum-statistic correction without an upstream HPC rerun.
+
 - Fix Panel 1 result aggregation to read per-feature window counts from the
   shared statistics result, matching the immutable partial-bundle contract.
 

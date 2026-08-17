@@ -28,6 +28,7 @@ from code.utils.yeo_networks import YEO7_NETWORKS, network_display_name
 
 PANEL2_CAPTION = """Figure X. Personalized multifeature decoding of IN versus OUT attentional state. Fixed-ridge models combined FOOOF exponent and offset with seven aperiodic-corrected PSD bands across 400 Schaefer parcels; FOOOF R² was excluded. (A) Mean held-out-participant AUC for the population leave-one-subject-out model against its run-wise circular-shift null. (B) Paired held-out AUCs from the population model and participant-specific leave-one-run-out models. Lines connect the same participant. (C) Mean participant-specific AUC against its circular-shift null. (D) Held-out AUC across each participant's six runs, ordered by mean participant-specific performance. (E) Participant-level held-out feature reliance for participant-specific models. (F) Participant-level held-out Yeo-7 network reliance for participant-specific models. Reliance is the AUC decrease after grouped shuffling of held-out predictors within run; dots denote synchronized sign-flip maximum-statistic FWER p < 0.05 within the feature or network family. The feature×network family is reported separately because no cell survived correction. Decoding included {state_n} participants.\n"""
 PANEL3_CAPTION = """Figure X. Network dynamics across attentional state and behavioral outcome. Neural features were summarized within the seven Yeo networks for four state-by-outcome cells (IN-correct, IN-lapse, OUT-correct, and OUT-lapse). Analyses included two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD features; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (A) Four-cell profile for the network–feature pair with the largest absolute interaction t statistic. (B) Complete network-by-feature state–outcome interaction map. (C) Prespecified simple effects, showing for each feature the signed t statistic from its strongest Yeo-network expression. (D) Standardized interaction effect sizes and bootstrap 95% confidence intervals for the seven largest absolute interaction t statistics. (E) Four-cell default-mode–dorsal-attention coupling profile for the feature with the largest absolute coupling-interaction t statistic. (F) Complete prespecified DMN–DAN coupling contrasts. Dots in heatmaps mark synchronized maximum-|t| family-wise p < 0.05. Selection in A, C, D, and E is descriptive; complete inferential families remain visible in B and F. Primary inference was corrected separately across the FOOOF modulation, corrected-PSD modulation, and DMN–DAN coupling families. Complete-case analyses included {modulation_n} participants for modulation and {coupling_n} participants for coupling; secondary mixed-effects models used all available observations.\n"""
+PANEL4_CAPTION = """Figure X. Yeo-network attribution of IN-versus-OUT attentional-state effects. FOOOF exponent and offset and seven aperiodic-corrected PSD bands were summarized within each Yeo-7 network. (A) Paired OUT-minus-IN t statistics. Dots mark synchronized maximum-|t| family-wise p < 0.05; FOOOF and corrected-PSD modulation were corrected as separate prespecified families. (B) Corresponding standardized paired effects (Cohen's dz). (C) Population-model held-out reliance and (D) participant-specific held-out reliance, defined as the AUC decrease after grouped shuffling of one feature-by-network block within run. Dots mark sign-flip maximum-statistic FWER p < 0.05 across the complete 63-cell reliance family. (E) Absolute modulation effect versus mean held-out reliance for all network-feature cells; annotations identify the four largest population-reliance cells and the association is descriptive. Modulation used equal-window pooling within participant and state and included {subject_n} participants. Reliance estimates reuse the independently held-out Panel 2 predictions.\n"""
 
 COMPOSITE_DPI = 600
 SLIDE_DPI = 160
@@ -56,7 +57,7 @@ def render_panels(
     reports_root: Path,
 ) -> list[Path]:
     """Render requested real panels or protected synthetic fallbacks."""
-    available = ("panel2", "panel3")
+    available = ("panel2", "panel3", "panel4")
     selected = available if panel == "all" else (panel,)
     if any(name not in available for name in selected):
         raise ValueError(
@@ -75,9 +76,7 @@ def render_panels(
         analysis_dir=analysis_dir,
         reports_root=reports_root,
         data_mode=_resolve_data_mode(analysis_dir, selected),
-        git_commit=analysis_provenance.get("git", {}).get(
-            "commit", _git_commit()
-        ),
+        git_commit=analysis_provenance.get("git", {}).get("commit", _git_commit()),
         config_hash=str(analysis_provenance.get("config_hash", "synthetic")),
         software=dict(analysis_provenance.get("software", {})),
     )
@@ -105,43 +104,40 @@ def _resolve_data_mode(analysis_dir: Path | None, panels: tuple[str, ...]) -> st
     return "real"
 
 
-def _load_or_synthesize(
-    panel: str, context: RenderContext
-) -> dict[str, np.ndarray]:
+def _load_or_synthesize(panel: str, context: RenderContext) -> dict[str, np.ndarray]:
     """Load compact real arrays or create deterministic schema-compatible data."""
     if context.data_mode == "real" and context.analysis_dir is not None:
         with np.load(
-            context.analysis_dir
-            / PANEL_ANALYSES[panel]
-            / "observed.npz",
+            context.analysis_dir / PANEL_ANALYSES[panel] / "observed.npz",
             allow_pickle=False,
         ) as archive:
             arrays = {
                 name: np.asarray(archive[name])
                 for name in archive.files
-                if np.issubdtype(archive[name].dtype, np.number)
-                or name == "parcel_order"
+                if np.issubdtype(archive[name].dtype, np.number) or name == "parcel_order"
             }
         if arrays:
             _validate_render_arrays(panel, arrays)
             return arrays
         raise ValueError(f"real {panel} bundle contains no renderable numeric arrays")
-    generator = np.random.default_rng(
-        context.seed + tuple(PANEL_SPECS).index(panel) * 10_000
-    )
+    generator = np.random.default_rng(context.seed + tuple(PANEL_SPECS).index(panel) * 10_000)
     return _synthetic_arrays(panel, generator)
 
 
-def _validate_render_arrays(
-    panel: str, arrays: dict[str, np.ndarray]
-) -> None:
+def _validate_render_arrays(panel: str, arrays: dict[str, np.ndarray]) -> None:
     """Reject real bundles that are complete scientifically but not render-ready."""
     required_by_panel = {
         "panel2": (
-            "population_auc", "population_null", "within_subject_auc",
-            "population_subject_auc", "within_group_null_mean_auc", "within_run_auc",
-            "within_subject_feature_reliance", "within_subject_feature_reliance_p_fwer",
-            "within_subject_network_reliance", "within_subject_network_reliance_p_fwer",
+            "population_auc",
+            "population_null",
+            "within_subject_auc",
+            "population_subject_auc",
+            "within_group_null_mean_auc",
+            "within_run_auc",
+            "within_subject_feature_reliance",
+            "within_subject_feature_reliance_p_fwer",
+            "within_subject_network_reliance",
+            "within_subject_network_reliance_p_fwer",
         ),
         "panel3": (
             "network_cell_means",
@@ -154,23 +150,30 @@ def _validate_render_arrays(
             "coupling_t_values",
             "coupling_p_fwer",
         ),
+        "panel4": (
+            "network_modulation",
+            "fooof_t_values",
+            "fooof_p_fwer",
+            "corrected_psd_t_values",
+            "corrected_psd_p_fwer",
+            "population_cell_reliance",
+            "population_cell_reliance_p_fwer",
+            "within_subject_cell_reliance",
+            "within_subject_cell_reliance_p_fwer",
+        ),
     }
     required = required_by_panel.get(panel, ())
     missing = sorted(set(required) - arrays.keys())
     if missing:
         raise ValueError(f"real {panel} bundle lacks render-ready arrays: {missing}")
-    if panel == "panel3" and arrays["network_cell_means"].shape[-1] != len(
-        CORRECTED_FEATURES
-    ):
+    if panel == "panel3" and arrays["network_cell_means"].shape[-1] != len(CORRECTED_FEATURES):
         raise ValueError(
             "Panel 3 bundle uses a stale feature schema; rerun network dynamics "
             f"with the {len(CORRECTED_FEATURES)}-feature contract"
         )
 
 
-def _synthetic_arrays(
-    panel: str, generator: np.random.Generator
-) -> dict[str, np.ndarray]:
+def _synthetic_arrays(panel: str, generator: np.random.Generator) -> dict[str, np.ndarray]:
     """Create panel-specific arrays that obey the render-ready contract."""
     frequency = np.linspace(2.0, 120.0, 240)
     baseline = -1.1 * np.log10(frequency) - 0.3
@@ -186,44 +189,38 @@ def _synthetic_arrays(
         subject_count = 20
         feature_count = len(CORRECTED_FEATURES)
         network_count = len(YEO7_NETWORKS)
-        common.update({
-            "population_auc": np.asarray(0.64),
-            "population_subject_auc": generator.normal(0.52, 0.05, subject_count),
-            "population_null": generator.normal(0.5, 0.02, 1000),
-            "within_subject_auc": generator.normal(0.61, 0.06, subject_count),
-            "within_group_null_mean_auc": generator.normal(0.5, 0.015, 1000),
-            "within_run_auc": generator.normal(0.61, 0.09, (subject_count, 6)),
-            "population_feature_reliance": generator.normal(
-                0.015, 0.01, (subject_count, feature_count)
-            ),
-            "population_feature_reliance_p_fwer": generator.uniform(
-                0.01, 1, feature_count
-            ),
-            "population_network_reliance": generator.normal(
-                0.012, 0.01, (subject_count, network_count)
-            ),
-            "population_network_reliance_p_fwer": generator.uniform(
-                0.01, 1, network_count
-            ),
-            "population_cell_reliance": generator.normal(
-                0.008, 0.01, (subject_count, feature_count * network_count)
-            ),
-            "population_cell_reliance_p_fwer": generator.uniform(
-                0.01, 1, feature_count * network_count
-            ),
-            "within_subject_feature_reliance": generator.normal(
-                0.015, 0.02, (subject_count, feature_count)
-            ),
-            "within_subject_feature_reliance_p_fwer": generator.uniform(
-                0.01, 1, feature_count
-            ),
-            "within_subject_network_reliance": generator.normal(
-                0.012, 0.02, (subject_count, network_count)
-            ),
-            "within_subject_network_reliance_p_fwer": generator.uniform(
-                0.01, 1, network_count
-            ),
-        })
+        common.update(
+            {
+                "population_auc": np.asarray(0.64),
+                "population_subject_auc": generator.normal(0.52, 0.05, subject_count),
+                "population_null": generator.normal(0.5, 0.02, 1000),
+                "within_subject_auc": generator.normal(0.61, 0.06, subject_count),
+                "within_group_null_mean_auc": generator.normal(0.5, 0.015, 1000),
+                "within_run_auc": generator.normal(0.61, 0.09, (subject_count, 6)),
+                "population_feature_reliance": generator.normal(
+                    0.015, 0.01, (subject_count, feature_count)
+                ),
+                "population_feature_reliance_p_fwer": generator.uniform(0.01, 1, feature_count),
+                "population_network_reliance": generator.normal(
+                    0.012, 0.01, (subject_count, network_count)
+                ),
+                "population_network_reliance_p_fwer": generator.uniform(0.01, 1, network_count),
+                "population_cell_reliance": generator.normal(
+                    0.008, 0.01, (subject_count, feature_count * network_count)
+                ),
+                "population_cell_reliance_p_fwer": generator.uniform(
+                    0.01, 1, feature_count * network_count
+                ),
+                "within_subject_feature_reliance": generator.normal(
+                    0.015, 0.02, (subject_count, feature_count)
+                ),
+                "within_subject_feature_reliance_p_fwer": generator.uniform(0.01, 1, feature_count),
+                "within_subject_network_reliance": generator.normal(
+                    0.012, 0.02, (subject_count, network_count)
+                ),
+                "within_subject_network_reliance_p_fwer": generator.uniform(0.01, 1, network_count),
+            }
+        )
     if panel == "panel3":
         subject_count = 20
         feature_count = len(CORRECTED_FEATURES)
@@ -254,12 +251,40 @@ def _synthetic_arrays(
                 "coupling_p_fwer": coupling_p,
             }
         )
+    if panel == "panel4":
+        subject_count, network_count = 20, len(YEO7_NETWORKS)
+        differences = generator.normal(
+            0, 0.25, (subject_count, network_count, len(CORRECTED_FEATURES))
+        )
+        t_values = np.nanmean(differences, axis=0) / (
+            np.nanstd(differences, axis=0, ddof=1) / np.sqrt(subject_count)
+        )
+        p_values = generator.uniform(0.08, 1.0, t_values.shape)
+        common.update(
+            {
+                "network_modulation": differences,
+                "fooof_t_values": t_values[:, :2],
+                "fooof_p_fwer": p_values[:, :2],
+                "corrected_psd_t_values": t_values[:, 2:],
+                "corrected_psd_p_fwer": p_values[:, 2:],
+                "population_cell_reliance": generator.normal(
+                    0.01, 0.012, (subject_count, network_count, len(CORRECTED_FEATURES))
+                ),
+                "population_cell_reliance_p_fwer": generator.uniform(
+                    0.08, 1.0, (network_count, len(CORRECTED_FEATURES))
+                ),
+                "within_subject_cell_reliance": generator.normal(
+                    0.006, 0.01, (subject_count, network_count, len(CORRECTED_FEATURES))
+                ),
+                "within_subject_cell_reliance_p_fwer": generator.uniform(
+                    0.08, 1.0, (network_count, len(CORRECTED_FEATURES))
+                ),
+            }
+        )
     return common
 
 
-def _render_panel(
-    panel: str, arrays: dict[str, np.ndarray], context: RenderContext
-) -> list[Path]:
+def _render_panel(panel: str, arrays: dict[str, np.ndarray], context: RenderContext) -> list[Path]:
     """Render one final composite and every standalone component."""
     components = PANEL_COMPONENTS[panel]
     plotters = [_component_plotter(panel, index) for index in range(len(components))]
@@ -280,14 +305,11 @@ def _render_panel(
         _write_panel2_captions(composite_path, context)
     elif panel == "panel3":
         _write_panel3_captions(composite_path, context)
+    elif panel == "panel4":
+        _write_panel4_captions(composite_path, context)
     plt.close(figure)
     outputs = [composite_path]
-    slide_dir = (
-        context.reports_root
-        / "figures"
-        / "slides"
-        / PANEL_SPECS[panel]["slide_directory"]
-    )
+    slide_dir = context.reports_root / "figures" / "slides" / PANEL_SPECS[panel]["slide_directory"]
     for index, (title, plotter) in enumerate(zip(components, plotters)):
         standalone, axis = plt.subplots(figsize=SLIDE_SIZE, facecolor="white")
         axis.set_facecolor("white")
@@ -323,9 +345,14 @@ def _write_panel3_captions(composite_path: Path, context: RenderContext) -> None
     _write_captions(composite_path, context.reports_root, "panel3", caption)
 
 
-def _write_captions(
-    composite_path: Path, reports_root: Path, panel: str, caption: str
-) -> None:
+def _write_panel4_captions(composite_path: Path, context: RenderContext) -> None:
+    """Write the Panel 4 caption beside manuscript and slide artifacts."""
+    summary = _panel_summary(context.analysis_dir, "panel4")
+    caption = PANEL4_CAPTION.format(subject_n=summary.get("subject_n", "N/A"))
+    _write_captions(composite_path, context.reports_root, "panel4", caption)
+
+
+def _write_captions(composite_path: Path, reports_root: Path, panel: str, caption: str) -> None:
     """Write one caption beside its composite and slide exports."""
     composite_path.with_suffix(".txt").write_text(caption)
     slide_caption = (
@@ -356,6 +383,14 @@ def _panel3_summary(analysis_dir: Path | None) -> dict[str, Any]:
     return json.loads(metadata.read_text()).get("summary", {})
 
 
+def _panel_summary(analysis_dir: Path | None, panel: str) -> dict[str, Any]:
+    """Load one panel's compact-bundle summary."""
+    if analysis_dir is None:
+        return {}
+    metadata = analysis_dir / PANEL_ANALYSES[panel] / "observed.json"
+    return json.loads(metadata.read_text()).get("summary", {})
+
+
 def _composite_canvas(panel: str, count: int) -> tuple[plt.Figure, list[plt.Axes]]:
     """Create the focused publication geometry for one panel."""
     columns = 3
@@ -379,6 +414,8 @@ def _component_plotter(
     """Select a deterministic plot primitive for one narrative component."""
     if panel == "panel3":
         return _PANEL3_PLOTTERS[index]
+    if panel == "panel4":
+        return _PANEL4_PLOTTERS[index]
     if panel == "panel2":
         return _PANEL2_PLOTTERS[index]
     kinds = {}
@@ -414,9 +451,7 @@ def _plot_panel1_band_summary(
     errors = np.nanstd(values, axis=1) / np.sqrt(values.shape[1])
     colors = plt.get_cmap("viridis")(np.linspace(0.15, 0.9, len(CANONICAL_BANDS)))
     axis.bar(np.arange(len(summary)), summary, color=colors, width=0.75)
-    axis.errorbar(
-        np.arange(len(summary)), summary, yerr=errors, fmt="none", ecolor="black", lw=0.6
-    )
+    axis.errorbar(np.arange(len(summary)), summary, yerr=errors, fmt="none", ecolor="black", lw=0.6)
     axis.set_xticks(
         np.arange(len(CANONICAL_BANDS)),
         [band.display_name for band in CANONICAL_BANDS],
@@ -480,9 +515,7 @@ def _plot_panel1_fooof(
         return
     means = np.nanmean(values, axis=1)
     errors = np.nanstd(values, axis=1) / np.sqrt(values.shape[1])
-    axis.errorbar(
-        np.arange(3), means, yerr=errors, fmt="o-", color="#6A3D9A", lw=1.1
-    )
+    axis.errorbar(np.arange(3), means, yerr=errors, fmt="o-", color="#6A3D9A", lw=1.1)
     axis.set_xticks(np.arange(3), ("Exponent", "Offset", "R²"), rotation=25)
     axis.axhline(0.5 if decoding else 0.0, color="black", lw=0.7, ls="--")
     axis.set_ylabel("AUC" if decoding else "OUT − IN (t)")
@@ -549,9 +582,7 @@ def _plot_spatial_mosaic(
     )
 
 
-def _panel1_p_values(
-    arrays: dict[str, np.ndarray], key: str
-) -> np.ndarray | None:
+def _panel1_p_values(arrays: dict[str, np.ndarray], key: str) -> np.ndarray | None:
     """Resolve the established map-specific FDR or t-max mask."""
     modulation_keys = {
         "raw_psd_modulation": "raw_psd_p_fdr",
@@ -599,25 +630,17 @@ def _draw_schaefer_brain(
     )
 
 
-_PANEL1_PLOTTERS: tuple[
-    Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...
-] = (
+_PANEL1_PLOTTERS: tuple[Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...] = (
     lambda axis, arrays, _: _plot_panel1_band_summary(
         axis, arrays, "raw_psd_modulation", decoding=False
     ),
-    lambda axis, arrays, _: _plot_panel1_band_summary(
-        axis, arrays, "raw_psd_auc", decoding=True
-    ),
+    lambda axis, arrays, _: _plot_panel1_band_summary(axis, arrays, "raw_psd_auc", decoding=True),
     lambda axis, arrays, _: _plot_panel1_spectrum(axis, arrays, "raw"),
     lambda axis, arrays, _: _plot_panel1_spectrum(axis, arrays, "aperiodic"),
     lambda axis, arrays, _: _plot_panel1_spectrum(axis, arrays, "corrected"),
     lambda axis, arrays, _: _plot_panel1_spectrum(axis, arrays, "periodic"),
-    lambda axis, arrays, _: _plot_panel1_fooof(
-        axis, arrays, "fooof_modulation", decoding=False
-    ),
-    lambda axis, arrays, _: _plot_panel1_fooof(
-        axis, arrays, "fooof_auc", decoding=True
-    ),
+    lambda axis, arrays, _: _plot_panel1_fooof(axis, arrays, "fooof_modulation", decoding=False),
+    lambda axis, arrays, _: _plot_panel1_fooof(axis, arrays, "fooof_auc", decoding=True),
     lambda axis, arrays, _: _plot_panel1_band_summary(
         axis, arrays, "corrected_psd_modulation", decoding=False
     ),
@@ -636,9 +659,7 @@ def _plot_bar(axis: plt.Axes, arrays: dict[str, np.ndarray], index: int) -> None
     values = np.asarray(arrays.get("performance", _numeric(arrays, index))).ravel()
     means = np.asarray([np.nanmean(values[slot::3]) for slot in range(3)])
     axis.bar(range(3), means, color=("#2878B5", "#8C8C8C", "#D95319"))
-    axis.set_xticks(
-        range(3), ("State", "Lapse IN", "Lapse OUT"), rotation=25, fontsize=6
-    )
+    axis.set_xticks(range(3), ("State", "Lapse IN", "Lapse OUT"), rotation=25, fontsize=6)
     axis.axhline(0.5 if np.nanmean(means) > 0.4 else 0, color="black", lw=0.7)
 
 
@@ -673,9 +694,7 @@ def _plot_map(axis: plt.Axes, arrays: dict[str, np.ndarray], index: int) -> None
 
 def _plot_matrix(axis: plt.Axes, arrays: dict[str, np.ndarray], index: int) -> None:
     source = np.asarray(arrays.get("matrix", _numeric(arrays, index))).ravel()
-    values = np.resize(source, 7 * len(CORRECTED_FEATURES)).reshape(
-        7, len(CORRECTED_FEATURES)
-    )
+    values = np.resize(source, 7 * len(CORRECTED_FEATURES)).reshape(7, len(CORRECTED_FEATURES))
     image = axis.imshow(values, cmap="viridis", aspect="auto")
     feature_labels = [FEATURE_DISPLAY_NAMES[name] for name in CORRECTED_FEATURES]
     network_labels = [network_display_name(name) for name in YEO7_NETWORKS]
@@ -690,9 +709,7 @@ def _plot_matrix(axis: plt.Axes, arrays: dict[str, np.ndarray], index: int) -> N
     axis.figure.colorbar(image, ax=axis, fraction=0.045, pad=0.02)
 
 
-def _plot_panel2_population(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_population(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     """Show population LOSO performance against its circular-shift null."""
     null = np.asarray(arrays["population_null"], dtype=float)
     observed = float(np.asarray(arrays["population_auc"]))
@@ -703,9 +720,7 @@ def _plot_panel2_population(
     axis.legend(frameon=False, fontsize=7)
 
 
-def _plot_panel2_comparison(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_comparison(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     """Compare each participant's population and personalized held-out AUC."""
     population = np.asarray(arrays["population_subject_auc"], dtype=float)
     individual = np.asarray(arrays["within_subject_auc"], dtype=float)
@@ -717,13 +732,17 @@ def _plot_panel2_comparison(
     axis.set_xticks((0, 1), ("Population\nLOSO", "Participant-specific\nleave-one-run-out"))
     axis.axhline(0.5, color="black", lw=0.7, ls="--")
     axis.set_ylabel("Held-out AUC")
-    axis.text(0.03, 0.97, f"Individual higher: {np.sum(individual > population)}/{len(individual)}",
-              transform=axis.transAxes, va="top", fontsize=6.5)
+    axis.text(
+        0.03,
+        0.97,
+        f"Individual higher: {np.sum(individual > population)}/{len(individual)}",
+        transform=axis.transAxes,
+        va="top",
+        fontsize=6.5,
+    )
 
 
-def _plot_panel2_individual_group(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_individual_group(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     """Show mean participant-specific performance against its shift null."""
     null = np.asarray(arrays["within_group_null_mean_auc"], dtype=float)
     observed = float(np.nanmean(arrays["within_subject_auc"]))
@@ -734,15 +753,18 @@ def _plot_panel2_individual_group(
     axis.legend(frameon=False, fontsize=7)
 
 
-def _plot_panel2_run_stability(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_run_stability(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     """Show held-out run AUCs ordered by participant mean performance."""
     values = np.asarray(arrays["within_run_auc"], dtype=float)
     order = np.argsort(np.nanmean(values, axis=1))
     image = axis.imshow(values[order], cmap="RdBu_r", vmin=0.3, vmax=0.7, aspect="auto")
-    axis.set_xticks(np.arange(values.shape[1]), [f"Run {index + 1}" for index in range(values.shape[1])],
-                    rotation=45, ha="right", fontsize=6)
+    axis.set_xticks(
+        np.arange(values.shape[1]),
+        [f"Run {index + 1}" for index in range(values.shape[1])],
+        rotation=45,
+        ha="right",
+        fontsize=6,
+    )
     axis.set_yticks((0, len(order) - 1), ("Lower mean", "Higher mean"), fontsize=6)
     axis.set_ylabel("Participants (ordered)")
     axis.figure.colorbar(image, ax=axis, fraction=0.045, pad=0.02, label="Held-out AUC")
@@ -755,10 +777,17 @@ def _plot_reliance_distribution(
     values = np.asarray(arrays[f"within_subject_{family}_reliance"], dtype=float)
     p_values = np.asarray(arrays[f"within_subject_{family}_reliance_p_fwer"], dtype=float)
     positions = np.arange(values.shape[1])
-    axis.boxplot(values, positions=positions, widths=0.62, patch_artist=True,
-                 showfliers=False, medianprops={"color": "black", "linewidth": 0.8},
-                 boxprops={"facecolor": "#A9CBE5", "edgecolor": "#4C78A8"},
-                 whiskerprops={"color": "#4C78A8"}, capprops={"color": "#4C78A8"})
+    axis.boxplot(
+        values,
+        positions=positions,
+        widths=0.62,
+        patch_artist=True,
+        showfliers=False,
+        medianprops={"color": "black", "linewidth": 0.8},
+        boxprops={"facecolor": "#A9CBE5", "edgecolor": "#4C78A8"},
+        whiskerprops={"color": "#4C78A8"},
+        capprops={"color": "#4C78A8"},
+    )
     jitter = np.linspace(-0.20, 0.20, values.shape[0])
     for position in positions:
         axis.scatter(position + jitter, values[:, position], s=5, color="#2878B5", alpha=0.5)
@@ -769,36 +798,32 @@ def _plot_reliance_distribution(
     axis.set_ylabel("Held-out AUC decrease")
 
 
-def _plot_panel2_feature_reliance(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_feature_reliance(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     _plot_reliance_distribution(axis, arrays, "feature", _feature_labels())
 
 
-def _plot_panel2_network_reliance(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_network_reliance(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     _plot_reliance_distribution(axis, arrays, "network", _network_labels())
 
 
-def _plot_panel2_cell_reliance(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel2_cell_reliance(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     """Plot the complete network-by-feature reliance matrix."""
     values = np.asarray(arrays["population_cell_reliance"], dtype=float)
     matrix = np.nanmean(values, axis=0).reshape(len(YEO7_NETWORKS), -1)
-    p_values = np.asarray(
-        arrays["population_cell_reliance_p_fwer"], dtype=float
-    ).reshape(matrix.shape)
+    p_values = np.asarray(arrays["population_cell_reliance_p_fwer"], dtype=float).reshape(
+        matrix.shape
+    )
     _symmetric_heatmap(
-        axis, matrix, row_labels=_network_labels(), column_labels=_feature_labels(),
-        p_values=p_values, colorbar_label="Held-out AUC decrease",
+        axis,
+        matrix,
+        row_labels=_network_labels(),
+        column_labels=_feature_labels(),
+        p_values=p_values,
+        colorbar_label="Held-out AUC decrease",
     )
 
 
-_PANEL2_PLOTTERS: tuple[
-    Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...
-] = (
+_PANEL2_PLOTTERS: tuple[Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...] = (
     _plot_panel2_population,
     _plot_panel2_comparison,
     _plot_panel2_individual_group,
@@ -818,14 +843,10 @@ def _network_labels() -> list[str]:
     return [network_display_name(name) for name in YEO7_NETWORKS]
 
 
-def _network_inference(
-    arrays: dict[str, np.ndarray], value: str
-) -> np.ndarray:
+def _network_inference(arrays: dict[str, np.ndarray], value: str) -> np.ndarray:
     """Reassemble FOOOF and corrected-PSD network inference matrices."""
     fooof = np.asarray(arrays[f"fooof_{value}"], dtype=float).reshape(5, 7, 2)
-    corrected = np.asarray(
-        arrays[f"corrected_psd_{value}"], dtype=float
-    ).reshape(5, 7, 7)
+    corrected = np.asarray(arrays[f"corrected_psd_{value}"], dtype=float).reshape(5, 7, 7)
     return np.concatenate((fooof, corrected), axis=2)
 
 
@@ -872,8 +893,14 @@ def _plot_factorial_profile(
     )
     for label, indices, color, marker in styles:
         axis.errorbar(
-            (0, 1), means[indices], yerr=errors[indices], label=label,
-            color=color, marker=marker, lw=2, capsize=3,
+            (0, 1),
+            means[indices],
+            yerr=errors[indices],
+            label=label,
+            color=color,
+            marker=marker,
+            lw=2,
+            capsize=3,
         )
     axis.set_xticks((0, 1), ("IN", "OUT"))
     axis.set_ylabel(ylabel, fontsize=7)
@@ -883,13 +910,9 @@ def _plot_factorial_profile(
     axis.spines[["top", "right"]].set_visible(False)
 
 
-def _plot_panel3_profile(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel3_profile(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     t_values = _network_inference(arrays, "t_values")[0]
-    network_index, feature_index = np.unravel_index(
-        np.nanargmax(np.abs(t_values)), t_values.shape
-    )
+    network_index, feature_index = np.unravel_index(np.nanargmax(np.abs(t_values)), t_values.shape)
     values = np.asarray(arrays["network_cell_means"], dtype=float)[
         :, :, network_index, feature_index
     ]
@@ -897,9 +920,7 @@ def _plot_panel3_profile(
     _plot_factorial_profile(axis, values, annotation=annotation, ylabel="Feature value")
 
 
-def _plot_panel3_interactions(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel3_interactions(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     _symmetric_heatmap(
         axis,
         _network_inference(arrays, "t_values")[0],
@@ -909,9 +930,7 @@ def _plot_panel3_interactions(
     )
 
 
-def _plot_panel3_simple_effects(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel3_simple_effects(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     t_values = _network_inference(arrays, "t_values")[1:]
     p_values = _network_inference(arrays, "p_fwer")[1:]
     strongest = np.nanargmax(np.abs(t_values), axis=1)
@@ -921,7 +940,10 @@ def _plot_panel3_simple_effects(
     summary_p = p_values[rows, strongest, columns]
     labels = ["Lapse−correct | IN", "Lapse−correct | OUT", "OUT−IN | correct", "OUT−IN | lapse"]
     _symmetric_heatmap(
-        axis, summary, row_labels=labels, column_labels=_feature_labels(),
+        axis,
+        summary,
+        row_labels=labels,
+        column_labels=_feature_labels(),
         p_values=summary_p,
     )
     axis.set_ylabel("Strongest Yeo-network expression", fontsize=7)
@@ -938,9 +960,7 @@ def _bootstrap_dz_interval(values: np.ndarray, seed: int) -> tuple[float, float,
     return estimate, float(lower), float(upper)
 
 
-def _plot_panel3_forest(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel3_forest(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     interactions = np.asarray(arrays["interaction"], dtype=float)
     t_values = _network_inference(arrays, "t_values")[0]
     top = np.argsort(np.abs(t_values).ravel())[-7:]
@@ -958,9 +978,13 @@ def _plot_panel3_forest(
     positions = np.arange(len(top))
     estimates_array = np.asarray(estimates)
     axis.errorbar(
-        estimates_array, positions,
+        estimates_array,
+        positions,
         xerr=(estimates_array - lower, np.asarray(upper) - estimates_array),
-        fmt="o", color="#315A7D", ecolor="#8AA6B8", capsize=2,
+        fmt="o",
+        color="#315A7D",
+        ecolor="#8AA6B8",
+        capsize=2,
     )
     axis.axvline(0, color="#777777", lw=0.8)
     axis.set_yticks(positions, labels, fontsize=6)
@@ -968,41 +992,144 @@ def _plot_panel3_forest(
     axis.spines[["top", "right"]].set_visible(False)
 
 
-def _plot_panel3_coupling_profile(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel3_coupling_profile(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     t_values = np.asarray(arrays["coupling_t_values"], dtype=float)[0]
     feature_index = int(np.nanargmax(np.abs(t_values)))
     values = np.asarray(arrays["coupling"], dtype=float)[:, :, feature_index]
     _plot_factorial_profile(
-        axis, values, annotation=_feature_labels()[feature_index],
+        axis,
+        values,
+        annotation=_feature_labels()[feature_index],
         ylabel="DMN–DAN coupling (Fisher z)",
     )
 
 
-def _plot_panel3_coupling_contrasts(
-    axis: plt.Axes, arrays: dict[str, np.ndarray], _: int
-) -> None:
+def _plot_panel3_coupling_contrasts(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
     labels = [
-        "Interaction", "Lapse−correct | IN", "Lapse−correct | OUT",
-        "OUT−IN | correct", "OUT−IN | lapse",
+        "Interaction",
+        "Lapse−correct | IN",
+        "Lapse−correct | OUT",
+        "OUT−IN | correct",
+        "OUT−IN | lapse",
     ]
     _symmetric_heatmap(
-        axis, np.asarray(arrays["coupling_t_values"], dtype=float),
-        row_labels=labels, column_labels=_feature_labels(),
+        axis,
+        np.asarray(arrays["coupling_t_values"], dtype=float),
+        row_labels=labels,
+        column_labels=_feature_labels(),
         p_values=np.asarray(arrays["coupling_p_fwer"], dtype=float),
     )
 
 
-_PANEL3_PLOTTERS: tuple[
-    Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...
-] = (
+_PANEL3_PLOTTERS: tuple[Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...] = (
     _plot_panel3_profile,
     _plot_panel3_interactions,
     _plot_panel3_simple_effects,
     _plot_panel3_forest,
     _plot_panel3_coupling_profile,
     _plot_panel3_coupling_contrasts,
+)
+
+
+def _panel4_modulation_matrix(arrays: dict[str, np.ndarray], suffix: str) -> np.ndarray:
+    """Join FOOOF and corrected-PSD modulation inference matrices."""
+    return np.concatenate((arrays[f"fooof_{suffix}"], arrays[f"corrected_psd_{suffix}"]), axis=1)
+
+
+def _plot_panel4_modulation(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
+    """Plot complete paired OUT-minus-IN network inference."""
+    _symmetric_heatmap(
+        axis,
+        _panel4_modulation_matrix(arrays, "t_values"),
+        row_labels=_network_labels(),
+        column_labels=_feature_labels(),
+        p_values=_panel4_modulation_matrix(arrays, "p_fwer"),
+    )
+
+
+def _plot_panel4_effect_sizes(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
+    """Plot complete paired standardized network effects."""
+    values = np.asarray(arrays["network_modulation"], dtype=float)
+    effect = np.nanmean(values, axis=0) / np.nanstd(values, axis=0, ddof=1)
+    _symmetric_heatmap(
+        axis,
+        effect,
+        row_labels=_network_labels(),
+        column_labels=_feature_labels(),
+        colorbar_label="Cohen's $d_z$",
+    )
+
+
+def _plot_panel4_reliance(axis: plt.Axes, arrays: dict[str, np.ndarray], regime: str) -> None:
+    """Plot participant-mean held-out feature-by-network reliance."""
+    values = np.nanmean(np.asarray(arrays[f"{regime}_cell_reliance"]), axis=0)
+    _symmetric_heatmap(
+        axis,
+        values,
+        row_labels=_network_labels(),
+        column_labels=_feature_labels(),
+        p_values=np.asarray(arrays[f"{regime}_cell_reliance_p_fwer"]),
+        colorbar_label=r"$\Delta$AUC after shuffle",
+    )
+
+
+def _plot_panel4_population_reliance(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
+    _plot_panel4_reliance(axis, arrays, "population")
+
+
+def _plot_panel4_individual_reliance(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
+    _plot_panel4_reliance(axis, arrays, "within_subject")
+
+
+def _plot_panel4_correspondence(axis: plt.Axes, arrays: dict[str, np.ndarray], _: int) -> None:
+    """Relate absolute modulation to population and personalized reliance."""
+    values = np.asarray(arrays["network_modulation"], dtype=float)
+    effect = np.abs(np.nanmean(values, axis=0) / np.nanstd(values, axis=0, ddof=1))
+    colors = plt.get_cmap("tab10")(np.linspace(0, 0.85, len(CORRECTED_FEATURES)))
+    population = np.nanmean(arrays["population_cell_reliance"], axis=0)
+    for feature_index in range(len(_feature_labels())):
+        x_values = effect[:, feature_index]
+        for regime, marker in (("population", "o"), ("within_subject", "^")):
+            reliance = np.nanmean(arrays[f"{regime}_cell_reliance"], axis=0)[:, feature_index]
+            axis.scatter(
+                x_values,
+                reliance,
+                color=colors[feature_index],
+                marker=marker,
+                s=18,
+                alpha=0.75,
+            )
+    short_networks = ("VIS", "SM", "DAN", "VAN", "LIM", "FPC", "DMN")
+    short_features = ("exp", "off", "θ", "α", "βL", "βH", "γ1", "γ2", "γ3")
+    for flat_index in np.argsort(population.ravel())[-4:]:
+        network_index, feature_index = np.unravel_index(flat_index, population.shape)
+        axis.annotate(
+            f"{short_networks[network_index]}·{short_features[feature_index]}",
+            (effect[network_index, feature_index], population[network_index, feature_index]),
+            xytext=(3, 3),
+            textcoords="offset points",
+            fontsize=5.5,
+        )
+    axis.axhline(0, color="#777777", lw=0.7)
+    axis.set_xlabel("Absolute OUT−IN effect |Cohen's $d_z$|")
+    axis.set_ylabel(r"Mean held-out $\Delta$AUC")
+    axis.text(
+        0.98,
+        0.02,
+        "○ population   △ personalized",
+        transform=axis.transAxes,
+        ha="right",
+        fontsize=6,
+    )
+    axis.spines[["top", "right"]].set_visible(False)
+
+
+_PANEL4_PLOTTERS: tuple[Callable[[plt.Axes, dict[str, np.ndarray], int], None], ...] = (
+    _plot_panel4_modulation,
+    _plot_panel4_effect_sizes,
+    _plot_panel4_population_reliance,
+    _plot_panel4_individual_reliance,
+    _plot_panel4_correspondence,
 )
 
 
@@ -1054,16 +1181,8 @@ def _save_figure(
         "analysis_id": context.analysis_id,
         "inputs": (
             [
-                str(
-                    context.analysis_dir
-                    / PANEL_ANALYSES[panel]
-                    / "observed.npz"
-                ),
-                str(
-                    context.analysis_dir
-                    / PANEL_ANALYSES[panel]
-                    / "observed.json"
-                ),
+                str(context.analysis_dir / PANEL_ANALYSES[panel] / "observed.npz"),
+                str(context.analysis_dir / PANEL_ANALYSES[panel] / "observed.json"),
             ]
             if context.analysis_dir
             else []
@@ -1089,8 +1208,10 @@ def _save_figure(
 
 def _figure_sidecar(path: Path, component: str) -> Path:
     """Use a clean composite JSON name while distinguishing slide formats."""
-    return path.with_suffix(".json") if component == "composite" else path.with_name(
-        f"{path.name}.json"
+    return (
+        path.with_suffix(".json")
+        if component == "composite"
+        else path.with_name(f"{path.name}.json")
     )
 
 
@@ -1114,6 +1235,7 @@ def _panel_title(panel: str) -> str:
         "panel1": "Panel 1 · Feature modulation",
         "panel2": "Panel 2 · Multifeature decoding",
         "panel3": "Panel 3 · Network dynamics",
+        "panel4": "Panel 4 · Network basis of attentional state",
     }[panel]
 
 
@@ -1127,6 +1249,14 @@ def _component_title(panel: str, component: str) -> str:
             "D_run_stability": "D  Stability across held-out runs",
             "E_feature_reliance": "E  Spectral feature reliance",
             "F_network_reliance": "F  Network reliance",
+        }[component]
+    if panel == "panel4":
+        return {
+            "A_network_modulation": "A  OUT−IN network modulation",
+            "B_modulation_effect_sizes": "B  Standardized modulation effects",
+            "C_population_reliance": "C  Cross-person predictive reliance",
+            "D_individual_reliance": "D  Personalized predictive reliance",
+            "E_modulation_prediction": "E  Modulation versus prediction",
         }[component]
     if panel != "panel3":
         return component.replace("_", " ")
