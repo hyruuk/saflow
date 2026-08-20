@@ -4011,10 +4011,14 @@ def _multifeature_sweep_slurm(
     log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "multifeature_sweep"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Per-stage wall time: the sweep dominates, importance is minutes.
-    stage_time = {"sweep": "3:00:00", "merge": "0:15:00", "confirm": "2:00:00",
-                  "importance": "1:00:00", "nested-select": "2:00:00",
-                  "all": "6:00:00"}
+    # Per-stage wall time. `prep` is pure I/O (one walk of the feature files);
+    # the sweep is then pure compute and each shard is minutes, so a short
+    # reservation backfills far sooner than a long one.
+    # merge outlives the sweep by design: it idles until the array leaves the
+    # queue (see wait_for_job in the template), then merges in seconds.
+    stage_time = {"prep": "3:00:00", "sweep": "6:00:00", "merge": "7:00:00",
+                  "confirm": "2:00:00", "importance": "1:00:00",
+                  "nested-select": "4:00:00", "all": "6:00:00"}
     # Each task only parallelises the 32 LOSO folds, so a shard wants a modest
     # core count: 40 x 8 cores schedules far sooner than 40 x 24 and finishes
     # the grid just as fast. confirm/importance are single jobs and can take
@@ -4097,26 +4101,46 @@ def _multifeature_sweep_slurm(
                 shard_resources,
                 time=slurm_time if slurm_time is not None else stage_time["sweep"],
             )
+            # The array waits on prep: every task reads the tensor cache that
+            # prep writes. Without it each task walks 23 x 32 x 6 feature files
+            # at the same moment and the shared filesystem, not the CPU, sets
+            # the run time.
+            array_deps = [job_ids["prep"]] if job_ids.get("prep") else None
             job_ids["sweep"] = submit_job_array(
                 shard_scripts, job_name, array_resources, script_dir, timestamp,
-                max_concurrent=max_concurrent, dry_run=dry_run,
+                max_concurrent=max_concurrent, dependencies=array_deps,
+                dep_type="afterok", dry_run=dry_run,
             )
             print(f"  stage=sweep       {n_shards} shard(s) "
                   f"time={array_resources['time']}  job={job_ids['sweep']}")
             continue
 
-        context = _context(stage, job_name)
+        # prep is one sequential walk of the feature files — I/O bound, so it
+        # wants memory for the stacked tensor, not cores. merge reads CSVs and
+        # may idle waiting on the array, so it wants neither.
+        stage_resources = {
+            "prep": dict(base_resources, cpus=4, mem="64G"),
+            "merge": dict(base_resources, cpus=2, mem="16G"),
+        }.get(stage)
+        context = _context(stage, job_name, resources=stage_resources)
+        if stage == "merge" and job_ids.get("sweep"):
+            context["wait_for_job"] = job_ids["sweep"]
+            context["wait_timeout_s"] = 21600
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
         render_slurm_script("multifeature_sweep.sh.j2", context, output_path=script_path)
         # Each stage waits on the previous one: merge needs every shard,
         # confirm/importance need the merged CSV to find the winning cell.
-        # nested-select is self-contained — it never reads the sweep CSV — so it
-        # runs concurrently with the array instead of queueing behind it.
-        prior = [job_ids[s] for s in ("merge", "sweep")
-                 if job_ids.get(s) and s != stage]
-        deps = prior[:1] if stage not in ("sweep", "nested-select") else None
+        # nested-select never reads the sweep CSV, so it only waits on prep and
+        # runs concurrently with the array.
+        if stage == "nested-select":
+            deps = [job_ids["prep"]] if job_ids.get("prep") else None
+        else:
+            prior = [job_ids[s] for s in ("merge", "sweep", "prep")
+                     if job_ids.get(s) and s != stage]
+            deps = prior[:1]
+        deps = deps or None
         # afterany for merge: one shard hitting wall time must not strand the
-        # other 39: every shard flushes its CSV after each cell, so merge still
+        # others — every shard flushes its CSV after each cell, so merge still
         # has real results to rank. Later stages need a merged CSV, so afterok.
         dep_type = "afterany" if stage == "merge" else "afterok"
         job_ids[stage] = submit_slurm_job(
@@ -4194,6 +4218,12 @@ def multifeature_sweep(
     explains it with Haufe patterns + block permutation importance.
 
     Stages (--stage):
+      prep       : walk the per-subject feature files once and materialize the
+                   (window x spatial x feature) tensor under
+                   group_sweep/tensor_cache/. Every other stage reads it, so
+                   the array tasks start in seconds instead of all walking
+                   4416 npz files at the same moment. --refresh-cache rebuilds
+                   it after a feature regeneration.
       sweep      : LOSO grid over reduction x feature-set x estimator x
                    normalization x IN/OUT bounds. Writes *_sweep.csv (one row
                    per cell, sorted by mean AUC) and *_sweep-folds.npz
@@ -4210,7 +4240,7 @@ def multifeature_sweep(
                    hyperparameter) + within-subject label-permutation null.
       importance : Haufe-transformed activation patterns and block permutation
                    importance (per feature, per spatial unit) for the winner.
-      all        : every stage (five SLURM jobs; locally, run nested-select
+      all        : every stage (six SLURM jobs; locally, run nested-select
                    separately since it uses its own candidate axes).
 
     Reductions: flat, yeo7-mean, yeo7-meansd, hemi-yeo7, global-mean, pca-K,
@@ -4234,9 +4264,9 @@ def multifeature_sweep(
     print("Multi-Feature Cross-Subject Generalization Sweep")
     print("=" * 80)
 
-    stages = (["sweep", "merge", "confirm", "importance", "nested-select"]
+    stages = (["prep", "sweep", "merge", "confirm", "importance", "nested-select"]
               if stage == "all" else [stage])
-    if stage not in ("all", "sweep", "merge", "confirm", "importance",
+    if stage not in ("all", "prep", "sweep", "merge", "confirm", "importance",
                      "nested-select"):
         print(f"ERROR: unknown --stage={stage}")
         return
@@ -5920,6 +5950,77 @@ viz_networks = Collection("networks")
 viz_networks.add_task(viz_network_panel, name="panel")
 
 # Visualization tasks
+@task
+def multifeature_sweep_panel(
+    c,
+    bundle_dir=None,
+    space="schaefer_400",
+    trial_type="alltrials",
+    n_events_window=8,
+    inout_selection="strict",
+    state_bundle=None,
+    output=None,
+    table=None,
+    title=None,
+    synthetic=False,
+    config="config.yaml",
+):
+    """Render Panel 2 from the cross-subject multifeature sweep.
+
+    Six subpanels: sweep landscape (A), per-held-out-subject AUC with its
+    permutation null (B), leak-free nested selection (C), feature families (D),
+    block reliance (E) and the Haufe activation pattern (F). Subpanels whose
+    stage has not landed yet render as a labelled blank, so the panel is usable
+    while the cluster run is still in flight.
+
+    --state-bundle adds an optional third row (population vs personalized
+    decoding, run stability) from a state_multifeature bundle; the sweep is
+    purely cross-subject and cannot produce those.
+
+    --synthetic writes a synthetic bundle to a temp dir first, for prototyping
+    before the real results exist.
+
+    Examples:
+        invoke viz.multifeature-sweep-panel
+        invoke viz.multifeature-sweep-panel --synthetic
+        invoke viz.multifeature-sweep-panel --bundle-dir=/path/to/group_sweep
+    """
+    python_exe = get_python_executable()
+    env = get_env_with_pythonpath()
+
+    if synthetic:
+        if bundle_dir is None:
+            bundle_dir = str(PROJECT_ROOT / "reports" / "figures" / "temp" / "synthetic_sweep")
+        gen = [
+            python_exe, "-m", "code.visualization.synthetic_sweep_bundle",
+            "--out", bundle_dir, "--space", space, "--trial-type", trial_type,
+            "--config", config,
+        ]
+        print(f"Running: {' '.join(gen)}")
+        c.run(" ".join(gen), pty=True, env=env)
+
+    cmd = [
+        python_exe, "-m", "code.visualization.multifeature_sweep_panel",
+        "--space", space,
+        "--trial-type", trial_type,
+        "--n-events-window", str(n_events_window),
+        "--inout-selection", inout_selection,
+        "--config", config,
+    ]
+    if bundle_dir:
+        cmd.extend(["--bundle-dir", bundle_dir])
+    if state_bundle:
+        cmd.extend(["--state-bundle", state_bundle])
+    if output:
+        cmd.extend(["--output", output])
+    if table:
+        cmd.extend(["--table", table])
+    if title:
+        cmd.extend(["--title", f'"{title}"'])
+    print(f"Running: {' '.join(cmd)}")
+    c.run(" ".join(cmd), pty=True, env=env)
+
+
 viz = Collection("viz")
 viz.add_task(viz_stats, name="stats")
 viz.add_task(viz_maps, name="maps")
@@ -5931,6 +6032,7 @@ viz.add_task(viz_panels, name="panels")
 viz.add_task(panel1, name="panel1")
 viz.add_task(outcome_state_panel, name="outcome-state")
 viz.add_task(correct_vs_lapse_panel, name="correct-vs-lapse")
+viz.add_task(multifeature_sweep_panel, name="multifeature-sweep-panel")
 viz.add_collection(viz_networks)  # Nested: viz.networks.*
 
 # SLURM job-management tasks

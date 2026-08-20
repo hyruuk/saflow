@@ -486,7 +486,8 @@ invoke analysis.classify --features=all --slurm
 
 `analysis.classify-multifeature --axis=joint` fits one model on the flattened
 `n_spatial * n_features` vector with a fixed `logistic(C=1)`. On Schaefer-400
-that is 9600 dimensions per window and leave-one-subject-out AUC sits barely
+that is 9200 dimensions per window (400 parcels x 23 features) and
+leave-one-subject-out AUC sits barely
 above chance. Piloting showed the binding constraint is dimensionality, not the
 classifier family: collapsing the 400 parcels to the 7 Yeo networks gains
 ~5 AUC points and runs ~40x faster, while tuning `C` or swapping in SVM / RF /
@@ -496,12 +497,22 @@ boosting on the flat vector gains essentially nothing.
 
 | stage | what it does | output |
 |---|---|---|
+| `prep` | walks the per-subject feature files once and materializes the `(n_windows, n_spatial, n_features)` tensor | `tensor_cache/space-…_in25-75.X.npy` + `.meta.npz` |
 | `sweep` | LOSO grid over reduction x feature-set x estimator x normalization x IN/OUT bounds; fans out over `--n-shards` SLURM array tasks | `*_sweep_shard-KofN.csv`, `*_sweep-folds_shard-KofN.npz` |
 | `merge` | folds the shard outputs into one ranked table | `*_sweep.csv` (one row per cell, sorted by mean AUC), `*_sweep-folds.npz` (per-subject AUC vectors) |
 | `confirm` | nested LOSO on the winning cell (inner GroupKFold picks the hyperparameter) + within-subject label-permutation null | `*_confirm.npz`, `*_confirm.json` |
 | `importance` | Haufe-transformed activation patterns + block permutation importance (per feature, per spatial unit) | `*_importance.npz`, `*_importance.json` |
 
 Outputs land in `<results>/classification_<space>/group_sweep/`.
+
+`prep` exists because loading is per-feature: `load_combined_features` walks
+`n_features x n_subjects x n_runs` npz files (23 x 32 x 6 = 4416 on
+Schaefer-400) and each of the eight `psd_*` features re-reads the same welch
+file. One process doing that is a few minutes; forty array tasks doing it at
+the same moment saturated the shared filesystem and the 2026-08-20 run spent
+its whole 7 h wall time inside the loader without fitting a single cell. Every
+stage reads the tensor cache when it exists, so the array starts in seconds.
+Pass `--refresh-cache` after regenerating any feature.
 
 Spatial reductions: `flat`, `yeo7-mean`, `yeo7-meansd`, `hemi-yeo7`,
 `global-mean`, `pca-K`, `net-<Network>`. Everything except `pca-K` is a fixed,
@@ -512,7 +523,7 @@ Estimators are `family[:key=value,...]` over `logistic`, `linearsvc`, `lda`,
 `hgb`, `rf`.
 
 ```
-# Full default grid on the cluster: a 40-task sweep array, then
+# Full default grid on the cluster: prep, then a 40-task sweep array, then
 # merge -> confirm -> importance chained behind it
 invoke analysis.multifeature-sweep --slurm
 
@@ -575,6 +586,48 @@ Caveats to carry into the text:
   followed by an OUT block, so smoothing in array order averages within a class
   and inflates AUC; doing it honestly needs the `alignment_keys` onsets to
   restore true temporal order.
+
+### Panel 2 from the sweep
+
+`code/visualization/multifeature_sweep_panel.py` renders Panel 2 directly from
+the sweep output set:
+
+| subpanel | shows | source stage |
+|---|---|---|
+| A | mean LOSO AUC per (reduction x estimator), best over feature set and normalization, held at one IN/OUT bound | `sweep` |
+| B | the winning cell's nested AUC for each held-out subject, its 95% CI, and the permutation null (inset) | `confirm` |
+| C | which cell each outer fold picked when selection was remade inside the fold, and the leak-free AUC | `nested-select` |
+| D | AUC per feature family at the winning reduction | `sweep` |
+| E | held-out AUC drop per feature block, FDR-starred | `importance` |
+| F | Haufe activation pattern (spatial unit x feature) with a marginal per-network reliance bar | `importance` |
+
+Subpanels whose stage has not landed yet render as a labelled blank, so the
+panel is usable the moment the sweep array finishes — no need to wait for the
+whole chain.
+
+```
+# real results
+invoke viz.multifeature-sweep-panel
+
+# prototype against a synthetic bundle (no cluster results needed)
+invoke viz.multifeature-sweep-panel --synthetic
+```
+
+The synthetic bundle comes from `code/visualization/synthetic_sweep_bundle.py`,
+which imports `SWEEP_FIELDS` and `build_output_base` from the sweep module
+rather than restating them, so a schema change there fails loudly instead of
+quietly producing a bundle the panel mis-reads. Synthetic renders carry a
+"SYNTHETIC DATA" stamp under the title.
+
+An optional third row (G: population vs personalized decoding; H: run
+stability) renders when `--state-bundle` points at a `state_multifeature`
+bundle carrying `population_subject_auc`, `within_subject_auc` and
+`within_run_auc`. The sweep is purely cross-subject and cannot produce those —
+they are the personalized half of the old Panel 2, kept as a contrast.
+
+Note the full feature stack is **23** features (2 FOOOF + 8 PSD + 8
+slope-corrected PSD + 5 complexity), so `flat` on Schaefer-400 is 9200
+dimensions, not 9600.
 
 ### Underlying scripts
 

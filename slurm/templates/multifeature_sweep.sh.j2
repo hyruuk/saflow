@@ -5,6 +5,14 @@
 # Cross-subject generalization sweep — stage={{ stage }} on {{ space }}
 # =============================================================================
 
+# joblib owns the cores here (--n-jobs below is the SLURM allocation). Leaving
+# the inherited OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK would give every one of
+# those workers its own BLAS thread pool and oversubscribe the cgroup N-fold.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+
 echo "Sweep configuration:"
 echo "  Stage:           {{ stage }}"
 echo "  Space:           {{ space }}"
@@ -20,6 +28,21 @@ echo "  Shard:           {{ shard_idx }} / {{ n_shards }}"
 {% endif %}
 echo ""
 
+{% if wait_for_job %}
+# Belt and braces on the SLURM dependency: on 2026-08-20 the merge job started
+# ~4h before the array it depended on had finished and failed on an empty
+# glob. Poll until the sweep array has really left the queue before merging.
+WAIT_DEADLINE=$((SECONDS + {{ wait_timeout_s | default(21600) }}))
+while squeue -h -j {{ wait_for_job }} -t PENDING,RUNNING,CONFIGURING,SUSPENDED 2>/dev/null | grep -q .; do
+    if [ $SECONDS -gt $WAIT_DEADLINE ]; then
+        echo "WARNING: job {{ wait_for_job }} still queued after $((SECONDS / 60)) min — merging what exists"
+        break
+    fi
+    echo "  waiting on job {{ wait_for_job }} ... ($((SECONDS / 60)) min)"
+    sleep 120
+done
+echo ""
+{% endif %}
 python -m code.classification.run_multifeature_sweep \
     --stage {{ stage }} \
     --space {{ space }} \
@@ -59,6 +82,12 @@ python -m code.classification.run_multifeature_sweep \
 {% endif %}
 {% if output_dir %}
     --output-dir {{ output_dir }} \
+{% endif %}
+{% if cache_dir %}
+    --cache-dir {{ cache_dir }} \
+{% endif %}
+{% if refresh_cache %}
+    --refresh-cache \
 {% endif %}
     --seed {{ seed }}
 

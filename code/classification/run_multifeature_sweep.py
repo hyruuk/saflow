@@ -4,7 +4,8 @@ Motivation
 ----------
 The ``joint`` axis of :mod:`code.classification.run_multifeature` fits one
 classifier on the flattened ``(n_spatial * n_features)`` vector with a fixed
-``logistic(C=1)``. On Schaefer-400 that is 9600 dimensions per window, and
+``logistic(C=1)``. On Schaefer-400 that is 9200 dimensions per window (400
+parcels x 23 features), and
 leave-one-subject-out (LOSO) AUC sits barely above chance. Piloting showed the
 binding constraint is dimensionality, not the classifier family: collapsing the
 400 parcels to the 7 Yeo networks gains ~5 AUC points and runs ~40x faster,
@@ -29,7 +30,7 @@ This module therefore sweeps the axes that actually matter, in three stages:
     the winning cell — the "alpha in this network / exponent in that one"
     readout. Blocks are whole features (across spatial units) and whole spatial
     units (across features), which is both cheaper and more interpretable than
-    permuting 9600 individual columns.
+    permuting 9200 individual columns.
 
 Deliberately *not* included: temporal smoothing of the decision function.
 ``load_classification_data`` returns each subject's windows as an IN block
@@ -51,6 +52,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import time
 import warnings
 from datetime import datetime
@@ -99,11 +101,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-STAGES = ("sweep", "merge", "confirm", "importance", "nested-select", "all")
+STAGES = ("prep", "sweep", "merge", "confirm", "importance", "nested-select", "all")
 NORMALIZATIONS = ("zscore", "rank", "none")
 
 # Curated defaults. Ordered cheapest-first on purpose: the network-level cells
-# cost well under a second each while `flat` (up to 400 x 24 = 9600 dims) costs
+# cost well under a second each while `flat` (400 parcels x 23 features = 9200
+# dims for the full stack) costs
 # minutes, so a job that runs out of wall time still leaves the informative
 # cells on disk — the CSV is flushed after every cell and a re-submission
 # resumes where it stopped.
@@ -312,7 +315,7 @@ def make_pipeline(est: object, pca_k: Optional[int] = None) -> Pipeline:
     """Impute -> scale -> (PCA) -> classify, all fit on the training fold only.
 
     The imputer matters: on the flat 400x24 vector a single failed FOOOF fit
-    anywhere in a window would otherwise drop the whole window, and with 9600
+    anywhere in a window would otherwise drop the whole window, and with 9200
     columns that can silently discard most of the data.
     """
     steps: List[Tuple[str, object]] = [
@@ -388,6 +391,12 @@ def summarize(auc: np.ndarray) -> Dict[str, float]:
 # Data cache
 # ---------------------------------------------------------------------------
 
+def _cache_files(stem: Path) -> Tuple[Path, Path]:
+    """(tensor, metadata) paths for one tensor-cache stem."""
+    return (stem.with_name(stem.name + ".X.npy"),
+            stem.with_name(stem.name + ".meta.npz"))
+
+
 class DataCache:
     """Loads the union of every requested feature once per IN/OUT bound pair.
 
@@ -398,8 +407,11 @@ class DataCache:
 
     def __init__(self, features: List[str], space: str, config: Dict,
                  trial_type: str, n_events_window: int, inout_selection: str,
-                 keep_bad_trials: bool, seed: int):
+                 keep_bad_trials: bool, seed: int,
+                 cache_dir: Optional[Path] = None, refresh_cache: bool = False):
         self.features = features
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.refresh_cache = refresh_cache
         self.space = space
         self.config = config
         self.trial_type = trial_type
@@ -415,27 +427,113 @@ class DataCache:
         self.metadata: Dict = {}
         self.spatial_names: List[str] = []
 
+    def _cache_stem(self, bounds: Tuple[int, int]) -> Optional[Path]:
+        """Path stem of the materialized tensor for one bounds pair."""
+        if self.cache_dir is None:
+            return None
+        token = (f"space-{self.space}_type-{self.trial_type}"
+                 f"_w{self.n_events_window}_sel-{self.inout_selection}"
+                 f"_in{bounds[0]}-{bounds[1]}"
+                 f"{'_keepbad' if self.keep_bad_trials else ''}"
+                 f"_nfeat{len(self.features)}")
+        return self.cache_dir / token
+
+    def _read_cache(self, bounds: Tuple[int, int]) -> bool:
+        """Populate self from the tensor cache. False if it is not usable."""
+        stem = self._cache_stem(bounds)
+        if stem is None or self.refresh_cache:
+            return False
+        x_path, meta_path = _cache_files(stem)
+        if not (x_path.exists() and meta_path.exists()):
+            return False
+        t0 = time.time()
+        try:
+            X = np.load(x_path)
+            with np.load(meta_path, allow_pickle=True) as npz:
+                features = [str(f) for f in npz["features"]]
+                if features != list(self.features):
+                    logger.warning(
+                        f"tensor cache {x_path.name} holds a different feature "
+                        f"order; reloading from the feature files"
+                    )
+                    return False
+                self.y, self.groups = npz["y"], npz["groups"]
+                self.spatial_names = [str(s) for s in npz["spatial_names"]]
+                self.metadata = npz["metadata"].item()
+        except Exception as exc:  # a truncated cache must never be fatal
+            logger.warning(f"tensor cache {x_path.name} unreadable ({exc}); reloading")
+            return False
+        self.X = X
+        logger.info(
+            f"tensor cache hit: {x_path.name}  X={X.shape}  [{time.time() - t0:.0f}s]"
+        )
+        return True
+
+    def _write_cache(self, bounds: Tuple[int, int]) -> None:
+        """Materialize the loaded tensor so later jobs skip the feature walk.
+
+        Written to a per-process temp name and renamed, so a job that dies
+        mid-write cannot leave a half-file that the next one would read.
+        """
+        stem = self._cache_stem(bounds)
+        if stem is None:
+            return
+        x_path, meta_path = _cache_files(stem)
+        try:
+            stem.parent.mkdir(parents=True, exist_ok=True)
+            # np.save/np.savez append the extension themselves, so the temp
+            # names have to end in .npy/.npz already or the rename finds
+            # nothing to move.
+            tag = f"tmp-{os.getpid()}"
+            x_tmp = x_path.with_name(f"{x_path.stem}.{tag}.npy")
+            meta_tmp = meta_path.with_name(f"{meta_path.stem}.{tag}.npz")
+            np.save(x_tmp, self.X)
+            np.savez(meta_tmp, y=self.y, groups=self.groups,
+                     features=np.array(self.features, dtype=object),
+                     spatial_names=np.array(self.spatial_names, dtype=object),
+                     metadata=np.array(self.metadata, dtype=object))
+            x_tmp.replace(x_path)
+            meta_tmp.replace(meta_path)
+            logger.info(
+                f"tensor cache written: {x_path.name} "
+                f"({x_path.stat().st_size / 1e9:.2f} GB)"
+            )
+        except Exception as exc:  # caching is an optimization, never a failure
+            logger.warning(f"could not write tensor cache for {bounds}: {exc}")
+
     def load(self, bounds: Tuple[int, int]) -> None:
+        """Materialize X/y/groups for one IN/OUT bounds pair.
+
+        Reads the tensor cache when one exists: the per-feature walk opens
+        n_features x n_subjects x n_runs npz files (23 x 32 x 6 = 4416 here,
+        and every psd_* feature re-reads the same welch file), which collapses
+        under concurrent array tasks on a shared filesystem. Loading one .npy
+        instead makes a shard's startup independent of how many shards run.
+        """
         if self._bounds == bounds:
             return
         t0 = time.time()
-        X, y, groups, meta = load_combined_features(
-            features=self.features, space=self.space, inout_bounds=bounds,
-            config=self.config, drop_bad_trials=not self.keep_bad_trials,
-            trial_type=self.trial_type, n_events_window=self.n_events_window,
-            inout_selection=self.inout_selection,
-        )
-        self.X = np.asarray(X, dtype=float)
-        self.y, self.groups, self.metadata = y, groups, meta
-        names = meta.get("spatial_names")
-        self.spatial_names = list(names) if names is not None else [
-            f"s-{i}" for i in range(self.X.shape[1])
-        ]
+        from_cache = self._read_cache(bounds)
+        if not from_cache:
+            X, y, groups, meta = load_combined_features(
+                features=self.features, space=self.space, inout_bounds=bounds,
+                config=self.config, drop_bad_trials=not self.keep_bad_trials,
+                trial_type=self.trial_type, n_events_window=self.n_events_window,
+                inout_selection=self.inout_selection,
+            )
+            self.X = np.asarray(X, dtype=float)
+            self.y, self.groups, self.metadata = y, groups, meta
+            names = meta.get("spatial_names")
+            self.spatial_names = list(names) if names is not None else [
+                f"s-{i}" for i in range(self.X.shape[1])
+            ]
+            self._write_cache(bounds)
         self._bounds = bounds
         self._norm_cache = {}
         n_nan = int(np.isnan(self.X).sum())
         logger.info(
-            f"inout={bounds}: X={self.X.shape}  n_subjects={len(np.unique(groups))}  "
+            f"inout={bounds}: X={self.X.shape}  "
+            f"n_subjects={len(np.unique(self.groups))}  "
             f"NaN cells={n_nan} ({100 * n_nan / self.X.size:.4f}%)  "
             f"[{time.time() - t0:.0f}s]"
         )
@@ -493,17 +591,20 @@ def enumerate_cells(args) -> List[Tuple]:
 
 
 def shard_cells(cells: List[Tuple], n_shards: int, shard_idx: int) -> List[Tuple]:
-    """Round-robin slice of the grid, re-sorted for cache locality.
+    """Round-robin slice of the grid, kept in grid order.
 
     Round-robin (rather than contiguous blocks) balances cost: the expensive
     ``flat`` cells are spread evenly instead of piling into the last shards.
-    The re-sort then groups a shard's own cells by (bounds, normalization,
-    feature_set, reduction) so each shard loads each bounds once and
-    materializes each normalization once.
+
+    The slice keeps ``enumerate_cells`` order, which is cheapest-first by
+    construction (see DEFAULT_REDUCTIONS). Do not re-sort it by the cell keys:
+    sorting by ``(bounds, normalization, feature_set, reduction)`` orders those
+    axes alphabetically, which puts ``flat`` and ``rank`` first in every shard
+    and hands a wall-time kill the whole informative half of the grid.
     """
     mine = cells[shard_idx::n_shards] if n_shards > 1 else list(cells)
     order = {c: i for i, c in enumerate(cells)}
-    return sorted(mine, key=lambda c: (c[0], c[1], c[2], c[3], order[c]))
+    return sorted(mine, key=lambda c: order[c])
 
 
 def _shard_suffix(n_shards: int, shard_idx: int) -> str:
@@ -607,11 +708,19 @@ def stage_sweep(cache: DataCache, feature_index: Dict[str, List[int]],
     return csv_path
 
 
-def stage_merge(out_base: Path) -> Path:
+def stage_merge(out_base: Path, n_shards: int = 0) -> Path:
     """Fold per-shard sweep outputs into one ranked CSV + one folds npz."""
     csv_path = out_base.with_name(out_base.name + "_sweep.csv")
     folds_path = out_base.with_name(out_base.name + "_sweep-folds.npz")
     shard_csvs = sorted(out_base.parent.glob(out_base.name + "_sweep_shard-*.csv"))
+    if shard_csvs and n_shards:
+        logger.info(f"Merging {len(shard_csvs)}/{n_shards} shard CSV(s)")
+        if len(shard_csvs) < n_shards:
+            logger.warning(
+                f"{n_shards - len(shard_csvs)} shard(s) wrote no CSV — merging "
+                f"what landed. Re-run those shards and merge again to fill "
+                f"the grid (finished cells are skipped on re-run)."
+            )
     if not shard_csvs:
         # An unsharded sweep wrote the merged path directly. Merge is still
         # worth running (it is what computes the grid-wide FDR), and the SLURM
@@ -621,7 +730,12 @@ def stage_merge(out_base: Path) -> Path:
             logger.info(f"No shard CSVs; re-ranking unsharded {csv_path.name}")
             shard_csvs = [csv_path]
         else:
-            raise SystemExit(f"No sweep CSVs to merge next to {out_base}")
+            raise SystemExit(
+                f"No sweep CSVs to merge: nothing matches "
+                f"{out_base.name}_sweep_shard-*.csv in {out_base.parent}. "
+                f"The sweep shards produced no completed cell — check their "
+                f"logs before re-running merge."
+            )
 
     rows: Dict[str, Dict] = {}
     for path in shard_csvs:
@@ -1297,6 +1411,16 @@ def main():
                    help=f"Skip {'/'.join(NONLINEAR_FAMILIES)} cells whose input "
                         f"exceeds this many dimensions (default 2000).")
     p.add_argument("--n-jobs", type=int, default=-1)
+    p.add_argument("--cache-dir", default=None,
+                   help="Where the materialized feature tensor lives "
+                        "(default: <output-dir>/tensor_cache). --stage prep "
+                        "writes it; every other stage reads it instead of "
+                        "walking the per-subject feature files.")
+    p.add_argument("--no-tensor-cache", action="store_true",
+                   help="Always load from the per-subject feature files.")
+    p.add_argument("--refresh-cache", action="store_true",
+                   help="Reload from the feature files and overwrite the "
+                        "tensor cache (use after regenerating features).")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--keep-bad-trials", action="store_true")
     p.add_argument("--output-dir", default=None)
@@ -1365,12 +1489,26 @@ def main():
     logger.info(f"output -> {out_base}_*")
     logger.info("=" * 78)
 
+    cache_dir = None
+    if not args.no_tensor_cache:
+        cache_dir = (Path(args.cache_dir) if args.cache_dir
+                     else out_dir / "tensor_cache")
     cache = DataCache(
         features=features, space=args.space, config=config,
         trial_type=args.trial_type, n_events_window=args.n_events_window,
         inout_selection=inout_selection, keep_bad_trials=args.keep_bad_trials,
-        seed=args.seed,
+        seed=args.seed, cache_dir=cache_dir, refresh_cache=args.refresh_cache,
     )
+
+    # One job materializes the tensor; the array behind it then starts in
+    # seconds instead of every task re-walking the feature files at once.
+    if args.stage == "prep":
+        if cache_dir is None:
+            raise SystemExit("--stage prep is pointless with --no-tensor-cache")
+        for bounds in args.inout_bounds:
+            cache.load(bounds)
+        logger.info(f"Tensor cache ready in {cache_dir}")
+        return
 
     if args.shard_idx >= args.n_shards or args.shard_idx < 0:
         raise SystemExit(
@@ -1389,7 +1527,7 @@ def main():
             )
 
     if args.stage == "merge":
-        csv_path = stage_merge(out_base)
+        csv_path = stage_merge(out_base, n_shards=args.n_shards)
 
     if args.stage == "nested-select":
         stage_nested_select(cache, feature_index, args, out_base)
