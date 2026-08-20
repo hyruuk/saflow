@@ -10,20 +10,41 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.gridspec import GridSpec
 
 from code.analysis.contracts import CORRECTED_FEATURES, FEATURE_DISPLAY_NAMES
-from code.analysis.outcome_modulation import STATE_ORDER
+from code.analysis.outcome_modulation import (
+    PRIMARY_WEIGHTING,
+    STATE_ORDER,
+    WEIGHTING_ORDER,
+)
 from code.analysis.provenance import resolve_analysis_directory
 from code.analysis.result_io import read_result_bundle
 from code.utils.yeo_networks import network_display_name
 from code.visualization.plot_surface import _get_fsaverage_surfaces
-from code.visualization.stats_classif_panel import CMAP_T, _plot_brain
+from code.visualization.stats_classif_panel import _plot_brain
 
 LOGGER = logging.getLogger(__name__)
+# Diverging green/red ramp stepped in OKLab: both arms share a lightness profile
+# so equal |t| reads equally strong on either side of the neutral midpoint.
+CMAP_NAME = "saflow_correct_lapse"
+CMAP_STOPS = (
+    "#005b0c",
+    "#3b7f48",
+    "#78a57e",
+    "#b3cab5",
+    "#eef1ef",
+    "#dbbab5",
+    "#c1867f",
+    "#a5534b",
+    "#851616",
+)
+COLOR_LAPSE = "#851616"
+COLOR_CORRECT = "#005b0c"
 CAPTION = (
     "Supplementary Figure X. Correct-versus-lapse spectral modulation within "
     "attentional state. Commission-error (Lapse) minus correct-omission (Correct) "
@@ -32,46 +53,110 @@ CAPTION = (
     "synchronized maximum-|t| FWER p < 0.05 across all 63 cells within state. C "
     "and D show genuine Schaefer-400 parcel t maps for every feature; colored maps "
     "are unthresholded and titles report parcels surviving synchronized cluster-mass "
-    "FWER correction across the nine-feature family. Each participant contributed "
-    "one equal-window mean per state-outcome cell. Eligibility required at least "
+    "FWER correction across the nine-feature family. {weighting_sentence} "
+    "Eligibility required at least "
     "{minimum_windows} windows in both outcome cells and included {in_n} participants "
     "for IN and {out_n} for OUT. Hierarchical-bootstrap sensitivity repeatedly "
     "matched Correct and Lapse counts within participant, state, and run and then "
     "resampled participants ({balanced_repetitions} repeats).\n"
 )
+WEIGHTING_SENTENCES = {
+    "equal_subject": (
+        "Each participant contributed one mean per state-outcome cell pooled over all "
+        "retained windows, and every participant carried equal weight."
+    ),
+    "equal_window": (
+        "Each participant contributed one mean per state-outcome cell pooled over all "
+        "retained windows, and participants were weighted by the effective window count "
+        "of their paired contrast so that imprecise cells carried proportionally less "
+        "influence."
+    ),
+    "equal_run": (
+        "Each participant contributed one mean per state-outcome cell formed by averaging "
+        "within run and then across runs equally, and every participant carried equal "
+        "weight."
+    ),
+}
+
+
+def correct_lapse_colormap() -> str:
+    """Register and name the Correct-versus-Lapse diverging colormap."""
+    if CMAP_NAME not in matplotlib.colormaps:
+        matplotlib.colormaps.register(
+            mcolors.LinearSegmentedColormap.from_list(CMAP_NAME, CMAP_STOPS),
+            name=CMAP_NAME,
+        )
+    return CMAP_NAME
 
 
 def load_correct_lapse_bundle(
-    directory: Path,
+    directory: Path, weighting: str = PRIMARY_WEIGHTING
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Load and validate the immutable outcome-modulation result."""
+    """Load one weighting variant of the immutable outcome-modulation result.
+
+    Each state is flattened to the selected variant's arrays plus the shared
+    balanced sensitivity. Single-variant bundles written before weighting
+    variants existed are read as ``equal_subject``.
+    """
+    if weighting not in WEIGHTING_ORDER:
+        raise ValueError(f"unknown participant weighting: {weighting}")
     bundle = read_result_bundle(directory)
-    result = bundle["result"]
+    result = dict(bundle["result"])
     for state in STATE_ORDER:
-        required = {
-            "parcel_t_values",
-            "parcel_p_cluster_fwer",
-            "network_t_values",
-            "network_p_fwer",
-            "balanced",
-            "subject_n",
-        }
-        missing = sorted(required - result.get(state, {}).keys())
-        if missing:
-            raise ValueError(f"{state} outcome-modulation result lacks: {missing}")
-        if np.asarray(result[state]["parcel_t_values"]).shape != (9, 400):
-            raise ValueError(f"{state} parcel maps must have shape (9, 400)")
+        result[state] = _select_weighting(result.get(state, {}), state, weighting)
+    result["weighting"] = weighting
     return result, bundle["provenance"]
+
+
+def _select_weighting(
+    state_result: dict[str, Any], state: str, weighting: str
+) -> dict[str, Any]:
+    """Flatten one state to the requested weighting and validate its contract."""
+    if "parcel_t_values" in state_result:
+        if weighting != PRIMARY_WEIGHTING:
+            raise ValueError(
+                f"bundle predates weighting variants; only {PRIMARY_WEIGHTING} is available"
+            )
+        selected = dict(state_result)
+    elif weighting in state_result:
+        selected = {**state_result[weighting], "balanced": state_result["balanced"]}
+    else:
+        raise ValueError(f"{state} outcome-modulation result lacks weighting: {weighting}")
+    required = {
+        "parcel_t_values",
+        "parcel_p_cluster_fwer",
+        "network_t_values",
+        "network_p_fwer",
+        "balanced",
+        "subject_n",
+    }
+    missing = sorted(required - selected.keys())
+    if missing:
+        raise ValueError(f"{state} outcome-modulation result lacks: {missing}")
+    if np.asarray(selected["parcel_t_values"]).shape != (9, 400):
+        raise ValueError(f"{state} parcel maps must have shape (9, 400)")
+    return selected
+
+
+def default_output_name(weighting: str) -> str:
+    """Return the manuscript filename carrying one weighting variant."""
+    return f"supplement_correct_vs_lapse_modulation_weighting-{weighting}.png"
 
 
 def render_correct_lapse_panel(
     bundle_directory: Path,
     reports_root: Path,
-    output_name: str = "supplement_correct_vs_lapse_modulation.png",
+    output_name: str | None = None,
+    weighting: str = PRIMARY_WEIGHTING,
 ) -> Path:
     """Render network heatmaps and all parcel-level cortical maps."""
-    result, provenance = load_correct_lapse_bundle(bundle_directory)
-    output = reports_root / "figures" / "manuscript" / output_name
+    result, provenance = load_correct_lapse_bundle(bundle_directory, weighting)
+    output = (
+        reports_root
+        / "figures"
+        / "manuscript"
+        / (output_name or default_output_name(weighting))
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     limit = _shared_t_limit(result)
     figure = _draw_panel(result, reports_root, limit)
@@ -114,7 +199,11 @@ def _draw_panel(result: dict[str, Any], reports_root: Path, limit: float) -> plt
             limit,
             reports_root / ".cache" / "correct_lapse_surface",
         )
-    figure.suptitle("Correct-versus-lapse modulation within attentional state", fontsize=16)
+    figure.suptitle(
+        "Correct-versus-lapse modulation within attentional state "
+        f"({result.get('weighting', PRIMARY_WEIGHTING).replace('_', '-')} weighting)",
+        fontsize=16,
+    )
     return figure
 
 
@@ -124,7 +213,9 @@ def _plot_network_heatmap(
     """Plot all corrected Yeo-network tests for one state."""
     values = np.asarray(state_result["network_t_values"])
     p_values = np.asarray(state_result["network_p_fwer"])
-    image = axis.imshow(values, cmap=CMAP_T, vmin=-limit, vmax=limit, aspect="auto")
+    image = axis.imshow(
+        values, cmap=correct_lapse_colormap(), vmin=-limit, vmax=limit, aspect="auto"
+    )
     axis.set_xticks(np.arange(9), _feature_labels(), rotation=45, ha="right", fontsize=7)
     axis.set_yticks(np.arange(7), _network_labels(), fontsize=7)
     axis.set_title(title, loc="left", fontsize=10)
@@ -161,7 +252,7 @@ def _plot_parcel_row(
             fsaverage,
             -limit,
             limit,
-            CMAP_T,
+            correct_lapse_colormap(),
             cache_directory=cache_directory,
         )
         significant_n = int(np.sum(p_values[feature_index] < 0.05))
@@ -200,7 +291,9 @@ def _shared_t_limit(result: dict[str, Any]) -> float:
 def _add_contrast_colorbar(figure: plt.Figure, axis: plt.Axes, limit: float) -> None:
     """Add a directionally correct Lapse-minus-Correct colorbar."""
     colorbar = figure.colorbar(
-        plt.cm.ScalarMappable(norm=mcolors.Normalize(-limit, limit), cmap=CMAP_T),
+        plt.cm.ScalarMappable(
+            norm=mcolors.Normalize(-limit, limit), cmap=correct_lapse_colormap()
+        ),
         cax=axis,
     )
     colorbar.set_label("Paired t statistic", fontsize=7)
@@ -212,7 +305,7 @@ def _add_contrast_colorbar(figure: plt.Figure, axis: plt.Axes, limit: float) -> 
         transform=axis.transAxes,
         ha="center",
         fontsize=7,
-        color="#a40000",
+        color=COLOR_LAPSE,
     )
     axis.text(
         0.5,
@@ -222,7 +315,7 @@ def _add_contrast_colorbar(figure: plt.Figure, axis: plt.Axes, limit: float) -> 
         ha="center",
         va="top",
         fontsize=7,
-        color="#00408a",
+        color=COLOR_CORRECT,
     )
 
 
@@ -246,7 +339,9 @@ def _write_artifacts(
     provenance: dict[str, Any],
 ) -> None:
     """Write caption, exhaustive statistics tables, and provenance."""
+    weighting = result.get("weighting", PRIMARY_WEIGHTING)
     caption = CAPTION.format(
+        weighting_sentence=WEIGHTING_SENTENCES[weighting],
         minimum_windows=result["minimum_windows_per_cell"],
         in_n=result["IN"]["subject_n"],
         out_n=result["OUT"]["subject_n"],
@@ -264,6 +359,12 @@ def _write_artifacts(
         "parameters": provenance.get("parameters", {}),
         "statistics_table": str(table),
         "direction": "commission_error_minus_correct_omission",
+        "weighting": weighting,
+        "subject_n": {state: int(result[state]["subject_n"]) for state in STATE_ORDER},
+        "effective_subject_n": {
+            state: float(result[state].get("effective_subject_n", result[state]["subject_n"]))
+            for state in STATE_ORDER
+        },
     }
     output.with_suffix(".json").write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n")
 
@@ -322,7 +423,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analysis-root", type=Path, required=True)
     parser.add_argument("--analysis-id")
     parser.add_argument("--reports-root", type=Path, default=Path("reports"))
-    parser.add_argument("--output-name", default="supplement_correct_vs_lapse_modulation.png")
+    parser.add_argument("--output-name")
+    parser.add_argument(
+        "--weighting",
+        default=PRIMARY_WEIGHTING,
+        choices=(*WEIGHTING_ORDER, "all"),
+        help="participant weighting to render, or 'all' for one panel per variant",
+    )
     return parser
 
 
@@ -331,10 +438,30 @@ def main() -> None:
     args = build_parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     analysis = resolve_analysis_directory(args.analysis_root, args.analysis_id)
-    output = render_correct_lapse_panel(
-        analysis / "outcome_modulation", args.reports_root, args.output_name
-    )
-    LOGGER.info("Wrote Correct-versus-Lapse panel to %s", output)
+    every = args.weighting == "all"
+    selected = WEIGHTING_ORDER if every else (args.weighting,)
+    if args.output_name and len(selected) > 1:
+        raise SystemExit("--output-name cannot be combined with --weighting=all")
+    written = 0
+    for weighting in selected:
+        try:
+            output = render_correct_lapse_panel(
+                analysis / "outcome_modulation",
+                args.reports_root,
+                args.output_name,
+                weighting,
+            )
+        except ValueError as error:
+            # Rendering every variant of a bundle that predates them is expected
+            # during the transition; an explicitly requested variant is not.
+            if not every:
+                raise
+            LOGGER.warning("Skipping %s: %s", weighting, error)
+            continue
+        written += 1
+        LOGGER.info("Wrote %s Correct-versus-Lapse panel to %s", weighting, output)
+    if not written:
+        raise SystemExit("no Correct-versus-Lapse weighting could be rendered")
 
 
 if __name__ == "__main__":

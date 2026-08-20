@@ -63,3 +63,13 @@ Yeo-7 maximum-statistic-FWER maps, cell counts and subject orders, and
 run-stratified balanced-resampling summaries. It is an immutable derivative of
 the same corrected labels and nine-feature tensor and does not alter the four
 canonical panel bundles.
+
+Each state nests one block per participant weighting — `equal_subject`
+(primary), `equal_window`, and `equal_run` — listed in `weighting_order`. Every
+block carries its own `parcel_t_values`, `parcel_effect_size_dz`,
+`parcel_p_cluster_fwer`, `network_t_values`, `network_p_fwer`, `differences`,
+`window_counts`, `run_counts`, `participant_weights`, and `effective_subject_n`
+(Kish effective participant count). The `balanced` sensitivity sits beside them
+at state level because it is independent of weighting. Bundles written before
+weighting variants existed hold those arrays directly on the state and are read
+as `equal_subject`.

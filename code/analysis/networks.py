@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
+from code.analysis.inference import weighted_one_sample_t
+
 CELL_ORDER = (
     "IN_correct_omission",
     "IN_commission_error",
@@ -86,7 +88,10 @@ def combine_run_fisher_z(
 
 
 def synchronized_sign_flip_test(
-    contrasts: Mapping[str, np.ndarray], n_permutations: int, seed: int
+    contrasts: Mapping[str, np.ndarray],
+    n_permutations: int,
+    seed: int,
+    weights: Sequence[float] | None = None,
 ) -> dict[str, object]:
     """Test all contrasts/locations with one synchronized max-|t| family."""
     names = tuple(contrasts)
@@ -96,12 +101,12 @@ def synchronized_sign_flip_test(
     if any(array.shape != arrays[0].shape for array in arrays):
         raise ValueError("contrast arrays must align")
     stack = np.stack(arrays, axis=1)
-    observed = _one_sample_t(stack)
+    observed = _one_sample_t(stack, weights)
     generator = np.random.default_rng(seed)
     null_max = np.empty(n_permutations)
     for index in range(n_permutations):
         signs = generator.choice((-1.0, 1.0), size=(stack.shape[0], 1, 1))
-        null_max[index] = np.nanmax(np.abs(_one_sample_t(stack * signs)))
+        null_max[index] = np.nanmax(np.abs(_one_sample_t(stack * signs, weights)))
     corrected = (
         1
         + np.sum(
@@ -116,9 +121,8 @@ def synchronized_sign_flip_test(
     }
 
 
-def _one_sample_t(values: np.ndarray) -> np.ndarray:
-    """Compute NaN-aware one-sample t statistics."""
-    count = np.sum(np.isfinite(values), axis=0)
-    mean = np.nanmean(values, axis=0)
-    error = np.nanstd(values, axis=0, ddof=1) / np.sqrt(count)
-    return np.divide(mean, error, out=np.zeros_like(mean), where=error > 0)
+def _one_sample_t(
+    values: np.ndarray, weights: Sequence[float] | None = None
+) -> np.ndarray:
+    """Compute NaN-aware one-sample t statistics, optionally weighting participants."""
+    return weighted_one_sample_t(values, weights)

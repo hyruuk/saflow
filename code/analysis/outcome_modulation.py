@@ -1,8 +1,22 @@
 """Analyze Correct-versus-Lapse modulation within IN and OUT states.
 
-The primary analysis pools all eligible windows into one mean per participant,
-state, and anchor outcome. A run-stratified balanced-resampling sensitivity
-repeatedly downsamples each within-run cell to the smaller outcome count.
+Three participant-weighting variants are computed over one shared eligible
+cohort, so panels built from them differ only in weighting:
+
+``equal_subject``
+    Pool every eligible window into one mean per participant, state, and anchor
+    outcome, then weight participants equally. This is the primary variant.
+``equal_window``
+    Pool windows identically, then weight each participant by the effective
+    window count of their paired contrast, so every retained window carries
+    comparable influence and imprecise participants stop dominating.
+``equal_run``
+    Average windows within run first and then across runs equally, matching the
+    pre-refactor pipeline. Anchor outcomes are sparse per run, so a participant's
+    two arms may rest on different runs; treat this variant as a sensitivity.
+
+A run-stratified balanced-resampling sensitivity repeatedly downsamples each
+within-run cell to the smaller outcome count, independently of the weighting.
 """
 
 from __future__ import annotations
@@ -29,6 +43,25 @@ from code.utils.config import load_config
 LOGGER = logging.getLogger(__name__)
 STATE_ORDER = ("IN", "OUT")
 OUTCOME_ORDER = ("correct_omission", "commission_error")
+WEIGHTING_ORDER = ("equal_subject", "equal_window", "equal_run")
+PRIMARY_WEIGHTING = "equal_subject"
+WEIGHTING_POOLING = {
+    "equal_subject": "window",
+    "equal_window": "window",
+    "equal_run": "run",
+}
+WEIGHTING_DESCRIPTIONS = {
+    "equal_subject": (
+        "pool all windows within participant-state-outcome; participants weighted equally"
+    ),
+    "equal_window": (
+        "pool all windows within participant-state-outcome; participants weighted by the "
+        "effective window count of their paired contrast"
+    ),
+    "equal_run": (
+        "average windows within run then across runs equally; participants weighted equally"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +71,7 @@ class ContrastData:
     differences: np.ndarray
     subjects: np.ndarray
     counts: np.ndarray
+    run_counts: np.ndarray
 
 
 def compute_subject_contrasts(
@@ -47,9 +81,22 @@ def compute_subject_contrasts(
     subjects: np.ndarray,
     state: str,
     minimum_windows: int,
+    *,
+    runs: np.ndarray | None = None,
+    pooling: str = "window",
 ) -> ContrastData:
-    """Pool all windows equally and return paired participant contrasts."""
-    differences, included, counts = [], [], []
+    """Return paired participant contrasts under one within-participant pooling.
+
+    Eligibility always uses total window counts, so every pooling shares one
+    cohort. ``pooling="run"`` averages within run before averaging across runs.
+    """
+    if pooling not in {"window", "run"}:
+        raise ValueError(f"unknown within-participant pooling: {pooling}")
+    if pooling == "run" and runs is None:
+        raise ValueError("run pooling requires run labels")
+    if minimum_windows < 1:
+        raise ValueError("minimum_windows must retain at least one window per cell")
+    differences, included, counts, run_counts = [], [], [], []
     for subject in np.unique(subjects):
         masks = [
             (subjects == subject) & (states == state) & (outcomes == outcome)
@@ -58,13 +105,40 @@ def compute_subject_contrasts(
         cell_counts = [int(mask.sum()) for mask in masks]
         if min(cell_counts) < minimum_windows:
             continue
-        means = [np.nanmean(values[mask], axis=0) for mask in masks]
+        if pooling == "window":
+            means = [np.nanmean(values[mask], axis=0) for mask in masks]
+            contributing = [len(np.unique(runs[mask])) if runs is not None else 0 for mask in masks]
+        else:
+            means, contributing = [], []
+            for mask in masks:
+                run_means = [
+                    np.nanmean(values[mask & (runs == run)], axis=0)
+                    for run in np.unique(runs[mask])
+                ]
+                means.append(np.nanmean(np.stack(run_means), axis=0))
+                contributing.append(len(run_means))
         differences.append(means[1] - means[0])
         included.append(subject)
         counts.append(cell_counts)
+        run_counts.append(contributing)
     if len(included) < 2:
         raise ValueError(f"{state} Correct-versus-Lapse requires at least two participants")
-    return ContrastData(np.stack(differences), np.asarray(included), np.asarray(counts))
+    return ContrastData(
+        np.stack(differences),
+        np.asarray(included),
+        np.asarray(counts),
+        np.asarray(run_counts),
+    )
+
+
+def participant_weights(contrasts: ContrastData, weighting: str) -> np.ndarray | None:
+    """Return fixed participant weights, or ``None`` when participants count equally."""
+    if weighting not in WEIGHTING_ORDER:
+        raise ValueError(f"unknown participant weighting: {weighting}")
+    if weighting != "equal_window":
+        return None
+    correct, lapse = contrasts.counts[:, 0].astype(float), contrasts.counts[:, 1].astype(float)
+    return correct * lapse / (correct + lapse)
 
 
 def compute_balanced_contrasts(
@@ -78,7 +152,7 @@ def compute_balanced_contrasts(
     rng: np.random.Generator,
 ) -> ContrastData:
     """Downsample outcome cells equally within run before participant pooling."""
-    differences, included, counts = [], [], []
+    differences, included, counts, run_counts = [], [], [], []
     for subject in np.unique(subjects):
         correct_parts, lapse_parts = [], []
         subject_runs = np.unique(runs[subjects == subject])
@@ -96,9 +170,15 @@ def compute_balanced_contrasts(
         differences.append(np.nanmean(values[lapse], axis=0) - np.nanmean(values[correct], axis=0))
         included.append(subject)
         counts.append((len(correct), len(lapse)))
+        run_counts.append((len(correct_parts), len(lapse_parts)))
     if len(included) < 2:
         raise ValueError(f"{state} balanced analysis requires at least two participants")
-    return ContrastData(np.stack(differences), np.asarray(included), np.asarray(counts))
+    return ContrastData(
+        np.stack(differences),
+        np.asarray(included),
+        np.asarray(counts),
+        np.asarray(run_counts),
+    )
 
 
 def _concatenate_indices(parts: list[np.ndarray]) -> np.ndarray:
@@ -161,6 +241,9 @@ def compute_outcome_modulation(
     """Compute parcel/network inference and balanced-resampling sensitivity."""
     adjacency = _parcel_adjacency(inputs.parcel_order, config)
     assignments = _network_assignments(inputs.parcel_order)
+    threshold = float(
+        config.get("analysis_workflow", {}).get("cluster_forming_threshold", 2.0)
+    )
     result: dict[str, Any] = {
         "state_order": STATE_ORDER,
         "feature_order": CORRECTED_FEATURES,
@@ -168,55 +251,78 @@ def compute_outcome_modulation(
         "network_order": YEO7_ORDER,
         "contrast": "commission_error_minus_correct_omission",
         "minimum_windows_per_cell": minimum_windows,
-        "primary_weighting": "equal_window_within_participant_state_outcome",
+        "weighting_order": WEIGHTING_ORDER,
+        "primary_weighting": PRIMARY_WEIGHTING,
+        "weighting_descriptions": WEIGHTING_DESCRIPTIONS,
         "balanced_policy": ("equal counts within participant-state-run plus participant bootstrap"),
         "balanced_repetitions": balanced_repetitions,
     }
     for state_index, state in enumerate(STATE_ORDER):
-        primary = compute_subject_contrasts(
-            inputs.feature_tensor,
-            inputs.states,
-            inputs.outcomes,
-            inputs.subjects,
-            state,
-            minimum_windows,
-        )
-        differences = np.moveaxis(primary.differences, 2, 1)
-        parcel = synchronized_cluster_mass_test(
-            differences,
-            adjacency,
-            n_permutations=permutations,
-            cluster_threshold=float(
-                config.get("analysis_workflow", {}).get("cluster_forming_threshold", 2.0)
-            ),
-            seed=seed + state_index,
-        )
-        network_differences = _network_means(primary.differences, assignments)
-        network = synchronized_sign_flip_test(
-            {"lapse_minus_correct": network_differences.reshape(len(primary.subjects), -1)},
-            n_permutations=permutations,
-            seed=seed + 100 + state_index,
-        )
-        result[state] = {
-            "subject_order": primary.subjects,
-            "window_counts": primary.counts,
-            "subject_n": len(primary.subjects),
-            "differences": differences,
-            "parcel_t_values": parcel["t_values"],
-            "parcel_effect_size_dz": paired_effect_size(differences),
-            "parcel_p_cluster_fwer": parcel["p_values_fwer"],
-            "network_differences": network_differences,
-            "network_t_values": network["t_values"][0].reshape(7, 9),
-            "network_p_fwer": network["p_values_fwer"][0].reshape(7, 9),
+        state_result: dict[str, Any] = {
             "balanced": compute_balanced_sensitivity(
                 inputs,
                 state,
                 minimum_windows,
                 balanced_repetitions,
                 seed + 1_000 + state_index,
-            ),
+            )
         }
+        for weighting in WEIGHTING_ORDER:
+            contrasts = compute_subject_contrasts(
+                inputs.feature_tensor,
+                inputs.states,
+                inputs.outcomes,
+                inputs.subjects,
+                state,
+                minimum_windows,
+                runs=inputs.runs,
+                pooling=WEIGHTING_POOLING[weighting],
+            )
+            weights = participant_weights(contrasts, weighting)
+            differences = np.moveaxis(contrasts.differences, 2, 1)
+            # One permutation seed per state so variants share sign-flip draws and
+            # any difference between them is attributable to weighting alone.
+            parcel = synchronized_cluster_mass_test(
+                differences,
+                adjacency,
+                n_permutations=permutations,
+                cluster_threshold=threshold,
+                seed=seed + state_index,
+                weights=weights,
+            )
+            network_differences = _network_means(contrasts.differences, assignments)
+            network = synchronized_sign_flip_test(
+                {"lapse_minus_correct": network_differences.reshape(len(contrasts.subjects), -1)},
+                n_permutations=permutations,
+                seed=seed + 100 + state_index,
+                weights=weights,
+            )
+            state_result[weighting] = {
+                "subject_order": contrasts.subjects,
+                "window_counts": contrasts.counts,
+                "run_counts": contrasts.run_counts,
+                "subject_n": len(contrasts.subjects),
+                "participant_weights": (
+                    np.ones(len(contrasts.subjects)) if weights is None else weights
+                ),
+                "effective_subject_n": _effective_subject_n(weights, len(contrasts.subjects)),
+                "differences": differences,
+                "parcel_t_values": parcel["t_values"],
+                "parcel_effect_size_dz": paired_effect_size(differences, weights),
+                "parcel_p_cluster_fwer": parcel["p_values_fwer"],
+                "network_differences": network_differences,
+                "network_t_values": network["t_values"][0].reshape(7, 9),
+                "network_p_fwer": network["p_values_fwer"][0].reshape(7, 9),
+            }
+        result[state] = state_result
     return result
+
+
+def _effective_subject_n(weights: np.ndarray | None, count: int) -> float:
+    """Return Kish effective participant count for one weighting."""
+    if weights is None:
+        return float(count)
+    return float(np.square(weights.sum()) / np.square(weights).sum())
 
 
 def _network_means(values: np.ndarray, assignments: np.ndarray) -> np.ndarray:
@@ -253,6 +359,7 @@ def run(args: argparse.Namespace) -> Path:
                 "permutations": args.permutations,
                 "balanced_repetitions": args.balanced_repetitions,
                 "seed": args.seed,
+                "weightings": list(WEIGHTING_ORDER),
             },
             "inputs": list(inputs.input_inventory),
         }
@@ -280,7 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analysis-id")
     parser.add_argument("--subjects")
     parser.add_argument("--runs")
-    parser.add_argument("--minimum-windows", type=int, default=5)
+    parser.add_argument("--minimum-windows", type=int, default=2)
     parser.add_argument("--permutations", type=int, default=10_000)
     parser.add_argument("--balanced-repetitions", type=int, default=1_000)
     parser.add_argument("--seed", type=int, default=42)

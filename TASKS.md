@@ -62,12 +62,28 @@ all 126 displayed tests. Outputs are written to
 ### `invoke analysis.outcome-modulation`
 
 Computes commission-error (Lapse) minus correct-omission (Correct) contrasts
-separately within IN and OUT. The primary paired analysis uses one equal-window
-cell mean per participant so unequal trial counts do not weight group effects.
-Eligibility is determined independently for IN and OUT and requires the
-configured minimum in both outcome cells. Schaefer-400 maps use synchronized
-cluster-mass FWER correction across nine features within state; Yeo-7 tests use
-maximum-|t| FWER correction across all 63 network-feature cells within state.
+separately within IN and OUT. Eligibility is determined independently for IN and
+OUT and requires `--minimum-windows` (default 2) in both outcome cells.
+Schaefer-400 maps use synchronized cluster-mass FWER correction across nine
+features within state; Yeo-7 tests use maximum-|t| FWER correction across all 63
+network-feature cells within state.
+
+Three participant weightings are computed over one shared eligible cohort, so
+panels built from them differ only in weighting:
+
+| weighting | participant cell mean | group weight |
+| --- | --- | --- |
+| `equal_subject` (primary) | pooled over all retained windows | equal |
+| `equal_window` | pooled over all retained windows | effective window count of the paired contrast |
+| `equal_run` | run means averaged equally | equal |
+
+`equal_window` weights each participant by `n_correct * n_lapse / (n_correct +
+n_lapse)`, so participants whose contrast rests on one or two windows stop
+carrying the same influence as participants with a full cell. Weights are held
+fixed across sign flips, so the permutation null remains exact. Equal weights
+reproduce the unweighted statistic exactly. `equal_run` reproduces the
+pre-refactor pipeline; anchor outcomes are sparse per run, so a participant's
+two arms may rest on different runs and it should be read as a sensitivity.
 
 The balanced sensitivity samples equal Correct and Lapse counts separately
 within participant, state, and run, then bootstraps participants with
@@ -83,8 +99,15 @@ Renders the outcome-modulation derivative as IN/OUT network heatmaps plus 18
 genuine Schaefer-400 cortical maps. Map titles report cluster-FWER-significant
 parcel counts and the number of parcels with at least 95% direction stability
 under balanced resampling. A CSV includes every corrected network and parcel
-test. Outputs use the stem
-`reports/figures/manuscript/supplement_correct_vs_lapse_modulation`.
+test.
+
+`--weighting` selects `equal_subject`, `equal_window`, `equal_run`, or `all`
+(default), which renders one panel per variant. Outputs use the stem
+`reports/figures/manuscript/supplement_correct_vs_lapse_modulation_weighting-{weighting}`.
+Because this contrast is Lapse versus Correct rather than OUT versus IN, the
+maps use a dedicated diverging colormap running green (Correct greater) through
+a neutral midpoint to red (Lapse greater), stepped in OKLab so both arms share a
+lightness profile.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.

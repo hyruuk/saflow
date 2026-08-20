@@ -4452,7 +4452,7 @@ def analysis_panel4(
 def analysis_outcome_modulation(
     c,
     analysis_root=None,
-    minimum_windows=5,
+    minimum_windows=2,
     permutations=10000,
     balanced_repetitions=1000,
     seed=42,
@@ -4647,9 +4647,13 @@ def correct_vs_lapse_panel(
     analysis_id=None,
     analysis_root=None,
     reports_root="reports",
+    weighting="all",
     config="config.yaml",
 ):
-    """Render network and parcel Correct-versus-Lapse modulation."""
+    """Render network and parcel Correct-versus-Lapse modulation.
+
+    ``--weighting`` selects equal_subject, equal_window, equal_run, or all.
+    """
     if analysis_root is None:
         from code.utils.config import load_config
 
@@ -4667,6 +4671,8 @@ def correct_vs_lapse_panel(
         analysis_root,
         "--reports-root",
         reports_root,
+        "--weighting",
+        weighting,
     ]
     if analysis_id:
         cmd.extend(["--analysis-id", analysis_id])

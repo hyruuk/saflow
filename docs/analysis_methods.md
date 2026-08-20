@@ -101,11 +101,23 @@ prespecified contrasts. All other Yeo-7 pairs are exploratory.
 
 The supplementary outcome-modulation derivative tests commission-error minus
 correct-omission windows independently within IN and OUT. The primary analysis
-pools all eligible windows into one mean per participant, state, and anchor
-outcome. Consequently, neither participants nor conditions with more retained
-windows receive greater weight in the paired group test. Eligibility requires
-at least five windows in both compared cells and is evaluated separately for
-each state.
+(`equal_subject`) pools all eligible windows into one mean per participant,
+state, and anchor outcome, and weights participants equally. Consequently,
+neither participants nor conditions with more retained windows receive greater
+weight in the paired group test. Eligibility requires at least two windows in
+both compared cells and is evaluated separately for each state.
+
+Commission errors are sparse, so a participant admitted at that threshold may
+contribute a cell mean resting on two windows. Two further weightings are
+computed over the same eligible cohort to expose how much that imprecision
+matters. `equal_window` weights each participant by the effective window count
+of their paired contrast, `n_correct * n_lapse / (n_correct + n_lapse)`, so
+influence tracks precision; weights are held fixed across sign flips, so the
+permutation null remains exact, and equal weights reproduce the unweighted
+statistic exactly. `equal_run` averages windows within run before averaging
+across runs equally, reproducing the pre-refactor pipeline; because anchor
+outcomes are sparse per run, a participant's two arms may rest on different
+runs, so it is reported as a sensitivity rather than a primary result.
 
 Parcel inference uses synchronized two-sided sign flips and maximum
 cluster-mass correction across the complete nine-feature family at

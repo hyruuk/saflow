@@ -1,5 +1,16 @@
 # Changelog
 
+- Lower the Correct-versus-Lapse eligibility threshold to two windows per cell
+  and compute three participant weightings over the shared eligible cohort:
+  `equal_subject` (primary, unchanged behaviour), `equal_window` (participants
+  weighted by the effective window count of their paired contrast), and
+  `equal_run` (the pre-refactor run-averaged pipeline, as a sensitivity).
+  Sign-flip and cluster-mass inference now accept fixed participant weights, and
+  equal weights reproduce the previous unweighted statistics exactly.
+  `viz.correct-vs-lapse` renders one panel per weighting by default and paints
+  the contrast on a dedicated green-to-red diverging colormap stepped in OKLab,
+  replacing the blue/red map reserved for OUT-versus-IN.
+
 - Make generated analysis IDs optional in the user-facing corrected-analysis
   workflow. `analysis.plan`, `pipeline.resume`, rendering, and audit now resolve
   the active `main/` analysis while preserving IDs internally for provenance

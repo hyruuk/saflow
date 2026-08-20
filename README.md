@@ -100,15 +100,21 @@ nine features. A complete CSV reports every corrected test. This is
 an equal-window, Yeo-7 network analysis; it is not a parcel-level Panel 1 rerun.
 
 The independent `analysis.outcome-modulation` derivative tests Lapse minus
-Correct separately within IN and OUT. Its primary analysis pools all eligible
-windows into one mean per participant/state/outcome, preventing unequal trial
-counts from weighting the group test. Parcel inference uses synchronized
-cluster-mass FWER correction across all nine corrected features within each
-state; Yeo-7 inference uses synchronized maximum-|t| FWER correction across all
-63 network-feature cells. A hierarchical sensitivity repeatedly downsamples
-the two outcome cells to equal within-run counts and bootstraps participants.
-Render the resulting network heatmaps
-and genuine Schaefer-400 maps with `invoke viz.correct-vs-lapse`.
+Correct separately within IN and OUT. Its primary analysis (`equal_subject`)
+pools all eligible windows into one mean per participant/state/outcome and
+weights participants equally, preventing unequal trial counts from weighting the
+group test. Eligibility requires at least `--minimum-windows` (default 2)
+windows in both outcome cells. Two further weightings are computed over the same
+cohort: `equal_window` weights participants by the effective window count of
+their paired contrast so imprecise cells lose influence, and `equal_run`
+averages within run before averaging runs equally, reproducing the pre-refactor
+pipeline as a sensitivity. Parcel inference uses synchronized cluster-mass FWER
+correction across all nine corrected features within each state; Yeo-7 inference
+uses synchronized maximum-|t| FWER correction across all 63 network-feature
+cells. A hierarchical sensitivity repeatedly downsamples the two outcome cells
+to equal within-run counts and bootstraps participants. Render the resulting
+network heatmaps and genuine Schaefer-400 maps with `invoke viz.correct-vs-lapse`,
+which writes one panel per weighting by default.
 
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 
