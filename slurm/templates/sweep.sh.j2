@@ -1,0 +1,72 @@
+{% extends "base.sh.j2" %}
+
+{% block job_commands %}
+# =============================================================================
+# Cross-subject generalization sweep — stage={{ stage }} on {{ space }}
+# =============================================================================
+
+echo "Sweep configuration:"
+echo "  Stage:           {{ stage }}"
+echo "  Space:           {{ space }}"
+echo "  Trial-type:      {{ trial_type }}"
+echo "  Feature sets:    {{ feature_sets or '(module default)' }}"
+echo "  Reductions:      {{ reductions or '(module default)' }}"
+echo "  Estimators:      {{ estimators or '(module default)' }}"
+echo "  Normalizations:  {{ normalizations or '(module default)' }}"
+echo "  IN/OUT bounds:   {{ inout_bounds or '(config default)' }}"
+echo "  Permutations:    {{ n_permutations }}"
+{% if n_shards and n_shards > 1 %}
+echo "  Shard:           {{ shard_idx }} / {{ n_shards }}"
+{% endif %}
+echo ""
+
+python -m code.classification.run_sweep \
+    --stage {{ stage }} \
+    --space {{ space }} \
+    --trial-type {{ trial_type }} \
+    --n-events-window {{ n_events_window }} \
+    --inner-splits {{ inner_splits }} \
+    --n-permutations {{ n_permutations }} \
+    --importance-n-repeats {{ importance_n_repeats }} \
+    --select-by {{ select_by }} \
+    --n-jobs {{ n_jobs_resolved | default(n_jobs) }} \
+{% if n_shards and n_shards > 1 %}
+    --n-shards {{ n_shards }} --shard-idx {{ shard_idx }} \
+{% endif %}
+{% if feature_sets %}
+    --feature-sets {{ feature_sets }} \
+{% endif %}
+{% if reductions %}
+    --reductions {{ reductions }} \
+{% endif %}
+{% if estimators %}
+    --estimators {{ estimators }} \
+{% endif %}
+{% if normalizations %}
+    --normalizations {{ normalizations }} \
+{% endif %}
+{% if inout_bounds %}
+    --inout-bounds {{ inout_bounds }} \
+{% endif %}
+{% if cell %}
+    --cell "{{ cell }}" \
+{% endif %}
+{% if keep_bad_trials %}
+    --keep-bad-trials \
+{% endif %}
+{% if force %}
+    --force \
+{% endif %}
+{% if output_dir %}
+    --output-dir {{ output_dir }} \
+{% endif %}
+    --seed {{ seed }}
+
+EXIT=$?
+if [ $EXIT -eq 0 ]; then
+    echo "Sweep stage {{ stage }} completed successfully"
+else
+    echo "Sweep stage {{ stage }} failed with exit code $EXIT"
+    exit $EXIT
+fi
+{% endblock %}

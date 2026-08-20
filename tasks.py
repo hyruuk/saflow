@@ -3945,6 +3945,358 @@ def classify_multifeature_aggregate(
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
+def _sweep_slurm(
+    c,
+    stages,
+    space,
+    trial_type,
+    feature_sets,
+    reductions,
+    estimators,
+    normalizations,
+    inout_bounds,
+    n_shards,
+    n_events_window,
+    inner_splits,
+    n_permutations,
+    importance_n_repeats,
+    select_by,
+    cell,
+    n_jobs,
+    seed,
+    keep_bad_trials,
+    output_dir,
+    force,
+    slurm_time,
+    slurm_mem,
+    slurm_cpus,
+    dry_run,
+):
+    """Submit the sweep as a job array, then merge/confirm/importance chained on it.
+
+    The sweep grid is split into ``n_shards`` array tasks that run
+    concurrently, so the whole grid finishes in roughly the time of its
+    slowest shard rather than the sum of every cell. ``merge`` folds the shard
+    CSVs into one ranked table, and ``confirm``/``importance`` read the winning
+    cell from it. Short jobs also backfill far faster than one long
+    reservation.
+    """
+    from datetime import datetime
+    from code.utils.config import load_config
+    from code.utils.slurm import (
+        render_slurm_script,
+        save_job_manifest,
+        submit_job_array,
+        submit_slurm_job,
+    )
+
+    print("\n[SLURM Mode] Submitting cross-subject sweep\n")
+
+    config = load_config()
+    slurm_config = config["computing"]["slurm"]
+    if not slurm_config.get("enabled", False):
+        print("ERROR: SLURM is not enabled in config.yaml")
+        return
+    classification_resources = slurm_config.get("classification", {})
+
+    venv_path = Path(config["paths"]["venv"])
+    if not venv_path.is_absolute():
+        venv_path = PROJECT_ROOT / venv_path
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "sweep"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "sweep"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Per-stage wall time: the sweep dominates, importance is minutes.
+    stage_time = {"sweep": "3:00:00", "merge": "0:15:00", "confirm": "2:00:00",
+                  "importance": "1:00:00", "all": "6:00:00"}
+    # Each task only parallelises the 32 LOSO folds, so a shard wants a modest
+    # core count: 40 x 8 cores schedules far sooner than 40 x 24 and finishes
+    # the grid just as fast. confirm/importance are single jobs and can take
+    # the bigger allocation (the permutation loop scales with cores).
+    cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources.get("cpus", 24)
+    mem_resolved = slurm_mem if slurm_mem is not None else "64G"
+    shard_cpus = slurm_cpus if slurm_cpus is not None else 8
+    shard_mem = slurm_mem if slurm_mem is not None else "32G"
+
+    base_resources = dict(
+        account=slurm_config["account"],
+        partition=slurm_config.get("partition", ""),
+        cpus=cpus_resolved,
+        mem=mem_resolved,
+        log_dir=str(log_dir),
+        venv_path=str(venv_path),
+        project_root=str(PROJECT_ROOT),
+    )
+
+    max_concurrent = slurm_config.get("array_throttle", 0)
+    job_ids = {}
+
+    def _context(stage, job_name, shard_idx=0, time_override=None,
+                 resources=None):
+        res = resources or base_resources
+        # n_jobs=-1 resolves to the node's core count, not the cgroup
+        # allocation, which oversubscribes the task. Pin it to the cpus we
+        # actually asked SLURM for.
+        jobs = res["cpus"] if n_jobs in (-1, None) else n_jobs
+        return {
+            **res,
+            "n_jobs_resolved": jobs,
+            "time": time_override or (
+                slurm_time if slurm_time is not None else stage_time[stage]
+            ),
+            "job_name": job_name,
+            "timestamp": timestamp,
+            "stage": stage,
+            "space": space,
+            "trial_type": trial_type,
+            "n_events_window": n_events_window,
+            "feature_sets": feature_sets,
+            "reductions": reductions,
+            "estimators": estimators,
+            "normalizations": normalizations,
+            "inout_bounds": inout_bounds,
+            "inner_splits": inner_splits,
+            "n_permutations": n_permutations,
+            "importance_n_repeats": importance_n_repeats,
+            "select_by": select_by,
+            "cell": cell,
+            "n_jobs": n_jobs,
+            "seed": seed,
+            "keep_bad_trials": keep_bad_trials,
+            "output_dir": output_dir,
+            "force": force,
+            "n_shards": n_shards,
+            "shard_idx": shard_idx,
+        }
+
+    for stage in stages:
+        job_name = f"sweep_{stage}_{space}_{trial_type}"
+        # The sweep fans out over shards; every other stage is a single job
+        # that waits on whatever ran before it.
+        if stage == "sweep" and n_shards > 1:
+            shard_resources = dict(base_resources, cpus=shard_cpus, mem=shard_mem)
+            shard_scripts = []
+            for k in range(n_shards):
+                shard_name = f"{job_name}_shard-{k}of{n_shards}"
+                ctx = _context(stage, shard_name, shard_idx=k,
+                               resources=shard_resources)
+                sp = script_dir / f"{shard_name}_{timestamp}.sh"
+                render_slurm_script("sweep.sh.j2", ctx, output_path=sp)
+                shard_scripts.append(sp)
+            array_resources = dict(
+                shard_resources,
+                time=slurm_time if slurm_time is not None else stage_time["sweep"],
+            )
+            job_ids["sweep"] = submit_job_array(
+                shard_scripts, job_name, array_resources, script_dir, timestamp,
+                max_concurrent=max_concurrent, dry_run=dry_run,
+            )
+            print(f"  stage=sweep       {n_shards} shard(s) "
+                  f"time={array_resources['time']}  job={job_ids['sweep']}")
+            continue
+
+        context = _context(stage, job_name)
+        script_path = script_dir / f"{job_name}_{timestamp}.sh"
+        render_slurm_script("sweep.sh.j2", context, output_path=script_path)
+        # Each stage waits on the previous one: merge needs every shard,
+        # confirm/importance need the merged CSV to find the winning cell.
+        prior = [job_ids[s] for s in ("merge", "sweep")
+                 if job_ids.get(s) and s != stage]
+        deps = prior[:1] if stage != "sweep" else None
+        # afterany for merge: one shard hitting wall time must not strand the
+        # other 39: every shard flushes its CSV after each cell, so merge still
+        # has real results to rank. Later stages need a merged CSV, so afterok.
+        dep_type = "afterany" if stage == "merge" else "afterok"
+        job_ids[stage] = submit_slurm_job(
+            script_path, job_name=job_name, dependencies=deps,
+            dep_type=dep_type, dry_run=dry_run
+        )
+        print(f"  stage={stage:<11s} time={context['time']}  job={job_ids[stage]}"
+              + (f"  (after {deps[0]})" if deps else ""))
+
+    manifest_path = log_dir / f"sweep_manifest_{timestamp}.json"
+    save_job_manifest(
+        [j for j in job_ids.values() if j],
+        manifest_path,
+        metadata={
+            "stage": "sweep",
+            "space": space,
+            "trial_type": trial_type,
+            "stages": list(stages),
+            "feature_sets": feature_sets,
+            "reductions": reductions,
+            "estimators": estimators,
+            "normalizations": normalizations,
+            "inout_bounds": inout_bounds,
+            "n_shards": n_shards,
+            "n_permutations": n_permutations,
+            "timestamp": timestamp,
+            "job_ids": job_ids,
+        },
+    )
+    if any(job_ids.values()):
+        print(f"\n✓ Submitted {len(stages)} sweep job(s); manifest: {manifest_path}")
+    elif dry_run:
+        print(f"\n[DRY RUN] Would submit {len(stages)} sweep job(s)")
+
+
+@task
+def sweep(
+    c,
+    stage="all",
+    space="schaefer_400",
+    trial_type="alltrials",
+    feature_sets=None,
+    reductions=None,
+    estimators=None,
+    normalizations=None,
+    inout_bounds=None,
+    n_shards=40,
+    shard_idx=0,
+    n_events_window=8,
+    inner_splits=5,
+    n_permutations=200,
+    importance_n_repeats=5,
+    select_by="mean_auc",
+    cell=None,
+    n_jobs=-1,
+    seed=42,
+    keep_bad_trials=False,
+    output_dir=None,
+    force=False,
+    config="config.yaml",
+    slurm=False,
+    slurm_time=None,
+    slurm_mem=None,
+    slurm_cpus=None,
+    dry_run=False,
+):
+    """Sweep cross-subject IN/OUT decoding over reductions, features and models.
+
+    The joint multifeature classifier generalises poorly across subjects
+    because the flattened parcel x feature vector is ~9600-dimensional.
+    This task sweeps the axes that actually move the needle and reports
+    per-held-out-subject AUC, then confirms the winner with nested CV and
+    explains it with Haufe patterns + block permutation importance.
+
+    Stages (--stage):
+      sweep      : LOSO grid over reduction x feature-set x estimator x
+                   normalization x IN/OUT bounds. Writes *_sweep.csv (one row
+                   per cell, sorted by mean AUC) and *_sweep-folds.npz
+                   (per-subject AUC vectors). On SLURM this fans out over
+                   --n-shards array tasks (default 40) that run concurrently.
+      merge      : fold the per-shard CSVs into one ranked table.
+      confirm    : nested LOSO on the winning cell (inner GroupKFold tunes the
+                   hyperparameter) + within-subject label-permutation null.
+      importance : Haufe-transformed activation patterns and block permutation
+                   importance (per feature, per spatial unit) for the winner.
+      all        : all four, chained (one process locally, four SLURM steps).
+
+    Reductions: flat, yeo7-mean, yeo7-meansd, hemi-yeo7, global-mean, pca-K,
+    net-<Network>. Estimators: family[:key=value,...] over logistic, linearsvc,
+    lda, hgb, rf.
+
+    Examples:
+        # Full default grid on the cluster: a 40-task sweep array, then
+        # merge -> confirm -> importance chained behind it
+        invoke analysis.sweep --slurm
+
+        # Quick local look at network-level cells only
+        invoke analysis.sweep --stage=sweep --reductions="yeo7-mean flat" \\
+            --feature-sets="all fooof" --estimators="logistic:C=0.01 lda:shrinkage=auto"
+
+        # Re-run just the interpretation on a cell you picked by hand
+        invoke analysis.sweep --stage=importance \\
+            --cell="2575|zscore|all|yeo7-mean|logistic:C=0.01"
+    """
+    print("=" * 80)
+    print("Cross-Subject Generalization Sweep")
+    print("=" * 80)
+
+    stages = (["sweep", "merge", "confirm", "importance"] if stage == "all"
+              else [stage])
+    if stage not in ("all", "sweep", "merge", "confirm", "importance"):
+        print(f"ERROR: unknown --stage={stage}")
+        return
+
+    print(f"Space: {space}  trial-type: {trial_type}  stages: {' '.join(stages)}")
+
+    if slurm:
+        _sweep_slurm(
+            c,
+            stages=stages,
+            space=space,
+            trial_type=trial_type,
+            feature_sets=feature_sets,
+            reductions=reductions,
+            estimators=estimators,
+            normalizations=normalizations,
+            inout_bounds=inout_bounds,
+            n_shards=n_shards,
+            n_events_window=n_events_window,
+            inner_splits=inner_splits,
+            n_permutations=n_permutations,
+            importance_n_repeats=importance_n_repeats,
+            select_by=select_by,
+            cell=cell,
+            n_jobs=n_jobs,
+            seed=seed,
+            keep_bad_trials=keep_bad_trials,
+            output_dir=output_dir,
+            force=force,
+            slurm_time=slurm_time,
+            slurm_mem=slurm_mem,
+            slurm_cpus=slurm_cpus,
+            dry_run=dry_run,
+        )
+        return
+
+    # Local mode: --stage=all runs the three stages in one process so the
+    # feature stack is loaded once.
+    python_exe = get_python_executable()
+    cmd = [
+        python_exe, "-m", "code.classification.run_sweep",
+        "--stage", stage,
+        "--space", space,
+        "--trial-type", trial_type,
+        "--n-events-window", str(n_events_window),
+        "--inner-splits", str(inner_splits),
+        "--n-permutations", str(n_permutations),
+        "--importance-n-repeats", str(importance_n_repeats),
+        "--select-by", select_by,
+        "--n-jobs", str(n_jobs),
+        "--seed", str(seed),
+        "--config", config,
+    ]
+    for flag, value in (
+        ("--feature-sets", feature_sets),
+        ("--reductions", reductions),
+        ("--estimators", estimators),
+        ("--normalizations", normalizations),
+        ("--inout-bounds", inout_bounds),
+    ):
+        if value:
+            cmd.extend([flag, *str(value).split()])
+    # Local mode runs the whole grid in one process unless the caller asks for
+    # a specific shard; --n-shards only fans out under --slurm.
+    if n_shards > 1 and stage == "sweep":
+        cmd.extend(["--n-shards", str(n_shards), "--shard-idx", str(shard_idx)])
+    if cell:
+        cmd.extend(["--cell", f'"{cell}"'])
+    if keep_bad_trials:
+        cmd.append("--keep-bad-trials")
+    if force:
+        cmd.append("--force")
+    if output_dir:
+        cmd.extend(["--output-dir", output_dir])
+
+    print(f"\nRunning: {' '.join(cmd)}\n")
+    c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
+
+
 @task
 def multifeature_preflight(
     c,
@@ -5524,6 +5876,7 @@ analysis.add_task(classify)
 analysis.add_task(classify_aggregate, name="classify-aggregate")
 analysis.add_task(classify_multifeature, name="classify-multifeature")
 analysis.add_task(classify_multifeature_aggregate, name="classify-multifeature-aggregate")
+analysis.add_task(sweep)
 analysis.add_task(multifeature_preflight, name="multifeature-preflight")
 analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")

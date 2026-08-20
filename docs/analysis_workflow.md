@@ -482,6 +482,75 @@ Fan out to SLURM — one job per feature:
 invoke analysis.classify --features=all --slurm
 ```
 
+### Cross-subject generalization sweep
+
+`analysis.classify-multifeature --axis=joint` fits one model on the flattened
+`n_spatial * n_features` vector with a fixed `logistic(C=1)`. On Schaefer-400
+that is 9600 dimensions per window and leave-one-subject-out AUC sits barely
+above chance. Piloting showed the binding constraint is dimensionality, not the
+classifier family: collapsing the 400 parcels to the 7 Yeo networks gains
+~5 AUC points and runs ~40x faster, while tuning `C` or swapping in SVM / RF /
+boosting on the flat vector gains essentially nothing.
+
+`analysis.sweep` searches the axes that do move the needle, in three stages:
+
+| stage | what it does | output |
+|---|---|---|
+| `sweep` | LOSO grid over reduction x feature-set x estimator x normalization x IN/OUT bounds; fans out over `--n-shards` SLURM array tasks | `*_sweep_shard-KofN.csv`, `*_sweep-folds_shard-KofN.npz` |
+| `merge` | folds the shard outputs into one ranked table | `*_sweep.csv` (one row per cell, sorted by mean AUC), `*_sweep-folds.npz` (per-subject AUC vectors) |
+| `confirm` | nested LOSO on the winning cell (inner GroupKFold picks the hyperparameter) + within-subject label-permutation null | `*_confirm.npz`, `*_confirm.json` |
+| `importance` | Haufe-transformed activation patterns + block permutation importance (per feature, per spatial unit) | `*_importance.npz`, `*_importance.json` |
+
+Outputs land in `<results>/classification_<space>/group_sweep/`.
+
+Spatial reductions: `flat`, `yeo7-mean`, `yeo7-meansd`, `hemi-yeo7`,
+`global-mean`, `pca-K`, `net-<Network>`. Everything except `pca-K` is a fixed,
+label-independent regrouping applied once outside CV; `pca-K` is a pipeline
+step fit on the training fold only.
+
+Estimators are `family[:key=value,...]` over `logistic`, `linearsvc`, `lda`,
+`hgb`, `rf`.
+
+```
+# Full default grid on the cluster: a 40-task sweep array, then
+# merge -> confirm -> importance chained behind it
+invoke analysis.sweep --slurm
+
+# Local look at the network-level cells only (seconds per cell)
+invoke analysis.sweep --stage=sweep --reductions="yeo7-mean flat" \
+    --feature-sets="all fooof" --estimators="logistic:C=0.01 lda:shrinkage=auto"
+
+# Re-interpret a cell you picked by hand
+invoke analysis.sweep --stage=importance \
+    --cell="2575|zscore|all|yeo7-mean|logistic:C=0.01"
+```
+
+Notes:
+
+- The sweep reports **per-held-out-subject** AUC, which the multifeature joint
+  axis does not keep. `n_above_chance` / `n_subjects` is the claim worth making
+  ("N of 32 held-out subjects above chance"), alongside the mean and its CI.
+- Reductions are ordered cheapest-first and the CSV is flushed after every
+  cell, so a wall-time kill still leaves usable results; re-submitting resumes
+  from the CSV (pass `--force` to recompute).
+- Shards are assigned round-robin over the grid so the expensive `flat` cells
+  spread evenly instead of piling into the last few tasks, then re-sorted
+  within a shard so each one loads each IN/OUT bound once. `merge` depends
+  `afterany` on the array: one shard hitting wall time cannot strand the other
+  39. Sweep shards get 8 cores / 32G each (they only parallelise the 32 LOSO
+  folds); confirm and importance get the full classification allocation.
+- Tree ensembles are skipped above `--nonlinear-max-dims` (default 2000) — on
+  the flat vector they cost ~10x a linear model and scored below it.
+- Model weights are not plotted directly. The `importance` stage saves
+  Haufe-transformed patterns (`haufe_pattern`, shape `(n_spatial, n_features)`),
+  because a large weight can mark a noise-suppressing channel rather than a
+  signal-carrying one.
+- Temporal smoothing of the decision function is deliberately *not* offered.
+  `load_classification_data` returns each subject's windows as an IN block
+  followed by an OUT block, so smoothing in array order averages within a class
+  and inflates AUC; doing it honestly needs the `alignment_keys` onsets to
+  restore true temporal order.
+
 ### Underlying scripts
 
 The invoke tasks shell out to the scripts below; you can call them directly if you need flags not exposed at the invoke layer (e.g. `--keep-bad-trials`):
