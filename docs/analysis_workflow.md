@@ -505,13 +505,24 @@ boosting on the flat vector gains essentially nothing.
 
 Outputs land in `<results>/classification_<space>/group_sweep/`.
 
-`prep` exists because loading is per-feature: `load_combined_features` walks
-`n_features x n_subjects x n_runs` npz files (23 x 32 x 6 = 4416 on
-Schaefer-400) and each of the eight `psd_*` features re-reads the same welch
-file. One process doing that is a few minutes; forty array tasks doing it at
-the same moment saturated the shared filesystem and the 2026-08-20 run spent
-its whole 7 h wall time inside the loader without fitting a single cell. Every
-stage reads the tensor cache when it exists, so the array starts in seconds.
+`prep` exists because loading the feature stack is expensive, in two ways that
+compound. `load_combined_features` walks `n_subjects x n_runs` npz files per
+feature *family*, and a welch npz holds a `(n_windows, n_spatial, n_freqs)`
+cube — 591 x 400 x 1022 float64, ~1.9 GB uncompressed per run file — that has
+to be decompressed in full to average out one band. On 2026-08-20 a single
+uncontended walk of one `psd_*` band took 30-50 min on /scratch.
+
+Two fixes, both load-bearing:
+
+- Features that share a source file are loaded **together** (`_load_feature_group`),
+  so the eight `psd_*` bands cost one walk of the welch files instead of eight.
+  A 23-feature stack is four walks (fooof, welch, welch-corrected, complexity),
+  not 23.
+- The result is materialized once by `prep`; every other stage reads the `.npy`
+  in seconds. Without it, forty array tasks each repeat the walk simultaneously
+  and the shared filesystem, not the CPU, sets the run time — the 2026-08-20
+  sweep spent its whole 7 h wall inside the loader without fitting one cell.
+
 Pass `--refresh-cache` after regenerating any feature.
 
 Spatial reductions: `flat`, `yeo7-mean`, `yeo7-meansd`, `hemi-yeo7`,

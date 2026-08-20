@@ -4011,12 +4011,14 @@ def _multifeature_sweep_slurm(
     log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "multifeature_sweep"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Per-stage wall time. `prep` is pure I/O (one walk of the feature files);
-    # the sweep is then pure compute and each shard is minutes, so a short
-    # reservation backfills far sooner than a long one.
+    # Per-stage wall time. `prep` is pure I/O: one walk per feature *family*
+    # (four of them), and a welch walk read ~30-50 min of compressed frequency
+    # cubes off /scratch on 2026-08-20 — so it gets a wide margin, since losing
+    # it to the wall costs the whole chain. The sweep is then pure compute and
+    # each shard is minutes, so a short reservation backfills far sooner.
     # merge outlives the sweep by design: it idles until the array leaves the
     # queue (see wait_for_job in the template), then merges in seconds.
-    stage_time = {"prep": "3:00:00", "sweep": "6:00:00", "merge": "7:00:00",
+    stage_time = {"prep": "12:00:00", "sweep": "6:00:00", "merge": "7:00:00",
                   "confirm": "2:00:00", "importance": "1:00:00",
                   "nested-select": "4:00:00", "all": "6:00:00"}
     # Each task only parallelises the 32 LOSO folds, so a shard wants a modest

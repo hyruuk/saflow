@@ -8,7 +8,53 @@ single cell.
 import numpy as np
 import pytest
 
+from code.classification import run_classification as RC
 from code.classification import run_multifeature_sweep as S
+
+
+def test_features_sharing_a_file_are_loaded_in_one_walk(monkeypatch):
+    """The eight psd_* bands must cost one file walk, not eight.
+
+    Each welch npz holds a (n_windows, n_spatial, n_freqs) cube — ~1.9 GB
+    uncompressed per run file — and one band is a slice of it. Loading the
+    bands one at a time decompressed that cube eight times per family and made
+    a 23-feature stack an ~11 h job on /scratch.
+    """
+    calls = []
+    n_trials, n_spatial = 12, 5
+
+    def _fake_group(*, folder_prefix, file_suffix, sub_keys, **kwargs):
+        calls.append((folder_prefix, tuple(sub_keys)))
+        X = {k: np.full((n_trials, n_spatial), abs(hash(k)) % 97, dtype=float)
+             for k in sub_keys}
+        y = np.array([0] * 6 + [1] * 6)
+        groups = np.repeat(np.arange(2), 6)
+        return X, y, groups, {"spatial_names": [f"p-{i}" for i in range(n_spatial)]}
+
+    monkeypatch.setattr(RC, "_load_feature_group", _fake_group)
+    features = ["fooof_exponent", "fooof_offset",
+                "psd_alpha", "psd_theta", "psd_gamma1",
+                "psd_corrected_alpha", "psd_corrected_theta",
+                "complexity_lzc_median"]
+    X, y, groups, meta = RC.load_combined_features(
+        features=features, space="schaefer_400", inout_bounds=(25, 75),
+        config={}, n_events_window=8,
+    )
+
+    assert len(calls) == 4, f"one walk per source file, got {calls}"
+    assert dict(calls) == {
+        "fooof": ("exponent", "offset"),
+        "welch_psds": ("alpha", "theta", "gamma1"),
+        "welch_psds_corrected": ("alpha", "theta"),
+        "complexity": ("lzc_median",),
+    }
+    # Stacking order must still follow the caller's feature order, not the
+    # order the groups happened to be walked in.
+    assert X.shape == (n_trials, n_spatial, len(features))
+    assert meta["features"] == features
+    for i, feat in enumerate(features):
+        expected = abs(hash(RC.parse_feature(feat, n_events_window=8)[2])) % 97
+        assert np.all(X[:, :, i] == expected), feat
 
 
 def _grid(bounds=((25, 75),)):

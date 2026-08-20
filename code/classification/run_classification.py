@@ -269,7 +269,48 @@ def load_classification_data(
     folder_prefix, file_suffix, sub_key = parse_feature(
         feature, n_events_window=n_events_window
     )
+    Xs, y, groups, metadata = _load_feature_group(
+        folder_prefix=folder_prefix, file_suffix=file_suffix, sub_keys=[sub_key],
+        space=space, inout_bounds=inout_bounds, config=config, subjects=subjects,
+        drop_bad_trials=drop_bad_trials, trial_type=trial_type,
+        n_events_window=n_events_window, inout_selection=inout_selection,
+        strict_alignment=strict_alignment,
+    )
+    metadata["feature"] = feature
+    return Xs[sub_key], y, groups, metadata
 
+
+def _load_feature_group(
+    folder_prefix: str,
+    file_suffix: str,
+    sub_keys: List[str],
+    space: str,
+    inout_bounds: Tuple[int, int],
+    config: Dict,
+    subjects: Optional[List[str]] = None,
+    drop_bad_trials: bool = True,
+    trial_type: str = "alltrials",
+    n_events_window: int = 1,
+    inout_selection: str = DEFAULT_INOUT_STRATEGY,
+    strict_alignment: bool = False,
+) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, Dict]:
+    """Load every requested key of one feature family in a single file walk.
+
+    All of ``sub_keys`` come from the same npz per subject/run, so opening that
+    file once and slicing out each key costs one read instead of ``len(sub_keys)``
+    reads. This matters enormously for the welch families: their npz holds a
+    ``(n_windows, n_spatial, n_freqs)`` cube — 591 x 400 x 1022 float64 ~= 1.9 GB
+    uncompressed per run file — and the eight ``psd_*`` features each decompress
+    the whole cube just to average one band out of it. Loading them one at a
+    time made a full 23-feature stack a ~11 h job on /scratch.
+
+    Every key sees exactly the same trial masking, so the returned arrays share
+    one ``y``/``groups``.
+
+    Returns:
+        (X_by_key, y, groups, metadata) — ``metadata`` carries no ``feature``
+        field; callers name what they asked for.
+    """
     analysis_cfg = config.get("analysis", {})
     bad_trial_rule = str(analysis_cfg.get("bad_trial_rule", "ar2"))
     interp_reject_threshold = int(analysis_cfg.get("interp_reject_threshold", 0) or 0)
@@ -286,13 +327,14 @@ def load_classification_data(
 
     is_psd = folder_prefix in ("welch_psds", "welch_psds_corrected")
     if is_psd:
-        if sub_key not in freq_bands:
-            raise ValueError(
-                f"Band '{sub_key}' not in config.features.frequency_bands. "
-                f"Known bands: {list(freq_bands)}"
-            )
+        for key in sub_keys:
+            if key not in freq_bands:
+                raise ValueError(
+                    f"Band '{key}' not in config.features.frequency_bands. "
+                    f"Known bands: {list(freq_bands)}"
+                )
 
-    all_X: List[np.ndarray] = []
+    all_X: Dict[str, List[np.ndarray]] = {k: [] for k in sub_keys}
     all_y: List[int] = []
     all_groups: List[int] = []
     input_git_hashes: set = set()
@@ -309,7 +351,7 @@ def load_classification_data(
         if not _retry_io(subj_dir.exists, where=str(subj_dir)):
             continue
 
-        subj_data = []
+        subj_data: Dict[str, List[np.ndarray]] = {k: [] for k in sub_keys}
         subj_task = []
         subj_inc_task: List[List[np.ndarray]] = []  # length-N per-epoch task arrays
         subj_bad: List[np.ndarray] = []
@@ -359,28 +401,37 @@ def load_classification_data(
                     f"{missing_alignment}; recompute this feature artifact"
                 )
 
+            # One decompression of this file serves every requested key. For
+            # the psd families that is the (n_trials, n_spatial, n_freqs) cube,
+            # which is why the band loop lives inside the file loop.
+            feats: Dict[str, np.ndarray] = {}
             if is_psd:
                 if "psds" not in npz:
                     logger.warning(f"'psds' key missing in {file_path.name}")
                     continue
                 psds = npz["psds"]  # (n_trials, n_spatial, n_freqs)
                 freqs = npz["freqs"]
-                fmin, fmax = freq_bands[sub_key]
-                fmask = (freqs >= fmin) & (freqs <= fmax)
-                feat = np.mean(psds[:, :, fmask], axis=2)  # (n_trials, n_spatial)
+                for key in sub_keys:
+                    fmin, fmax = freq_bands[key]
+                    fmask = (freqs >= fmin) & (freqs <= fmax)
+                    feats[key] = np.mean(psds[:, :, fmask], axis=2)
+                del psds
             else:
-                if sub_key not in npz:
+                missing_keys = [k for k in sub_keys if k not in npz]
+                if missing_keys:
                     logger.warning(
-                        f"'{sub_key}' missing in {file_path.name}; "
+                        f"{missing_keys} missing in {file_path.name}; "
                         f"available: {list(npz.keys())}"
                     )
                     continue
-                feat = npz[sub_key]  # (n_trials, n_spatial)
+                for key in sub_keys:
+                    feats[key] = npz[key]  # (n_trials, n_spatial)
 
             if spatial_names is None and "ch_names" in npz:
                 spatial_names = list(npz["ch_names"])
 
-            subj_data.append(feat)
+            for key in sub_keys:
+                subj_data[key].append(feats[key])
             rm = build_run_meta_from_welch(meta)
             run_metas.append(rm)
             subj_task.append(np.asarray(meta["task"]))
@@ -407,10 +458,10 @@ def load_classification_data(
                 ]
                 subj_alignment.append(np.asarray(keys, dtype=str))
 
-        if not subj_data:
+        if not any(subj_data.values()):
             continue
 
-        subj_data = np.concatenate(subj_data, axis=0)
+        subj_data = {k: np.concatenate(v, axis=0) for k, v in subj_data.items()}
         subj_task = np.concatenate(subj_task)
         subj_inc_task_flat = [arr for run_list in subj_inc_task for arr in run_list]
         subj_bad_arr = np.concatenate(subj_bad) if subj_bad else np.array([], dtype=bool)
@@ -469,8 +520,9 @@ def load_classification_data(
             )
             continue
 
-        all_X.append(subj_data[in_mask])
-        all_X.append(subj_data[out_mask])
+        for key in sub_keys:
+            all_X[key].append(subj_data[key][in_mask])
+            all_X[key].append(subj_data[key][out_mask])
         all_y.extend([0] * n_in + [1] * n_out)
         all_groups.extend([subj_idx] * (n_in + n_out))
         if subj_alignment_arr.size:
@@ -480,7 +532,7 @@ def load_classification_data(
         n_out_total += n_out
         n_bad_excluded += n_bad_in + n_bad_out
 
-    if not all_X:
+    if not any(all_X.values()):
         raise ValueError("No data loaded for any subject")
 
     if drop_bad_trials and not bad_metadata_present:
@@ -491,12 +543,12 @@ def load_classification_data(
             "or recompute features."
         )
 
-    X = np.concatenate(all_X, axis=0)
+    Xs = {k: np.concatenate(v, axis=0) for k, v in all_X.items()}
+    X = Xs[sub_keys[0]]
     y = np.array(all_y)
     groups = np.array(all_groups)
 
     metadata = {
-        "feature": feature,
         "space": space,
         "inout_bounds": list(inout_bounds),
         "trial_type": trial_type,
@@ -520,9 +572,10 @@ def load_classification_data(
 
     logger.info(
         f"Loaded {len(y)} trials from {metadata['n_subjects']} subjects "
-        f"(IN: {n_in_total}, OUT: {n_out_total}, n_spatial: {X.shape[1]})"
+        f"(IN: {n_in_total}, OUT: {n_out_total}, n_spatial: {X.shape[1]}) "
+        f"for {len(sub_keys)} key(s) of {folder_prefix}"
     )
-    return X, y, groups, metadata
+    return Xs, y, groups, metadata
 
 
 def load_combined_features(
@@ -553,9 +606,25 @@ def load_combined_features(
     per_feature = {}
     spatial_names = None
 
+    # Features that share a source file are loaded together: the eight psd_*
+    # bands all come out of one welch npz, so loading them one by one would
+    # decompress that file's frequency cube eight times over.
+    groups_by_file: Dict[Tuple[str, str], List[str]] = {}
+    key_of: Dict[str, str] = {}
     for feat in features:
-        X_f, y_f, g_f, meta_f = load_classification_data(
-            feature=feat,
+        folder_prefix, file_suffix, sub_key = parse_feature(
+            feat, n_events_window=n_events_window
+        )
+        groups_by_file.setdefault((folder_prefix, file_suffix), []).append(feat)
+        key_of[feat] = sub_key
+
+    loaded: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]] = {}
+    for (folder_prefix, file_suffix), group_feats in groups_by_file.items():
+        group_keys = [key_of[f] for f in group_feats]
+        X_by_key, y_g, g_g, meta_g = _load_feature_group(
+            folder_prefix=folder_prefix,
+            file_suffix=file_suffix,
+            sub_keys=group_keys,
             space=space,
             inout_bounds=inout_bounds,
             config=config,
@@ -566,6 +635,12 @@ def load_combined_features(
             inout_selection=inout_selection,
             strict_alignment=strict_alignment,
         )
+        for feat in group_feats:
+            meta_f = dict(meta_g, feature=feat)
+            loaded[feat] = (X_by_key[key_of[feat]], y_g, g_g, meta_f)
+
+    for feat in features:
+        X_f, y_f, g_f, meta_f = loaded[feat]
         if y_ref is None:
             y_ref = y_f
             groups_ref = g_f
