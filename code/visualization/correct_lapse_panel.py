@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import numpy as np
 from matplotlib.gridspec import GridSpec
 
@@ -19,7 +20,6 @@ from code.analysis.outcome_modulation import STATE_ORDER
 from code.analysis.provenance import resolve_analysis_directory
 from code.analysis.result_io import read_result_bundle
 from code.utils.yeo_networks import network_display_name
-from code.visualization.panel1_bundle import _add_colorbar
 from code.visualization.plot_surface import _get_fsaverage_surfaces
 from code.visualization.stats_classif_panel import CMAP_T, _plot_brain
 
@@ -173,7 +173,7 @@ def _plot_parcel_row(
         )
         axis.set_axis_off()
     color_axis = figure.add_subplot(grid[row, 18])
-    _add_colorbar(figure, color_axis, -limit, limit, CMAP_T, False)
+    _add_contrast_colorbar(figure, color_axis, limit)
     figure.text(
         0.006,
         0.49 if row == 1 else 0.185,
@@ -195,6 +195,35 @@ def _shared_t_limit(result: dict[str, Any]) -> float:
         ]
     )
     return max(float(np.nanpercentile(np.abs(values), 99)), 1e-6)
+
+
+def _add_contrast_colorbar(figure: plt.Figure, axis: plt.Axes, limit: float) -> None:
+    """Add a directionally correct Lapse-minus-Correct colorbar."""
+    colorbar = figure.colorbar(
+        plt.cm.ScalarMappable(norm=mcolors.Normalize(-limit, limit), cmap=CMAP_T),
+        cax=axis,
+    )
+    colorbar.set_label("Paired t statistic", fontsize=7)
+    colorbar.ax.tick_params(labelsize=6)
+    axis.text(
+        0.5,
+        1.04,
+        "Lapse > Correct",
+        transform=axis.transAxes,
+        ha="center",
+        fontsize=7,
+        color="#a40000",
+    )
+    axis.text(
+        0.5,
+        -0.04,
+        "Correct > Lapse",
+        transform=axis.transAxes,
+        ha="center",
+        va="top",
+        fontsize=7,
+        color="#00408a",
+    )
 
 
 def _feature_labels() -> list[str]:
