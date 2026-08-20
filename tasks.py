@@ -3945,7 +3945,7 @@ def classify_multifeature_aggregate(
     c.run(" ".join(cmd), pty=True, env=get_env_with_pythonpath())
 
 
-def _sweep_slurm(
+def _multifeature_sweep_slurm(
     c,
     stages,
     space,
@@ -3955,6 +3955,8 @@ def _sweep_slurm(
     estimators,
     normalizations,
     inout_bounds,
+    select_reductions,
+    select_estimators,
     n_shards,
     n_events_window,
     inner_splits,
@@ -3990,7 +3992,7 @@ def _sweep_slurm(
         submit_slurm_job,
     )
 
-    print("\n[SLURM Mode] Submitting cross-subject sweep\n")
+    print("\n[SLURM Mode] Submitting multi-feature cross-subject sweep\n")
 
     config = load_config()
     slurm_config = config["computing"]["slurm"]
@@ -4004,14 +4006,15 @@ def _sweep_slurm(
         venv_path = PROJECT_ROOT / venv_path
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "sweep"
+    script_dir = PROJECT_ROOT / "slurm" / "scripts" / "multifeature_sweep"
     script_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "sweep"
+    log_dir = PROJECT_ROOT / config["paths"]["logs"] / "slurm" / "multifeature_sweep"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Per-stage wall time: the sweep dominates, importance is minutes.
     stage_time = {"sweep": "3:00:00", "merge": "0:15:00", "confirm": "2:00:00",
-                  "importance": "1:00:00", "all": "6:00:00"}
+                  "importance": "1:00:00", "nested-select": "2:00:00",
+                  "all": "6:00:00"}
     # Each task only parallelises the 32 LOSO folds, so a shard wants a modest
     # core count: 40 x 8 cores schedules far sooner than 40 x 24 and finishes
     # the grid just as fast. confirm/importance are single jobs and can take
@@ -4054,8 +4057,12 @@ def _sweep_slurm(
             "trial_type": trial_type,
             "n_events_window": n_events_window,
             "feature_sets": feature_sets,
-            "reductions": reductions,
-            "estimators": estimators,
+            # nested-select pays 32x per candidate (selection runs inside every
+            # outer fold), so it never inherits the sweep's reduction list.
+            "reductions": (select_reductions if stage == "nested-select"
+                           else reductions),
+            "estimators": (select_estimators if stage == "nested-select"
+                           else estimators),
             "normalizations": normalizations,
             "inout_bounds": inout_bounds,
             "inner_splits": inner_splits,
@@ -4073,7 +4080,7 @@ def _sweep_slurm(
         }
 
     for stage in stages:
-        job_name = f"sweep_{stage}_{space}_{trial_type}"
+        job_name = f"mfsweep_{stage}_{space}_{trial_type}"
         # The sweep fans out over shards; every other stage is a single job
         # that waits on whatever ran before it.
         if stage == "sweep" and n_shards > 1:
@@ -4084,7 +4091,7 @@ def _sweep_slurm(
                 ctx = _context(stage, shard_name, shard_idx=k,
                                resources=shard_resources)
                 sp = script_dir / f"{shard_name}_{timestamp}.sh"
-                render_slurm_script("sweep.sh.j2", ctx, output_path=sp)
+                render_slurm_script("multifeature_sweep.sh.j2", ctx, output_path=sp)
                 shard_scripts.append(sp)
             array_resources = dict(
                 shard_resources,
@@ -4100,12 +4107,14 @@ def _sweep_slurm(
 
         context = _context(stage, job_name)
         script_path = script_dir / f"{job_name}_{timestamp}.sh"
-        render_slurm_script("sweep.sh.j2", context, output_path=script_path)
+        render_slurm_script("multifeature_sweep.sh.j2", context, output_path=script_path)
         # Each stage waits on the previous one: merge needs every shard,
         # confirm/importance need the merged CSV to find the winning cell.
+        # nested-select is self-contained — it never reads the sweep CSV — so it
+        # runs concurrently with the array instead of queueing behind it.
         prior = [job_ids[s] for s in ("merge", "sweep")
                  if job_ids.get(s) and s != stage]
-        deps = prior[:1] if stage != "sweep" else None
+        deps = prior[:1] if stage not in ("sweep", "nested-select") else None
         # afterany for merge: one shard hitting wall time must not strand the
         # other 39: every shard flushes its CSV after each cell, so merge still
         # has real results to rank. Later stages need a merged CSV, so afterok.
@@ -4117,12 +4126,12 @@ def _sweep_slurm(
         print(f"  stage={stage:<11s} time={context['time']}  job={job_ids[stage]}"
               + (f"  (after {deps[0]})" if deps else ""))
 
-    manifest_path = log_dir / f"sweep_manifest_{timestamp}.json"
+    manifest_path = log_dir / f"mfsweep_manifest_{timestamp}.json"
     save_job_manifest(
         [j for j in job_ids.values() if j],
         manifest_path,
         metadata={
-            "stage": "sweep",
+            "stage": "multifeature_sweep",
             "space": space,
             "trial_type": trial_type,
             "stages": list(stages),
@@ -4144,7 +4153,7 @@ def _sweep_slurm(
 
 
 @task
-def sweep(
+def multifeature_sweep(
     c,
     stage="all",
     space="schaefer_400",
@@ -4154,6 +4163,8 @@ def sweep(
     estimators=None,
     normalizations=None,
     inout_bounds=None,
+    select_reductions=None,
+    select_estimators=None,
     n_shards=40,
     shard_idx=0,
     n_events_window=8,
@@ -4189,11 +4200,18 @@ def sweep(
                    (per-subject AUC vectors). On SLURM this fans out over
                    --n-shards array tasks (default 40) that run concurrently.
       merge      : fold the per-shard CSVs into one ranked table.
+      nested-select : leave-one-subject-out with the whole cell choice remade
+                   inside each outer fold, over a restricted candidate set
+                   (--select-reductions / --select-estimators). Carries no
+                   selection leak, so it is the number to quote when a reviewer
+                   asks whether the winner was cherry-picked. Runs concurrently
+                   with the sweep; it never reads its CSV.
       confirm    : nested LOSO on the winning cell (inner GroupKFold tunes the
                    hyperparameter) + within-subject label-permutation null.
       importance : Haufe-transformed activation patterns and block permutation
                    importance (per feature, per spatial unit) for the winner.
-      all        : all four, chained (one process locally, four SLURM steps).
+      all        : every stage (five SLURM jobs; locally, run nested-select
+                   separately since it uses its own candidate axes).
 
     Reductions: flat, yeo7-mean, yeo7-meansd, hemi-yeo7, global-mean, pca-K,
     net-<Network>. Estimators: family[:key=value,...] over logistic, linearsvc,
@@ -4202,30 +4220,31 @@ def sweep(
     Examples:
         # Full default grid on the cluster: a 40-task sweep array, then
         # merge -> confirm -> importance chained behind it
-        invoke analysis.sweep --slurm
+        invoke analysis.multifeature-sweep --slurm
 
         # Quick local look at network-level cells only
-        invoke analysis.sweep --stage=sweep --reductions="yeo7-mean flat" \\
+        invoke analysis.multifeature-sweep --stage=sweep --reductions="yeo7-mean flat" \\
             --feature-sets="all fooof" --estimators="logistic:C=0.01 lda:shrinkage=auto"
 
         # Re-run just the interpretation on a cell you picked by hand
-        invoke analysis.sweep --stage=importance \\
+        invoke analysis.multifeature-sweep --stage=importance \\
             --cell="2575|zscore|all|yeo7-mean|logistic:C=0.01"
     """
     print("=" * 80)
-    print("Cross-Subject Generalization Sweep")
+    print("Multi-Feature Cross-Subject Generalization Sweep")
     print("=" * 80)
 
-    stages = (["sweep", "merge", "confirm", "importance"] if stage == "all"
-              else [stage])
-    if stage not in ("all", "sweep", "merge", "confirm", "importance"):
+    stages = (["sweep", "merge", "confirm", "importance", "nested-select"]
+              if stage == "all" else [stage])
+    if stage not in ("all", "sweep", "merge", "confirm", "importance",
+                     "nested-select"):
         print(f"ERROR: unknown --stage={stage}")
         return
 
     print(f"Space: {space}  trial-type: {trial_type}  stages: {' '.join(stages)}")
 
     if slurm:
-        _sweep_slurm(
+        _multifeature_sweep_slurm(
             c,
             stages=stages,
             space=space,
@@ -4235,6 +4254,8 @@ def sweep(
             estimators=estimators,
             normalizations=normalizations,
             inout_bounds=inout_bounds,
+            select_reductions=select_reductions,
+            select_estimators=select_estimators,
             n_shards=n_shards,
             n_events_window=n_events_window,
             inner_splits=inner_splits,
@@ -4258,7 +4279,7 @@ def sweep(
     # feature stack is loaded once.
     python_exe = get_python_executable()
     cmd = [
-        python_exe, "-m", "code.classification.run_sweep",
+        python_exe, "-m", "code.classification.run_multifeature_sweep",
         "--stage", stage,
         "--space", space,
         "--trial-type", trial_type,
@@ -5876,7 +5897,7 @@ analysis.add_task(classify)
 analysis.add_task(classify_aggregate, name="classify-aggregate")
 analysis.add_task(classify_multifeature, name="classify-multifeature")
 analysis.add_task(classify_multifeature_aggregate, name="classify-multifeature-aggregate")
-analysis.add_task(sweep)
+analysis.add_task(multifeature_sweep, name="multifeature-sweep")
 analysis.add_task(multifeature_preflight, name="multifeature-preflight")
 analysis.add_task(multifeature_export, name="multifeature-export")
 analysis.add_task(multifeature_run, name="multifeature-run")

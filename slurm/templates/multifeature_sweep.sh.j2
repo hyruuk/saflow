@@ -20,7 +20,7 @@ echo "  Shard:           {{ shard_idx }} / {{ n_shards }}"
 {% endif %}
 echo ""
 
-python -m code.classification.run_sweep \
+python -m code.classification.run_multifeature_sweep \
     --stage {{ stage }} \
     --space {{ space }} \
     --trial-type {{ trial_type }} \

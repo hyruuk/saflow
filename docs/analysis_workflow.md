@@ -492,7 +492,7 @@ classifier family: collapsing the 400 parcels to the 7 Yeo networks gains
 ~5 AUC points and runs ~40x faster, while tuning `C` or swapping in SVM / RF /
 boosting on the flat vector gains essentially nothing.
 
-`analysis.sweep` searches the axes that do move the needle, in three stages:
+`analysis.multifeature-sweep` searches the axes that do move the needle, in three stages:
 
 | stage | what it does | output |
 |---|---|---|
@@ -514,14 +514,14 @@ Estimators are `family[:key=value,...]` over `logistic`, `linearsvc`, `lda`,
 ```
 # Full default grid on the cluster: a 40-task sweep array, then
 # merge -> confirm -> importance chained behind it
-invoke analysis.sweep --slurm
+invoke analysis.multifeature-sweep --slurm
 
 # Local look at the network-level cells only (seconds per cell)
-invoke analysis.sweep --stage=sweep --reductions="yeo7-mean flat" \
+invoke analysis.multifeature-sweep --stage=sweep --reductions="yeo7-mean flat" \
     --feature-sets="all fooof" --estimators="logistic:C=0.01 lda:shrinkage=auto"
 
 # Re-interpret a cell you picked by hand
-invoke analysis.sweep --stage=importance \
+invoke analysis.multifeature-sweep --stage=importance \
     --cell="2575|zscore|all|yeo7-mean|logistic:C=0.01"
 ```
 
@@ -530,6 +530,31 @@ Notes:
 - The sweep reports **per-held-out-subject** AUC, which the multifeature joint
   axis does not keep. `n_above_chance` / `n_subjects` is the claim worth making
   ("N of 32 held-out subjects above chance"), alongside the mean and its CI.
+
+Statistics available at each level:
+
+| level | test | where |
+|---|---|---|
+| every swept cell | Wilcoxon signed-rank of the 32 per-subject AUCs vs 0.5, plus BH-FDR across all cells of the grid | `wilcoxon_p`, `wilcoxon_p_fdr` in `*_sweep.csv` |
+| the winning cell | nested-LOSO mean AUC with a t-based 95% CI over subjects, Wilcoxon vs 0.5, and a within-subject label-permutation null at fixed hyperparameters | `*_confirm.json` (`nested`, `permutation_pvalue`) |
+| each importance block | Wilcoxon of the per-fold AUC drop vs 0, BH-FDR across blocks | `importance_by_{feature,spatial}_pvalue{,_fdr}` |
+| each Haufe pattern cell | Wilcoxon of the per-fold pattern value vs 0, BH-FDR across cells | `haufe_pvalue`, `haufe_pvalue_fdr` |
+
+Caveats to carry into the text:
+
+- **The sweep selects the cell, so the winner's own p-value is optimistic.**
+  Nested CV re-tunes the *estimator hyperparameter* inside each training set,
+  but the reduction / feature set / normalization / bounds were all chosen by
+  looking at the same 32 subjects. Report the winner as the outcome of a
+  search, and lean on `wilcoxon_p_fdr` (corrected across the whole grid) rather
+  than the uncorrected per-cell p.
+- **The permutation null is somewhat narrow.** Windows slide by one trial and
+  overlap 7/8, so within-subject label permutation destroys less structure than
+  it should. The subject-level Wilcoxon is the sounder headline: its unit is
+  the subject, and each subject's AUC comes from a model that never saw them.
+- CV folds share most of their training data, so per-fold tests (importance,
+  Haufe) measure consistency across held-out subjects rather than strictly
+  independent evidence.
 - Reductions are ordered cheapest-first and the CSV is flushed after every
   cell, so a wall-time kill still leaves usable results; re-submitting resumes
   from the CSV (pass `--force` to recompute).

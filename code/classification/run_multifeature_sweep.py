@@ -39,10 +39,10 @@ restore true temporal order, and even then it trades on the autocorrelation of
 the VTC-derived labels; out of scope here.
 
 Usage:
-    python -m code.classification.run_sweep --stage sweep --space schaefer_400
-    python -m code.classification.run_sweep --stage confirm --space schaefer_400
-    python -m code.classification.run_sweep --stage importance --space schaefer_400
-    python -m code.classification.run_sweep --stage all --space schaefer_400
+    python -m code.classification.run_multifeature_sweep --stage sweep --space schaefer_400
+    python -m code.classification.run_multifeature_sweep --stage confirm --space schaefer_400
+    python -m code.classification.run_multifeature_sweep --stage importance --space schaefer_400
+    python -m code.classification.run_multifeature_sweep --stage all --space schaefer_400
 """
 
 from __future__ import annotations
@@ -70,6 +70,7 @@ from sklearn.model_selection import (
     GroupKFold,
     LeaveOneGroupOut,
     cross_val_predict,
+    cross_val_score,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import QuantileTransformer, StandardScaler
@@ -87,6 +88,7 @@ from code.features.inout_selection import (
     DEFAULT_STRATEGY as DEFAULT_INOUT_STRATEGY,
     inout_selection_token,
 )
+from code.statistics.corrections import apply_fdr_correction
 from code.utils.config import load_config
 from code.utils.yeo_networks import network_parcel_indices
 
@@ -97,7 +99,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-STAGES = ("sweep", "merge", "confirm", "importance", "all")
+STAGES = ("sweep", "merge", "confirm", "importance", "nested-select", "all")
 NORMALIZATIONS = ("zscore", "rank", "none")
 
 # Curated defaults. Ordered cheapest-first on purpose: the network-level cells
@@ -120,6 +122,12 @@ DEFAULT_ESTIMATORS = (
 )
 DEFAULT_NORMALIZATIONS = ("zscore", "rank")
 DEFAULT_BOUNDS = ((25, 75),)
+
+# Candidate set for the `nested-select` stage. Deliberately restricted to the
+# cheap, label-independent reductions: that stage re-runs selection inside all
+# 32 outer folds, so a candidate costs 32x what it does in the sweep.
+DEFAULT_SELECT_REDUCTIONS = ("yeo7-mean", "yeo7-meansd", "hemi-yeo7", "global-mean")
+DEFAULT_SELECT_ESTIMATORS = ("logistic:C=0.01", "logistic:C=1", "lda:shrinkage=auto")
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +470,7 @@ SWEEP_FIELDS = [
     "config_id", "inout", "normalization", "feature_set", "reduction", "estimator",
     "n_input_dims", "n_reduced_spatial", "n_features", "mean_auc", "median_auc",
     "std_auc", "ci95_low", "ci95_high", "n_above_chance", "n_subjects",
-    "wilcoxon_p", "mean_bacc", "seconds",
+    "wilcoxon_p", "wilcoxon_p_fdr", "mean_bacc", "seconds",
 ]
 
 
@@ -605,7 +613,15 @@ def stage_merge(out_base: Path) -> Path:
     folds_path = out_base.with_name(out_base.name + "_sweep-folds.npz")
     shard_csvs = sorted(out_base.parent.glob(out_base.name + "_sweep_shard-*.csv"))
     if not shard_csvs:
-        raise SystemExit(f"No shard CSVs to merge next to {out_base}")
+        # An unsharded sweep wrote the merged path directly. Merge is still
+        # worth running (it is what computes the grid-wide FDR), and the SLURM
+        # chain always calls it, so re-rank that file in place rather than
+        # failing and stranding confirm/importance behind an afterok.
+        if csv_path.exists():
+            logger.info(f"No shard CSVs; re-ranking unsharded {csv_path.name}")
+            shard_csvs = [csv_path]
+        else:
+            raise SystemExit(f"No sweep CSVs to merge next to {out_base}")
 
     rows: Dict[str, Dict] = {}
     for path in shard_csvs:
@@ -614,7 +630,10 @@ def stage_merge(out_base: Path) -> Path:
                 rows[r["config_id"]] = r
     fold_store: Dict[str, np.ndarray] = {}
     subjects = None
-    for path in sorted(out_base.parent.glob(out_base.name + "_sweep-folds_shard-*.npz")):
+    fold_paths = sorted(out_base.parent.glob(out_base.name + "_sweep-folds_shard-*.npz"))
+    if not fold_paths and folds_path.exists():
+        fold_paths = [folds_path]
+    for path in fold_paths:
         with np.load(path, allow_pickle=True) as npz:
             for k in npz.files:
                 if k.startswith("auc/"):
@@ -622,10 +641,25 @@ def stage_merge(out_base: Path) -> Path:
                 elif k == "subjects":
                     subjects = npz[k]
 
+    # The per-cell Wilcoxon is one test per cell; across a grid this size that
+    # needs correcting. BH across every cell that produced a p-value.
+    ranked = sorted(rows.values(), key=lambda r: -float(r.get("mean_auc") or 0))
+    have_p = [r for r in ranked if r.get("wilcoxon_p") not in (None, "", "nan")]
+    if have_p:
+        q = apply_fdr_correction(
+            np.array([float(r["wilcoxon_p"]) for r in have_p]), method="bh"
+        )
+        for r, qi in zip(have_p, q):
+            r["wilcoxon_p_fdr"] = float(qi)
+        logger.info(
+            f"FDR-BH across {len(have_p)} cell(s): "
+            f"{int((q < 0.05).sum())} significant at q<0.05"
+        )
+
     with csv_path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=SWEEP_FIELDS)
         w.writeheader()
-        for r in sorted(rows.values(), key=lambda r: -float(r.get("mean_auc") or 0)):
+        for r in ranked:
             w.writerow({k: r.get(k) for k in SWEEP_FIELDS})
     np.savez_compressed(
         folds_path,
@@ -893,6 +927,34 @@ def _importance_fold(X, y, groups, train, test, pipe, n_repeats, seed,
     return base, pattern, drops
 
 
+def _fold_significance(folds: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Wilcoxon vs 0 across folds for each column, plus BH-corrected q-values.
+
+    ``folds`` is ``(n_folds, n_blocks)``; under LOSO each row is one held-out
+    subject, so this asks "is this block's contribution consistently non-zero
+    across held-out subjects". The training sets overlap heavily between folds,
+    so treat these as consistency measures rather than strict independent
+    tests — the subject-level AUC in the confirm stage is the inferential
+    headline.
+    """
+    n_blocks = folds.shape[1]
+    pvals = np.full(n_blocks, np.nan)
+    for j in range(n_blocks):
+        col = folds[:, j]
+        col = col[np.isfinite(col)]
+        if len(col) < 2 or np.allclose(col, 0):
+            continue
+        try:
+            pvals[j] = float(stats.wilcoxon(col).pvalue)
+        except ValueError:
+            continue
+    finite = np.isfinite(pvals)
+    qvals = np.full(n_blocks, np.nan)
+    if finite.any():
+        qvals[finite] = apply_fdr_correction(pvals[finite], method="bh")
+    return pvals, qvals
+
+
 def stage_importance(cache: DataCache, feature_index, args, out_base: Path,
                      cell: Dict[str, str]) -> Path:
     """Haufe patterns + block permutation importance for one cell."""
@@ -948,14 +1010,26 @@ def stage_importance(cache: DataCache, feature_index, args, out_base: Path,
             ).reshape(n_spatial, n_features)
         payload["haufe_pattern_folds"] = patterns.reshape(len(patterns), n_spatial,
                                                           n_features)
+    if patterns.size and len(patterns) > 1:
+        # Is each (spatial, feature) cell of the pattern consistently signed
+        # across held-out subjects? BH across all cells of the pattern.
+        pp, pq = _fold_significance(patterns)
+        payload["haufe_pvalue"] = pp.reshape(n_spatial, n_features)
+        payload["haufe_pvalue_fdr"] = pq.reshape(n_spatial, n_features)
     if feat_drop.size:
         payload["importance_by_feature"] = feat_drop.mean(axis=0)
         payload["importance_by_feature_sem"] = stats.sem(feat_drop, axis=0)
         payload["importance_by_feature_folds"] = feat_drop
+        fp, fq = _fold_significance(feat_drop)
+        payload["importance_by_feature_pvalue"] = fp
+        payload["importance_by_feature_pvalue_fdr"] = fq
     if spat_drop.size:
         payload["importance_by_spatial"] = spat_drop.mean(axis=0)
         payload["importance_by_spatial_sem"] = stats.sem(spat_drop, axis=0)
         payload["importance_by_spatial_folds"] = spat_drop
+        sp_, sq = _fold_significance(spat_drop)
+        payload["importance_by_spatial_pvalue"] = sp_
+        payload["importance_by_spatial_pvalue_fdr"] = sq
 
     out_path = out_base.with_name(out_base.name + "_importance.npz")
     np.savez_compressed(out_path, **payload)
@@ -970,16 +1044,174 @@ def stage_importance(cache: DataCache, feature_index, args, out_base: Path,
         "git_hash": get_git_hash(),
     }, indent=2, default=str))
 
-    if feat_drop.size:
-        order = np.argsort(-payload["importance_by_feature"])[:5]
-        logger.info("importance: top features by AUC drop — " + ", ".join(
-            f"{feat_names[i]}={payload['importance_by_feature'][i]:+.4f}" for i in order
-        ))
-    if spat_drop.size:
-        order = np.argsort(-payload["importance_by_spatial"])[:5]
-        logger.info("importance: top spatial units by AUC drop — " + ", ".join(
-            f"{red_names[i]}={payload['importance_by_spatial'][i]:+.4f}" for i in order
-        ))
+    for label, names, key in (("features", feat_names, "importance_by_feature"),
+                              ("spatial units", red_names, "importance_by_spatial")):
+        if key not in payload:
+            continue
+        vals = payload[key]
+        q = payload.get(f"{key}_pvalue_fdr")
+        order = np.argsort(-vals)[:5]
+        logger.info(
+            f"importance: top {label} by AUC drop — " + ", ".join(
+                f"{names[i]}={vals[i]:+.4f}"
+                + (f" (q={q[i]:.3f})" if q is not None and np.isfinite(q[i]) else "")
+                for i in order
+            )
+        )
+        if q is not None:
+            logger.info(
+                f"importance: {int(np.nansum(q < 0.05))}/{len(q)} {label} "
+                f"significant at q<0.05 (BH over blocks)"
+            )
+    logger.info(f"Saved -> {out_path}")
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Stage: nested-select (selection inside the outer CV loop)
+# ---------------------------------------------------------------------------
+
+def _inner_select_score(X, y, groups, train, est_spec, pca_k, inner_splits, seed
+                        ) -> float:
+    """Mean inner-CV AUC of one candidate, fit only on the outer training set."""
+    Xtr, ytr, gtr = X[train], y[train], groups[train]
+    n_inner = min(inner_splits, len(np.unique(gtr)))
+    if n_inner < 2:
+        return float("nan")
+    est, _ = parse_estimator(est_spec, seed=seed)
+    pipe = make_pipeline(est, pca_k)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        scores = cross_val_score(
+            pipe, Xtr, ytr, cv=GroupKFold(n_splits=n_inner), groups=gtr,
+            scoring="roc_auc", n_jobs=1,
+        )
+    return float(np.mean(scores))
+
+
+def _outer_refit_score(X, pca_k, est_spec, y, train, test, seed) -> float:
+    """Refit the fold's chosen candidate on its training subjects, score the held-out one."""
+    est, _ = parse_estimator(est_spec, seed=seed)
+    auc, _ = _fold_auc(make_pipeline(est, pca_k), X[train], y[train],
+                       X[test], y[test])
+    return auc
+
+
+def stage_nested_select(cache: DataCache, feature_index, args, out_base: Path) -> Path:
+    """Leave-one-subject-out with the *whole cell choice* made inside each fold.
+
+    The sweep picks its winning cell by looking at all 32 subjects, so the
+    winner's own score is optimistic no matter how carefully the estimator
+    hyperparameter is nested. Here every outer fold re-runs the candidate
+    search on its 31 training subjects only (inner GroupKFold), picks a cell,
+    refits, and is scored once on the held-out subject. The resulting AUC
+    carries no selection leak at all, and the per-fold choices double as a
+    stability check on the winner.
+
+    Restricted to a single IN/OUT bound: different bounds retain different
+    windows, so their held-out sets are not comparable within one outer fold.
+    """
+    from joblib import Parallel, delayed
+
+    if len(args.inout_bounds) > 1:
+        logger.warning(
+            f"nested-select uses one IN/OUT bound; using {args.inout_bounds[0]} "
+            f"and ignoring {args.inout_bounds[1:]} (different bounds retain "
+            f"different windows, so their held-out sets are not comparable)."
+        )
+    bounds = args.inout_bounds[0]
+    cache.load(bounds)
+    y, groups = cache.y, cache.groups
+
+    candidates = [
+        (norm, fset, red, est)
+        for norm in args.normalizations
+        for fset in args.feature_sets
+        for red in args.reductions
+        for est in args.estimators
+    ]
+
+    # Build each (norm, feature_set, reduction) matrix once. All three are
+    # label-independent, so materializing them outside the outer loop is not
+    # leakage — only the estimator ever sees y.
+    mats: Dict[Tuple[str, str, str], Tuple[np.ndarray, Optional[int]]] = {}
+    for norm, fset, red in {(c[0], c[1], c[2]) for c in candidates}:
+        try:
+            X2d, _, _, pca_k = build_cell(cache, fset, red, feature_index, norm)
+        except ValueError as exc:
+            logger.warning(f"nested-select: dropping {norm}/{fset}/{red}: {exc}")
+            continue
+        mats[(norm, fset, red)] = (X2d, pca_k)
+    candidates = [c for c in candidates if (c[0], c[1], c[2]) in mats]
+    if not candidates:
+        raise SystemExit("nested-select: no usable candidates")
+
+    cand_ids = [f"{inout_bounds_to_string(bounds)}|{n}|{f}|{r}|{e}"
+                for n, f, r, e in candidates]
+    splits = list(LeaveOneGroupOut().split(np.zeros(len(y)), y, groups))
+    logger.info(
+        f"nested-select: {len(candidates)} candidate(s) x {len(splits)} outer "
+        f"fold(s), inner GroupKFold({args.inner_splits}) on the training subjects"
+    )
+
+    t0 = time.time()
+    flat_scores = Parallel(n_jobs=args.n_jobs)(
+        delayed(_inner_select_score)(
+            mats[(c[0], c[1], c[2])][0], y, groups, train, c[3],
+            mats[(c[0], c[1], c[2])][1], args.inner_splits, args.seed,
+        )
+        for train, _ in splits
+        for c in candidates
+    )
+    inner = np.asarray(flat_scores).reshape(len(splits), len(candidates))
+    logger.info(f"nested-select: inner search done [{time.time() - t0:.0f}s]")
+
+    chosen = np.nanargmax(np.where(np.isfinite(inner), inner, -np.inf), axis=1)
+    t0 = time.time()
+    outer_auc = np.asarray(Parallel(n_jobs=args.n_jobs)(
+        delayed(_outer_refit_score)(
+            *mats[candidates[k][:3]], candidates[k][3], y, train, test, args.seed
+        )
+        for k, (train, test) in zip(chosen, splits)
+    ))
+    logger.info(f"nested-select: outer scoring done [{time.time() - t0:.0f}s]")
+
+    summ = summarize(outer_auc)
+    chosen_ids = [cand_ids[k] for k in chosen]
+    counts: Dict[str, int] = {}
+    for cid in chosen_ids:
+        counts[cid] = counts.get(cid, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: -kv[1])
+
+    out_path = out_base.with_name(out_base.name + "_nested-select.npz")
+    np.savez_compressed(
+        out_path,
+        auc_per_subject=outer_auc,
+        subjects=np.unique(groups),
+        inner_scores=inner,
+        candidate_ids=np.asarray(cand_ids),
+        chosen_index=chosen,
+        chosen_ids=np.asarray(chosen_ids),
+    )
+    out_base.with_name(out_base.name + "_nested-select.json").write_text(json.dumps({
+        "inout_bounds": list(bounds),
+        "n_candidates": len(candidates),
+        "inner_splits": args.inner_splits,
+        "summary": summ,
+        "selection_counts": dict(top),
+        "timestamp": datetime.now().isoformat(),
+        "git_hash": get_git_hash(),
+    }, indent=2, default=str))
+
+    logger.info(
+        f"nested-select: AUC={summ['mean_auc']:.4f} "
+        f"[{summ.get('ci95_low', float('nan')):.4f}, "
+        f"{summ.get('ci95_high', float('nan')):.4f}]  "
+        f"n>0.5={summ['n_above_chance']}/{summ['n_subjects']}  "
+        f"wilcoxon p={summ.get('wilcoxon_p', float('nan')):.2e}"
+    )
+    for cid, n in top[:3]:
+        logger.info(f"nested-select: chosen in {n}/{len(splits)} folds — {cid}")
     logger.info(f"Saved -> {out_path}")
     return out_path
 
@@ -987,6 +1219,27 @@ def stage_importance(cache: DataCache, feature_index, args, out_base: Path,
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _resolve_cell(args, csv_path: Path) -> Dict[str, str]:
+    """The cell confirm/importance operate on: --cell if given, else the sweep winner."""
+    if args.cell:
+        parts = args.cell.split("|")
+        if len(parts) != 5:
+            raise SystemExit(
+                "--cell must be 'inout|normalization|feature_set|reduction|estimator'"
+            )
+        cell = dict(zip(
+            ["inout", "normalization", "feature_set", "reduction", "estimator"], parts
+        ))
+        cell["config_id"] = args.cell
+        return cell
+    if not csv_path.exists():
+        raise SystemExit(
+            f"No sweep results at {csv_path}. Run --stage sweep (then merge) "
+            f"first, or pass --cell explicitly."
+        )
+    return read_winner(csv_path, args.select_by)
+
 
 def _parse_bounds_arg(values: Sequence[str]) -> List[Tuple[int, int]]:
     out = []
@@ -1015,10 +1268,10 @@ def main():
     p.add_argument("--feature-sets", nargs="+", default=list(DEFAULT_FEATURE_SETS),
                    help="Feature-set shortcuts (psds, psds_corrected, fooof, "
                         "complexity, all). Their union is loaded once.")
-    p.add_argument("--reductions", nargs="+", default=list(DEFAULT_REDUCTIONS),
+    p.add_argument("--reductions", nargs="+", default=None,
                    help="flat | yeo7-mean | yeo7-meansd | hemi-yeo7 | global-mean "
                         "| pca-K | net-<Network>")
-    p.add_argument("--estimators", nargs="+", default=list(DEFAULT_ESTIMATORS),
+    p.add_argument("--estimators", nargs="+", default=None,
                    help="family[:k=v,...] — logistic, linearsvc, lda, hgb, rf")
     p.add_argument("--normalizations", nargs="+", default=list(DEFAULT_NORMALIZATIONS),
                    choices=list(NORMALIZATIONS))
@@ -1052,6 +1305,16 @@ def main():
                    help="Recompute sweep cells already present in the CSV.")
     args = p.parse_args()
 
+    # nested-select re-runs the candidate search inside all 32 outer folds, so
+    # a candidate costs 32x what it does in the sweep — it gets its own,
+    # deliberately cheaper default candidate set.
+    if args.stage == "nested-select":
+        args.reductions = args.reductions or list(DEFAULT_SELECT_REDUCTIONS)
+        args.estimators = args.estimators or list(DEFAULT_SELECT_ESTIMATORS)
+    else:
+        args.reductions = args.reductions or list(DEFAULT_REDUCTIONS)
+        args.estimators = args.estimators or list(DEFAULT_ESTIMATORS)
+
     config = load_config(Path(args.config))
     inout_selection = str(
         config.get("analysis", {}).get("inout_selection", DEFAULT_INOUT_STRATEGY)
@@ -1060,6 +1323,24 @@ def main():
         args.inout_bounds = _parse_bounds_arg(args.inout_bounds)
     else:
         args.inout_bounds = [tuple(config["analysis"]["inout_bounds"])]
+
+    data_root = Path(config["paths"]["data_root"])
+    out_dir = (Path(args.output_dir) if args.output_dir else
+               data_root / config["paths"]["results"]
+               / f"classification_{args.space}" / "group_sweep")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_base = build_output_base(out_dir, args.space, args.trial_type,
+                                 args.n_events_window, inout_selection)
+
+    # Resolve the target cell before loading anything when this process is not
+    # sweeping: confirm/importance need one cell's features, not the union of
+    # every swept feature set, which saves both the load time and the memory.
+    cell: Optional[Dict[str, str]] = None
+    csv_path = out_base.with_name(out_base.name + "_sweep.csv")
+    if args.stage in ("confirm", "importance"):
+        cell = _resolve_cell(args, csv_path)
+        args.feature_sets = [cell["feature_set"]]
+        args.inout_bounds = [_parse_inout(cell["inout"], args.inout_bounds)]
 
     # Union of every requested feature set, loaded once per bounds.
     feature_index: Dict[str, List[int]] = {}
@@ -1071,14 +1352,6 @@ def main():
     for fset in args.feature_sets:
         wanted = set(expand_feature_set(fset, config))
         feature_index[fset] = [i for i, f in enumerate(features) if f in wanted]
-
-    data_root = Path(config["paths"]["data_root"])
-    out_dir = (Path(args.output_dir) if args.output_dir else
-               data_root / config["paths"]["results"]
-               / f"classification_{args.space}" / "group_sweep")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_base = build_output_base(out_dir, args.space, args.trial_type,
-                                 args.n_events_window, inout_selection)
 
     logger.info("=" * 78)
     logger.info("CROSS-SUBJECT GENERALIZATION SWEEP (IN vs OUT)")
@@ -1104,7 +1377,6 @@ def main():
             f"--shard-idx={args.shard_idx} out of range for --n-shards={args.n_shards}"
         )
 
-    csv_path = out_base.with_name(out_base.name + "_sweep.csv")
     if args.stage in ("sweep", "all"):
         shard_csv = stage_sweep(cache, feature_index, args, out_base)
         if args.n_shards == 1:
@@ -1119,25 +1391,18 @@ def main():
     if args.stage == "merge":
         csv_path = stage_merge(out_base)
 
+    if args.stage == "nested-select":
+        stage_nested_select(cache, feature_index, args, out_base)
+        return
+
     if args.stage in ("confirm", "importance", "all"):
-        if args.cell:
-            parts = args.cell.split("|")
-            if len(parts) != 5:
-                raise SystemExit(
-                    "--cell must be 'inout|normalization|feature_set|reduction|estimator'"
-                )
-            cell = dict(zip(
-                ["inout", "normalization", "feature_set", "reduction", "estimator"],
-                parts,
-            ))
-            cell["config_id"] = args.cell
-        else:
-            if not csv_path.exists():
-                raise SystemExit(
-                    f"No sweep results at {csv_path}. Run --stage sweep first, "
-                    f"or pass --cell explicitly."
-                )
-            cell = read_winner(csv_path, args.select_by)
+        if cell is None:
+            cell = _resolve_cell(args, csv_path)
+        if cell["feature_set"] not in feature_index:
+            raise SystemExit(
+                f"Winning cell uses feature_set={cell['feature_set']!r}, which is "
+                f"not among --feature-sets {args.feature_sets}."
+            )
 
         if args.stage in ("confirm", "all"):
             stage_confirm(cache, feature_index, args, out_base, cell)
