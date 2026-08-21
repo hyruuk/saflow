@@ -78,10 +78,16 @@ def add_map_grid(
     *,
     left: float = 0.035,
     right: float = 0.90,
-    top: float = 0.84,
+    top: float | None = None,
     bottom: float = 0.12,
 ) -> list[plt.Axes]:
-    """Lay out one family of pre-rendered cortical composites on a slide."""
+    """Lay out one family of pre-rendered cortical composites on a slide.
+
+    Titles carrying a third line of inference counts grow upward into the
+    subtitle, so the grid drops by one line height for every line past two.
+    """
+    lines = max(title.count("\n") for title in titles) + 1
+    top = (0.84 - 0.05 * max(lines - 2, 0)) if top is None else top
     rows, columns = grid_shape(len(images))
     grid = figure.add_gridspec(
         rows, columns, left=left, right=right, top=top, bottom=bottom,
@@ -138,19 +144,31 @@ def add_heatmap_row(
     limit: float,
     bottom: float = 0.24,
     height: float = 0.55,
+    left: float = 0.185,
+    right: float = 0.885,
+    gap: float = 0.045,
 ) -> list[plt.Axes]:
-    """Draw side-by-side matrices sharing one scale, at slide typography."""
+    """Draw side-by-side matrices sharing one scale, at slide typography.
+
+    The left margin holds full-size row names, which at slide sizes are wider
+    than the gap between panels. Because every panel shares the same rows, only
+    the leftmost one prints them.
+    """
     count = len(panels)
-    span = (0.86 - 0.05 * (count - 1)) / count
+    span = (right - left - gap * (count - 1)) / count
     axes = []
     for index, (title, values, p_values) in enumerate(panels):
-        axis = figure.add_axes((0.055 + index * (span + 0.05), bottom, span, height))
+        axis = figure.add_axes((left + index * (span + gap), bottom, span, height))
         axis.imshow(values, cmap=color_map, vmin=-limit, vmax=limit, aspect="auto")
         axis.set_xticks(
             np.arange(len(column_labels)), list(column_labels),
             rotation=45, ha="right", fontsize=TICK_LABEL_SIZE,
         )
-        axis.set_yticks(np.arange(len(row_labels)), list(row_labels), fontsize=TICK_LABEL_SIZE)
+        axis.set_yticks(
+            np.arange(len(row_labels)),
+            list(row_labels) if index == 0 else [""] * len(row_labels),
+            fontsize=TICK_LABEL_SIZE,
+        )
         axis.set_title(title, fontsize=CELL_TITLE_SIZE, fontweight="semibold", pad=10)
         for row, column in np.argwhere(np.asarray(p_values) < 0.05):
             axis.text(column, row, "•", ha="center", va="center", fontsize=MARK_SIZE)

@@ -316,15 +316,13 @@ def _write_slides(
     directory = slide_style.slide_directory(reports_root, output.stem)
     provenance = {**sidecar, "renderer": "outcome-state supplement 16:9 slide renderer"}
     outputs = [_write_matrix_slide(directory, matrices, limit, provenance)]
-    index = 1
-    for outcome in CONTRAST_INDICES:
+    for position, outcome in enumerate(CONTRAST_INDICES):
         for family, family_label, selection in _FEATURE_FAMILIES:
-            index += 1
             outputs.append(
                 _write_map_slide(
                     directory,
-                    index,
-                    f"{'CD'[list(CONTRAST_INDICES).index(outcome)]}_{outcome}_{family}",
+                    len(outputs) + 1,
+                    f"{'CD'[position]}_{outcome}_{family}",
                     outcome,
                     family_label,
                     selection,
@@ -366,7 +364,7 @@ def _write_matrix_slide(
         limit,
         CMAP_T,
         "Paired t statistic",
-        bounds=(0.93, 0.28, 0.016, 0.47),
+        bounds=(0.94, 0.28, 0.016, 0.47),
         above="OUT > IN",
         below="IN > OUT",
     )
@@ -400,7 +398,7 @@ def _write_map_slide(
     titles = [
         f"{FEATURE_DISPLAY_NAMES[feature]}\n"
         f"{int(np.sum(p_values[:, selection.start + position] < 0.05))}/7 networks"
-        " FWER-significant"
+        " · p < 0.05"
         for position, feature in enumerate(features)
     ]
     slide_style.add_map_grid(figure, images[selection], titles)

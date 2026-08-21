@@ -401,14 +401,12 @@ def _write_slides(
         "renderer": "Correct-versus-Lapse supplement 16:9 slide renderer",
     }
     outputs = [_write_matrix_slide(directory, result, limit, provenance)]
-    index = 1
     for position, state in enumerate(STATE_ORDER):
         for family, family_label, selection in FEATURE_FAMILIES:
-            index += 1
             outputs.append(
                 _write_map_slide(
                     directory,
-                    index,
+                    len(outputs) + 1,
                     f"{'CD'[position]}_{state}_{family}",
                     state,
                     family_label,
@@ -462,7 +460,7 @@ def _write_matrix_slide(
         limit,
         correct_lapse_colormap(),
         "Paired t statistic",
-        bounds=(0.93, 0.28, 0.016, 0.47),
+        bounds=(0.94, 0.28, 0.016, 0.47),
         above="Lapse > Correct",
         below="Correct > Lapse",
         above_color=COLOR_LAPSE,
@@ -498,8 +496,7 @@ def _write_map_slide(
     )
     titles = [
         f"{FEATURE_DISPLAY_NAMES[feature]}\n"
-        f"{int(np.sum(p_values[selection.start + position] < 0.05))} parcels"
-        " FWER-significant · "
+        f"{int(np.sum(p_values[selection.start + position] < 0.05))} parcels · p < 0.05\n"
         f"{int(np.sum(stability[selection.start + position] >= 0.95))} ≥95% stable"
         for position, feature in enumerate(CORRECTED_FEATURES[selection])
     ]

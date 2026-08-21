@@ -116,6 +116,13 @@ to equal within-run counts and bootstraps participants. Render the resulting
 network heatmaps and genuine Schaefer-400 maps with `invoke viz.correct-vs-lapse`,
 which writes one panel per weighting by default.
 
+Both supplements also write native 2560x1440 slide exports under
+`figures/slides/<figure stem>/`: one slide carrying both network matrices, then
+one slide per outcome or state and inference family (aperiodic parameters and
+aperiodic-corrected PSD). Slide typography for every panel and supplement lives
+in `code/visualization/slide_style.py`, so titles, ticks, legends, and
+annotations are sized for projection rather than for the printed page.
+
 A production-ready, config-driven MEG analysis pipeline for processing gradual continuous performance task (gradCPT) data across sensor, source, and atlas analysis spaces.
 
 **Version**: 0.2.0
