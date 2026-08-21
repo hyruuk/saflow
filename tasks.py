@@ -4025,10 +4025,16 @@ def _multifeature_sweep_slurm(
     # core count: 40 x 8 cores schedules far sooner than 40 x 24 and finishes
     # the grid just as fast. confirm/importance are single jobs and can take
     # the bigger allocation (the permutation loop scales with cores).
+    #
+    # Memory, not cores, is what a shard actually runs out of: the tensor is
+    # ~0.8 GB in float32 and the normalization, the reduced 2-D matrix and one
+    # copy per joblib worker all stack on top of it, so the `all`/`flat` cells
+    # peak far above the resident tensor. 32G killed 28 of 40 shards on
+    # 2026-08-20; 96G leaves real headroom and still schedules quickly.
     cpus_resolved = slurm_cpus if slurm_cpus is not None else classification_resources.get("cpus", 24)
-    mem_resolved = slurm_mem if slurm_mem is not None else "64G"
+    mem_resolved = slurm_mem if slurm_mem is not None else "128G"
     shard_cpus = slurm_cpus if slurm_cpus is not None else 8
-    shard_mem = slurm_mem if slurm_mem is not None else "32G"
+    shard_mem = slurm_mem if slurm_mem is not None else "96G"
 
     base_resources = dict(
         account=slurm_config["account"],

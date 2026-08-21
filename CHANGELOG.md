@@ -1,5 +1,15 @@
 # Changelog
 
+- Export native 16:9 slide figures for both supplements (outcome-stratified
+  state modulation and Correct-versus-Lapse modulation): one network-matrix
+  slide plus one cortical-map slide per outcome/state and inference family,
+  each with its own caption file and provenance sidecar. Slide typography moved
+  to `code/visualization/slide_style.py`, and existing slide exports were
+  rescaled: Panel 2--4 slides no longer reuse 6--8 pt composite annotations
+  (titles, ticks, legends, labels, line widths, and markers are enlarged and
+  laid out with constrained layout at the same exact 2560x1440 size), and the
+  Panel 1 slide renderer now draws from the same shared sizes.
+
 - Lower the Correct-versus-Lapse eligibility threshold to two windows per cell
   and compute three participant weightings over the shared eligible cohort:
   `equal_subject` (primary, unchanged behaviour), `equal_window` (participants

@@ -735,8 +735,12 @@ def standardize_within_subject(
     Works for 2D (n_trials, n_spatial) and 3D (n_trials, n_spatial, n_features)
     X. Spatial units with zero within-subject std are left unchanged (sd→1).
     NaN-aware via np.nanmean / np.nanstd.
+
+    A floating-point ``X`` keeps its own dtype: callers that hand in float32 to
+    halve the memory of a large tensor must not get a float64 copy back.
     """
-    X = X.astype(float, copy=True)
+    out_dtype = X.dtype if np.issubdtype(X.dtype, np.floating) else float
+    X = X.astype(out_dtype, copy=True)
     for g in np.unique(groups):
         idx = groups == g
         with warnings.catch_warnings():

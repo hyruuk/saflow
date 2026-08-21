@@ -49,6 +49,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
 import json
 import logging
@@ -104,6 +105,14 @@ logger = logging.getLogger(__name__)
 STAGES = ("prep", "sweep", "merge", "confirm", "importance", "nested-select", "all")
 NORMALIZATIONS = ("zscore", "rank", "none")
 
+# The feature tensor is the dominant memory cost of a shard: (22368, 400, 23)
+# is 1.6 GB in float64 and every normalization/reduction of it is another copy
+# of the same order. float32 has ~7 significant digits, which is far more than
+# log-power, aperiodic-fit and entropy features carry, and scikit-learn's
+# linear estimators accept it natively (no silent upcast in the fit), so
+# holding the tensor in float32 halves the whole chain of copies for free.
+TENSOR_DTYPE = np.float32
+
 # Curated defaults. Ordered cheapest-first on purpose: the network-level cells
 # cost well under a second each while `flat` (400 parcels x 23 features = 9200
 # dims for the full stack) costs
@@ -145,8 +154,12 @@ def rank_within_subject(X: np.ndarray, groups: np.ndarray, seed: int = 42) -> np
     robust to the heavy tails of log-power and complexity features. Applied
     outside CV; it only ever touches one subject's own X, never y, so no label
     information crosses the LOSO boundary.
+
+    Keeps ``X``'s own floating dtype rather than forcing float64, so a float32
+    tensor does not double in size just by being normalized.
     """
-    X = X.astype(float, copy=True)
+    out_dtype = X.dtype if np.issubdtype(X.dtype, np.floating) else float
+    X = X.astype(out_dtype, copy=True)
     orig_shape = X.shape
     for g in np.unique(groups):
         idx = groups == g
@@ -463,9 +476,13 @@ class DataCache:
         except Exception as exc:  # a truncated cache must never be fatal
             logger.warning(f"tensor cache {x_path.name} unreadable ({exc}); reloading")
             return False
-        self.X = X
+        # Caches written before the float32 switch are still float64 on disk;
+        # cast on read so an old cache does not reintroduce the memory blow-up.
+        self.X = np.asarray(X, dtype=TENSOR_DTYPE)
+        del X   # release the float64 original before the caller allocates more
         logger.info(
-            f"tensor cache hit: {x_path.name}  X={X.shape}  [{time.time() - t0:.0f}s]"
+            f"tensor cache hit: {x_path.name}  X={self.X.shape} "
+            f"{self.X.dtype}  [{time.time() - t0:.0f}s]"
         )
         return True
 
@@ -521,7 +538,7 @@ class DataCache:
                 trial_type=self.trial_type, n_events_window=self.n_events_window,
                 inout_selection=self.inout_selection,
             )
-            self.X = np.asarray(X, dtype=float)
+            self.X = np.asarray(X, dtype=TENSOR_DTYPE)
             self.y, self.groups, self.metadata = y, groups, meta
             names = meta.get("spatial_names")
             self.spatial_names = list(names) if names is not None else [
@@ -539,7 +556,18 @@ class DataCache:
         )
 
     def normalized(self, mode: str) -> np.ndarray:
+        """Materialize one per-subject normalization, evicting the previous one.
+
+        Only one mode is ever resident. Keeping them all cost a full extra copy
+        of X per mode, and on 2026-08-20 that killed 28 of 40 shards: each one
+        died at the exact cell where `rank` was materialized on top of a
+        still-live `zscore`. ``enumerate_cells`` has normalization as its
+        outermost axis after the bounds and ``shard_cells`` preserves that
+        order, so a shard visits each mode in one contiguous block and eviction
+        costs no recomputation.
+        """
         if mode not in self._norm_cache:
+            self._norm_cache.clear()   # drop the previous mode before allocating
             t0 = time.time()
             self._norm_cache[mode] = apply_normalization(
                 self.X, self.groups, mode, seed=self.seed
@@ -708,8 +736,39 @@ def stage_sweep(cache: DataCache, feature_index: Dict[str, List[int]],
     return csv_path
 
 
-def stage_merge(out_base: Path, n_shards: int = 0) -> Path:
-    """Fold per-shard sweep outputs into one ranked CSV + one folds npz."""
+def _log_grid_coverage(rows: Dict[str, Dict], expected_cells: Sequence[Tuple]) -> float:
+    """Log how much of the full grid landed, per axis. Returns the fraction.
+
+    A shard that is killed mid-run still leaves a CSV, because the sweep
+    flushes after every cell — so counting shard *files* says nothing about
+    whether the grid is complete. Only counting cells does. The per-axis
+    breakdown matters as much as the total: cells are enumerated with
+    normalization outermost, so a systematic kill wipes out whole levels of an
+    axis rather than a random sample of the grid, and a winner picked from
+    what survived is then a winner of a different competition than the one
+    that was configured.
+    """
+    axes = (("normalization", 1), ("feature_set", 2), ("reduction", 3),
+            ("estimator", 4))
+    got = list(rows.values())
+    for name, pos in axes:
+        want = collections.Counter(c[pos] for c in expected_cells)
+        have = collections.Counter(str(r.get(name)) for r in got)
+        parts = [f"{lvl} {have.get(lvl, 0)}/{n}" for lvl, n in sorted(want.items())]
+        logger.info(f"  coverage by {name}: {', '.join(parts)}")
+    return len(got) / len(expected_cells) if expected_cells else 1.0
+
+
+def stage_merge(out_base: Path, n_shards: int = 0,
+                expected_cells: Optional[Sequence[Tuple]] = None,
+                min_grid_fraction: float = 0.9) -> Path:
+    """Fold per-shard sweep outputs into one ranked CSV + one folds npz.
+
+    Fails if fewer than ``min_grid_fraction`` of the configured cells landed,
+    *after* writing what did — the partial CSV stays on disk to inspect, but
+    the non-zero exit stops the ``afterok`` chain from running confirm and
+    importance on a winner chosen from a truncated grid.
+    """
     csv_path = out_base.with_name(out_base.name + "_sweep.csv")
     folds_path = out_base.with_name(out_base.name + "_sweep-folds.npz")
     shard_csvs = sorted(out_base.parent.glob(out_base.name + "_sweep_shard-*.csv"))
@@ -783,6 +842,23 @@ def stage_merge(out_base: Path, n_shards: int = 0) -> Path:
     logger.info(
         f"Merged {len(shard_csvs)} shard(s), {len(rows)} cell(s) -> {csv_path}"
     )
+    if expected_cells:
+        frac = _log_grid_coverage(rows, expected_cells)
+        logger.info(
+            f"Grid coverage: {len(rows)}/{len(expected_cells)} cell(s) "
+            f"({100 * frac:.1f}%)"
+        )
+        if frac < min_grid_fraction:
+            raise SystemExit(
+                f"Only {len(rows)}/{len(expected_cells)} cell(s) "
+                f"({100 * frac:.1f}%) of the sweep grid completed, below "
+                f"--min-grid-fraction={min_grid_fraction}. {csv_path.name} was "
+                f"still written, so check the per-axis coverage above and the "
+                f"shard logs (a killed shard leaves a partial CSV, so the "
+                f"shard count alone will not show this). Re-run the short "
+                f"shards — completed cells are skipped on re-run — then merge "
+                f"again. Pass --min-grid-fraction 0 to accept the grid as is."
+            )
     return csv_path
 
 
@@ -1249,7 +1325,10 @@ def stage_nested_select(cache: DataCache, feature_index, args, out_base: Path) -
     # label-independent, so materializing them outside the outer loop is not
     # leakage — only the estimator ever sees y.
     mats: Dict[Tuple[str, str, str], Tuple[np.ndarray, Optional[int]]] = {}
-    for norm, fset, red in {(c[0], c[1], c[2]) for c in candidates}:
+    # Sorted, not set order: `normalized` holds one mode at a time, so visiting
+    # the normalizations in interleaved order would rebuild each one repeatedly
+    # (a `rank` pass over the full tensor costs minutes).
+    for norm, fset, red in sorted({(c[0], c[1], c[2]) for c in candidates}):
         try:
             X2d, _, _, pca_k = build_cell(cache, fset, red, feature_index, norm)
         except ValueError as exc:
@@ -1407,6 +1486,11 @@ def main():
                         "--stage merge afterwards to combine them.")
     p.add_argument("--shard-idx", type=int, default=0,
                    help="Which shard this process evaluates (0-based).")
+    p.add_argument("--min-grid-fraction", type=float, default=0.9,
+                   help="Fail --stage merge if fewer than this fraction of the "
+                        "configured grid cells completed. Not 1.0 because "
+                        "--nonlinear-max-dims legitimately skips a few cells; "
+                        "0 disables the check.")
     p.add_argument("--nonlinear-max-dims", type=int, default=2000,
                    help=f"Skip {'/'.join(NONLINEAR_FAMILIES)} cells whose input "
                         f"exceeds this many dimensions (default 2000).")
@@ -1527,7 +1611,11 @@ def main():
             )
 
     if args.stage == "merge":
-        csv_path = stage_merge(out_base, n_shards=args.n_shards)
+        csv_path = stage_merge(
+            out_base, n_shards=args.n_shards,
+            expected_cells=enumerate_cells(args),
+            min_grid_fraction=args.min_grid_fraction,
+        )
 
     if args.stage == "nested-select":
         stage_nested_select(cache, feature_index, args, out_base)

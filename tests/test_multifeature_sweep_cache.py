@@ -132,10 +132,38 @@ def test_tensor_cache_roundtrip(tmp_path, fake_features):
     second = _cache(tmp_path, features)
     second.load((25, 75))
     assert calls["n"] == 1, "second load must come from the tensor cache"
-    np.testing.assert_array_equal(second.X, X)
+    # The tensor is deliberately held in float32 (see TENSOR_DTYPE): the round
+    # trip is exact to that precision, not to the float64 the fake loader
+    # returns.
+    assert first.X.dtype == S.TENSOR_DTYPE
+    assert second.X.dtype == S.TENSOR_DTYPE
+    np.testing.assert_allclose(second.X, X, rtol=1e-6, atol=0)
+    np.testing.assert_array_equal(second.X, first.X)
     np.testing.assert_array_equal(second.y, y)
     np.testing.assert_array_equal(second.groups, groups)
     assert second.spatial_names == first.spatial_names
+
+
+def test_legacy_float64_cache_is_downcast_on_read(tmp_path, fake_features):
+    """A cache file written before the float32 switch must not reinflate X.
+
+    Old caches on /scratch are float64. Reading one back as float64 would put
+    the shard right back at the memory ceiling that killed the 2026-08-20 run,
+    so the read casts.
+    """
+    X, y, groups, _ = fake_features
+    features = ["a", "b", "c"]
+
+    cache = _cache(tmp_path, features)
+    cache.load((25, 75))
+    x_path, _ = S._cache_files(cache._cache_stem((25, 75)))
+    np.save(x_path, np.asarray(X, dtype=np.float64))   # simulate a legacy file
+    assert np.load(x_path).dtype == np.float64
+
+    reloaded = _cache(tmp_path, features)
+    reloaded.load((25, 75))
+    assert reloaded.X.dtype == S.TENSOR_DTYPE
+    np.testing.assert_allclose(reloaded.X, X, rtol=1e-6, atol=0)
 
 
 def test_tensor_cache_is_keyed_on_the_feature_list(tmp_path, fake_features):
@@ -170,3 +198,111 @@ def test_unreadable_cache_falls_back_to_the_loader(tmp_path, fake_features):
 
     _cache(tmp_path, features).load((25, 75))
     assert calls["n"] == 2
+
+
+def test_only_one_normalization_is_resident(tmp_path, fake_features):
+    """Materializing a second normalization must free the first.
+
+    Holding every mode at once cost a full extra copy of X per mode. On
+    2026-08-20 that killed 28 of 40 shards, each at the exact cell where
+    `rank` was built on top of a still-live `zscore`.
+    """
+    _, _, _, _ = fake_features
+    cache = _cache(tmp_path, ["a", "b", "c"])
+    cache.load((25, 75))
+
+    zscored = cache.normalized("zscore")
+    assert list(cache._norm_cache) == ["zscore"]
+    ranked = cache.normalized("rank")
+    assert list(cache._norm_cache) == ["rank"], "zscore must have been evicted"
+
+    # Both are real normalizations of the same tensor, not views of it.
+    assert zscored.dtype == S.TENSOR_DTYPE
+    assert ranked.dtype == S.TENSOR_DTYPE
+    assert not np.shares_memory(ranked, cache.X)
+
+
+def test_normalizations_are_visited_in_contiguous_blocks():
+    """Eviction is only free because a shard sees each mode once.
+
+    ``enumerate_cells`` puts normalization outermost after the bounds and
+    ``shard_cells`` preserves that order, so every shard runs all of one mode
+    before starting the next. If that ever stops holding, eviction would
+    rebuild `rank` — minutes of work — many times per shard.
+    """
+    import types
+    args = types.SimpleNamespace(
+        inout_bounds=[(25, 75)], normalizations=["zscore", "rank"],
+        feature_sets=["all", "psds"], reductions=["yeo7-mean", "flat"],
+        estimators=["logistic:C=1", "lda:shrinkage=auto"])
+    cells = S.enumerate_cells(args)
+    for idx in range(4):
+        norms = [c[1] for c in S.shard_cells(cells, 4, idx)]
+        # collapse runs of equal values; one run per distinct mode is the goal
+        runs = [n for i, n in enumerate(norms) if i == 0 or n != norms[i - 1]]
+        assert len(runs) == len(set(runs)), f"shard {idx} interleaves: {norms}"
+
+
+def _write_shard_csv(out_base, idx, n_shards, cells):
+    import csv
+    path = out_base.with_name(out_base.name + f"_sweep_shard-{idx}of{n_shards}.csv")
+    with path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=S.SWEEP_FIELDS)
+        w.writeheader()
+        for bounds, norm, fset, red, est in cells:
+            w.writerow({
+                "config_id": S._config_id(bounds, norm, fset, red, est),
+                "inout": S.inout_bounds_to_string(bounds), "normalization": norm,
+                "feature_set": fset, "reduction": red, "estimator": est,
+                "mean_auc": 0.55, "wilcoxon_p": 0.01,
+            })
+    return path
+
+
+@pytest.fixture
+def sweep_grid():
+    import types
+    args = types.SimpleNamespace(
+        inout_bounds=[(25, 75)], normalizations=["zscore", "rank"],
+        feature_sets=["all", "psds"], reductions=["yeo7-mean", "flat"],
+        estimators=["logistic:C=1", "lda:shrinkage=auto"])
+    return S.enumerate_cells(args)
+
+
+def test_merge_rejects_a_truncated_grid(tmp_path, sweep_grid):
+    """A killed shard still leaves a CSV, so merge must count cells, not files.
+
+    On 2026-08-20 merge logged "Merging 40/40 shard CSV(s)" and picked a winner
+    from 424 of 700 cells, two thirds of the `rank` arm missing, and confirm
+    and importance then ran to exit 0 on it.
+    """
+    out_base = tmp_path / "space-x_type-alltrials_w8_sweep"
+    survivors = ([c for c in sweep_grid if c[1] == "zscore"]
+                 + [c for c in sweep_grid if c[1] == "rank"][:2])
+    _write_shard_csv(out_base, 0, 2, survivors[::2])
+    _write_shard_csv(out_base, 1, 2, survivors[1::2])
+
+    with pytest.raises(SystemExit, match="of the sweep grid completed"):
+        S.stage_merge(out_base, n_shards=2, expected_cells=sweep_grid,
+                      min_grid_fraction=0.9)
+
+    # The partial merge is still written, so the run can be inspected.
+    merged = out_base.with_name(out_base.name + "_sweep.csv")
+    assert merged.exists()
+
+
+def test_merge_accepts_a_complete_grid(tmp_path, sweep_grid):
+    out_base = tmp_path / "space-x_type-alltrials_w8_sweep"
+    _write_shard_csv(out_base, 0, 2, sweep_grid[::2])
+    _write_shard_csv(out_base, 1, 2, sweep_grid[1::2])
+    csv_path = S.stage_merge(out_base, n_shards=2, expected_cells=sweep_grid,
+                             min_grid_fraction=0.9)
+    assert csv_path.exists()
+
+
+def test_merge_gate_is_opt_out(tmp_path, sweep_grid):
+    """--min-grid-fraction 0 must let a deliberately partial grid through."""
+    out_base = tmp_path / "space-x_type-alltrials_w8_sweep"
+    _write_shard_csv(out_base, 0, 2, sweep_grid[:3])
+    S.stage_merge(out_base, n_shards=2, expected_cells=sweep_grid,
+                  min_grid_fraction=0.0)

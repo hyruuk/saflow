@@ -26,6 +26,7 @@ from code.utils.yeo_networks import (
     get_network_assignments,
     network_display_name,
 )
+from code.visualization import slide_style
 from code.visualization.panel1_bundle import _add_colorbar
 from code.visualization.plot_surface import _get_fsaverage_surfaces
 from code.visualization.stats_classif_panel import CMAP_T, _plot_brain
@@ -36,6 +37,10 @@ OUTCOME_LABELS = {
     "correct_omission": "Correct omissions (CO)",
     "commission_error": "Commission errors (CE)",
 }
+_FEATURE_FAMILIES = (
+    ("aperiodic", "aperiodic parameters", slice(0, 2)),
+    ("corrected_psd", "aperiodic-corrected PSD", slice(2, len(CORRECTED_FEATURES))),
+)
 CAPTION = (
     "Supplementary Figure X. Outcome-stratified attentional-state modulation. "
     "Yeo-7 network summaries compare OUT minus IN separately for windows anchored "
@@ -118,18 +123,19 @@ def render_outcome_state_panel(
     bundle_directory: Path,
     reports_root: Path,
     output_name: str = "supplement_outcome_state_modulation.png",
-) -> Path:
-    """Render heatmap overviews and all 18 cortical feature maps."""
+) -> list[Path]:
+    """Render the manuscript supplement and its native 16:9 slide exports."""
     arrays, metadata = load_outcome_arrays(bundle_directory)
     output = reports_root / "figures" / "manuscript" / output_name
     output.parent.mkdir(parents=True, exist_ok=True)
     matrices = {outcome: outcome_matrices(arrays, outcome) for outcome in CONTRAST_INDICES}
     limit = _shared_limit([result[0] for result in matrices.values()])
-    figure = _draw_panel(arrays, matrices, limit, reports_root)
+    figure, brains = _draw_panel(arrays, matrices, limit, reports_root)
     figure.savefig(output, dpi=300, facecolor="white", bbox_inches="tight")
     plt.close(figure)
-    _write_artifacts(output, bundle_directory, metadata, arrays)
-    return output
+    sidecar = _write_artifacts(output, bundle_directory, metadata, arrays)
+    slides = _write_slides(output, reports_root, matrices, brains, limit, sidecar)
+    return [output, *slides]
 
 
 def _draw_panel(
@@ -137,7 +143,7 @@ def _draw_panel(
     matrices: dict[str, tuple[np.ndarray, np.ndarray]],
     limit: float,
     reports_root: Path,
-) -> plt.Figure:
+) -> tuple[plt.Figure, dict[str, list[np.ndarray]]]:
     """Compose two overview matrices and two nine-map cortical rows."""
     figure = plt.figure(figsize=(20, 10.5), facecolor="white")
     grid = GridSpec(
@@ -153,13 +159,14 @@ def _draw_panel(
         hspace=0.35,
         wspace=0.12,
     )
+    brains: dict[str, list[np.ndarray]] = {}
     for column, outcome in enumerate(CONTRAST_INDICES):
         values, p_values = matrices[outcome]
         axis = figure.add_axes((0.065 + 0.515 * column, 0.69, 0.39, 0.22))
         _plot_heatmap(
             axis, values, p_values, f"{'AB'[column]}  {OUTCOME_LABELS[outcome]}: OUT−IN", limit
         )
-        _plot_brain_row(
+        brains[outcome] = _plot_brain_row(
             figure,
             grid,
             column + 1,
@@ -171,7 +178,7 @@ def _draw_panel(
             reports_root / ".cache" / "outcome_state_surface",
         )
     figure.suptitle("Outcome-stratified attentional-state modulation", fontsize=16)
-    return figure
+    return figure, brains
 
 
 def _plot_heatmap(
@@ -199,11 +206,12 @@ def _plot_brain_row(
     outcome: str,
     limit: float,
     cache_directory: Path,
-) -> None:
+) -> list[np.ndarray]:
     """Render all nine network-level effects on Schaefer cortical surfaces."""
     parcel_order = arrays["parcel_order"].astype(str).tolist()
     assignments = get_network_assignments(parcel_order, n_networks=7)
     fsaverage = _get_fsaverage_surfaces()
+    images: list[np.ndarray] = []
     for feature_index, feature in enumerate(CORRECTED_FEATURES):
         axis = figure.add_subplot(grid[row, feature_index * 2 : feature_index * 2 + 2])
         parcel_values = _network_to_parcels(values[:, feature_index], assignments)
@@ -219,6 +227,7 @@ def _plot_brain_row(
             CMAP_T,
             cache_directory=cache_directory,
         )
+        images.append(slide_style.brain_image(axis))
         significant_n = int(np.sum(p_values[:, feature_index] < 0.05))
         star = " *" if significant_n else ""
         axis.set_title(
@@ -238,6 +247,7 @@ def _plot_brain_row(
         fontsize=10,
         fontweight="bold",
     )
+    return images
 
 
 def _network_to_parcels(network_values: np.ndarray, assignments: np.ndarray) -> np.ndarray:
@@ -266,7 +276,7 @@ def _write_artifacts(
     bundle_directory: Path,
     metadata: dict[str, Any],
     arrays: dict[str, np.ndarray],
-) -> None:
+) -> dict[str, Any]:
     """Write caption, all-test table, and compact provenance sidecar."""
     summary = metadata.get("summary", {})
     provenance = metadata.get("provenance", metadata)
@@ -287,6 +297,123 @@ def _write_artifacts(
         "significance_table": str(table),
     }
     output.with_suffix(".json").write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n")
+    slide_caption = slide_style.slide_directory(
+        output.parents[2], output.stem
+    ) / f"{output.stem}.txt"
+    slide_caption.write_text(CAPTION.format(subject_n=subject_n))
+    return sidecar
+
+
+def _write_slides(
+    output: Path,
+    reports_root: Path,
+    matrices: dict[str, tuple[np.ndarray, np.ndarray]],
+    brains: dict[str, list[np.ndarray]],
+    limit: float,
+    sidecar: dict[str, Any],
+) -> list[Path]:
+    """Render one 16:9 slide per matrix overview and per inference family."""
+    directory = slide_style.slide_directory(reports_root, output.stem)
+    provenance = {**sidecar, "renderer": "outcome-state supplement 16:9 slide renderer"}
+    outputs = [_write_matrix_slide(directory, matrices, limit, provenance)]
+    index = 1
+    for outcome in CONTRAST_INDICES:
+        for family, family_label, selection in _FEATURE_FAMILIES:
+            index += 1
+            outputs.append(
+                _write_map_slide(
+                    directory,
+                    index,
+                    f"{'CD'[list(CONTRAST_INDICES).index(outcome)]}_{outcome}_{family}",
+                    outcome,
+                    family_label,
+                    selection,
+                    matrices[outcome][1],
+                    brains[outcome],
+                    limit,
+                    provenance,
+                )
+            )
+    return outputs
+
+
+def _write_matrix_slide(
+    directory: Path,
+    matrices: dict[str, tuple[np.ndarray, np.ndarray]],
+    limit: float,
+    provenance: dict[str, Any],
+) -> Path:
+    """Show both complete network-by-feature matrices on one slide."""
+    figure = slide_style.new_slide(
+        "Outcome-stratified attentional-state modulation",
+        "Paired OUT − IN t statistics · Yeo-7 networks × spectral features "
+        f"· {provenance['subject_n']} participants",
+    )
+    slide_style.add_heatmap_row(
+        figure,
+        [
+            (f"{OUTCOME_LABELS[outcome]}: OUT − IN", *matrices[outcome])
+            for outcome in CONTRAST_INDICES
+        ],
+        _network_labels(),
+        _feature_labels(),
+        color_map=CMAP_T,
+        limit=limit,
+    )
+    slide_style.add_colorbar(
+        figure,
+        -limit,
+        limit,
+        CMAP_T,
+        "Paired t statistic",
+        bounds=(0.93, 0.28, 0.016, 0.47),
+        above="OUT > IN",
+        below="IN > OUT",
+    )
+    slide_style.add_footer(
+        figure,
+        "Dots mark synchronized maximum-|t| FWER p < 0.05; the FOOOF and "
+        "corrected-PSD families were corrected separately",
+    )
+    return slide_style.save_slide(figure, directory, 1, "A-B_network_matrices", provenance)
+
+
+def _write_map_slide(
+    directory: Path,
+    index: int,
+    name: str,
+    outcome: str,
+    family_label: str,
+    selection: slice,
+    p_values: np.ndarray,
+    images: list[np.ndarray],
+    limit: float,
+    provenance: dict[str, Any],
+) -> Path:
+    """Show one outcome and one inference family across cortical maps."""
+    features = CORRECTED_FEATURES[selection]
+    figure = slide_style.new_slide(
+        f"{OUTCOME_LABELS[outcome]}: OUT − IN {family_label}",
+        "Yeo-7 network statistics painted on Schaefer-400 parcels · "
+        f"equal-window weighting · {provenance['subject_n']} participants",
+    )
+    titles = [
+        f"{FEATURE_DISPLAY_NAMES[feature]}\n"
+        f"{int(np.sum(p_values[:, selection.start + position] < 0.05))}/7 networks"
+        " FWER-significant"
+        for position, feature in enumerate(features)
+    ]
+    slide_style.add_map_grid(figure, images[selection], titles)
+    slide_style.add_colorbar(
+        figure, -limit, limit, CMAP_T, "Paired t statistic",
+        above="OUT > IN", below="IN > OUT",
+    )
+    slide_style.add_footer(
+        figure,
+        "Surfaces are unthresholded; counts reuse the synchronized maximum-|t| "
+        "FWER inference of the network family",
+    )
+    return slide_style.save_slide(figure, directory, index, name, provenance)
 
 
 def _write_significance_table(path: Path, arrays: dict[str, np.ndarray]) -> None:
@@ -326,10 +453,12 @@ def main() -> None:
     args = build_parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     analysis = resolve_analysis_directory(args.analysis_root, args.analysis_id)
-    output = render_outcome_state_panel(
+    outputs = render_outcome_state_panel(
         analysis / "network_dynamics", args.reports_root, args.output_name
     )
-    LOGGER.info("Wrote outcome-state panel to %s", output)
+    LOGGER.info("Wrote outcome-state panel to %s", outputs[0])
+    for slide in outputs[1:]:
+        LOGGER.info("Wrote outcome-state slide to %s", slide)
 
 
 if __name__ == "__main__":

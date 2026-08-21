@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 from code.analysis.contracts import CANONICAL_BANDS
+from code.visualization import slide_style
 from code.visualization.plot_surface import _get_fsaverage_surfaces
 from code.visualization.stats_classif_panel import (
     CMAP_AUC,
@@ -378,11 +379,14 @@ def _write_spatial_slide(
     labels: list[str], decoding: bool,
 ) -> Path:
     """Render one large slide-native spatial-map family."""
-    figure = plt.figure(figsize=(16, 9), dpi=160, facecolor="white")
-    figure.suptitle(title, fontsize=25, fontweight="bold", y=0.965)
+    figure = plt.figure(
+        figsize=slide_style.SLIDE_FIGSIZE, dpi=slide_style.SLIDE_DPI, facecolor="white"
+    )
+    figure.suptitle(title, fontsize=slide_style.TITLE_SIZE, fontweight="bold", y=0.965)
     figure.text(
         0.5, 0.905, _slide_subtitle(common, decoding),
-        ha="center", va="center", fontsize=13, color="#444444",
+        ha="center", va="center",
+        fontsize=slide_style.SUBTITLE_SIZE, color=slide_style.SUBTITLE_COLOR,
     )
     rows, columns = ((2, 4) if len(labels) > 4 else (1, len(labels)))
     grid = figure.add_gridspec(
@@ -398,13 +402,17 @@ def _write_spatial_slide(
         axis.set_axis_off()
         axis.set_title(
             f"{label}\n{int(mask.sum())} significant parcels",
-            fontsize=14 if len(labels) > 4 else 18, pad=7, fontweight="semibold",
+            fontsize=(
+                slide_style.CELL_TITLE_SIZE if len(labels) > 4
+                else slide_style.LARGE_CELL_TITLE_SIZE
+            ),
+            pad=7, fontweight="semibold",
         )
     color_axis = figure.add_axes([0.925, 0.22, 0.018, 0.52])
     _add_slide_colorbar(figure, color_axis, minimum, maximum, color_map, decoding)
     figure.text(
         0.5, 0.045, _slide_footer(common, decoding),
-        ha="center", fontsize=11.5, color="#444444",
+        ha="center", fontsize=slide_style.FOOTER_SIZE, color=slide_style.FOOTER_COLOR,
     )
     return _save_slide(figure, reports_root, index, name, common)
 
@@ -429,15 +437,17 @@ def _write_spectral_progression_slide(
     frequency = np.asarray(arrays["frequency"], dtype=float)
     frequency_mask = np.isfinite(frequency) & (frequency >= 2.0) & (frequency <= 120.0)
     frequency = frequency[frequency_mask]
-    figure = plt.figure(figsize=(16, 9), dpi=160, facecolor="white")
+    figure = plt.figure(
+        figsize=slide_style.SLIDE_FIGSIZE, dpi=slide_style.SLIDE_DPI, facecolor="white"
+    )
     figure.suptitle(
         "Spectral decomposition of attentional-state effects",
-        fontsize=25, fontweight="bold", y=0.97,
+        fontsize=slide_style.TITLE_SIZE, fontweight="bold", y=0.97,
     )
     figure.text(
         0.5, 0.915,
         f"IN vs OUT · {_weighting_label(common)} · {_uncertainty_label(common)}",
-        ha="center", fontsize=13, color="#444444",
+        ha="center", fontsize=slide_style.SUBTITLE_SIZE, color=slide_style.SUBTITLE_COLOR,
     )
     cells = (
         ("Original spectrum", "raw", (0.045, 0.23, 0.23, 0.56)),
@@ -455,11 +465,11 @@ def _write_spectral_progression_slide(
         )
         figure.text(
             bounds[0], bounds[1] + bounds[3] + 0.015,
-            title, fontsize=15, fontweight="bold", ha="left",
+            title, fontsize=slide_style.CELL_TITLE_SIZE, fontweight="bold", ha="left",
         )
         if key in {"raw", "corrected"}:
-            axis.set_ylabel("PSD (log$_{10}$)", fontsize=12)
-        difference_axis.set_xlabel("Frequency (Hz)", fontsize=11)
+            axis.set_ylabel("PSD (log$_{10}$)", fontsize=slide_style.AXIS_LABEL_SIZE)
+        difference_axis.set_xlabel("Frequency (Hz)", fontsize=slide_style.AXIS_LABEL_SIZE)
     overlay = figure.add_axes([0, 0, 1, 1], frameon=False)
     overlay.set_axis_off()
     _flow_arrow(
@@ -477,7 +487,7 @@ def _write_spectral_progression_slide(
     figure.text(
         0.5, 0.018,
         "Lower axes show OUT − IN; orange indicates OUT > IN and blue indicates IN > OUT",
-        ha="center", fontsize=11.5, color="#444444",
+        ha="center", fontsize=slide_style.FOOTER_SIZE, color=slide_style.FOOTER_COLOR,
     )
     return _save_slide(
         figure, reports_root, 3, "C-F_spectral_decomposition", common,
@@ -501,14 +511,14 @@ def _add_slide_spectrum_cell(
         axis, frequency, inside, outside, axhline_zero=zero_line,
         ax_delta=difference_axis, show_legend=show_legend, in_linestyle="--",
     )
-    axis.tick_params(labelsize=9)
-    difference_axis.tick_params(labelsize=8)
-    difference_axis.set_ylabel("OUT−IN", fontsize=8)
+    axis.tick_params(labelsize=slide_style.TICK_LABEL_SIZE)
+    difference_axis.tick_params(labelsize=slide_style.TICK_LABEL_SIZE - 2)
+    difference_axis.set_ylabel("OUT−IN", fontsize=slide_style.TICK_LABEL_SIZE - 1)
     plt.setp(axis.get_xticklabels(), visible=False)
     for line in (*axis.lines, *difference_axis.lines):
         line.set_linewidth(max(line.get_linewidth(), 1.7))
     if show_legend:
-        axis.legend(loc="best", fontsize=11, frameon=False)
+        axis.legend(loc="best", fontsize=slide_style.LEGEND_SIZE, frameon=False)
     return axis, difference_axis
 
 
@@ -530,7 +540,7 @@ def _flow_arrow(
     label_x, label_y = label_position or start
     axis.text(
         label_x, label_y, label, transform=axis.transAxes,
-        ha="center", va="center", fontsize=11.5, color="#333333",
+        ha="center", va="center", fontsize=slide_style.ANNOTATION_SIZE, color="#333333",
         bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5},
     )
 
@@ -547,13 +557,13 @@ def _add_slide_colorbar(
         , cax=axis,
     )
     colorbar.set_label("Cross-validated ROC AUC" if decoding else "Paired t statistic",
-                       fontsize=13, labelpad=10)
-    colorbar.ax.tick_params(labelsize=11)
+                       fontsize=slide_style.AXIS_LABEL_SIZE, labelpad=10)
+    colorbar.ax.tick_params(labelsize=slide_style.TICK_LABEL_SIZE)
     if not decoding:
-        axis.text(0.5, 1.04, "OUT > IN", transform=axis.transAxes,
-                  ha="center", fontsize=10, color="#a40000")
-        axis.text(0.5, -0.04, "IN > OUT", transform=axis.transAxes,
-                  ha="center", va="top", fontsize=10, color="#00408a")
+        axis.text(0.5, 1.04, "OUT > IN", transform=axis.transAxes, ha="center",
+                  fontsize=slide_style.ANNOTATION_SIZE, color=slide_style.POSITIVE_COLOR)
+        axis.text(0.5, -0.04, "IN > OUT", transform=axis.transAxes, ha="center", va="top",
+                  fontsize=slide_style.ANNOTATION_SIZE, color=slide_style.NEGATIVE_COLOR)
 
 
 def _slide_subtitle(common: dict[str, Any], decoding: bool) -> str:
@@ -604,7 +614,7 @@ def _save_slide(
         / f"{index:02d}_{name}.png"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=160, facecolor="white")
+    figure.savefig(path, dpi=slide_style.SLIDE_DPI, facecolor="white")
     plt.close(figure)
     _write_sidecar(path, {**common, "component": name, "path": str(path)})
     return path

@@ -25,14 +25,17 @@ from code.analysis.contracts import (
 )
 from code.analysis.provenance import active_analysis_id, resolve_analysis_directory
 from code.utils.yeo_networks import YEO7_NETWORKS, network_display_name
+from code.visualization import slide_style
+from code.visualization.slide_style import scale_typography
 
 PANEL2_CAPTION = """Figure X. Personalized multifeature decoding of IN versus OUT attentional state. Fixed-ridge models combined FOOOF exponent and offset with seven aperiodic-corrected PSD bands across 400 Schaefer parcels; FOOOF R² was excluded. (A) Mean held-out-participant AUC for the population leave-one-subject-out model against its run-wise circular-shift null. (B) Paired held-out AUCs from the population model and participant-specific leave-one-run-out models. Lines connect the same participant. (C) Mean participant-specific AUC against its circular-shift null. (D) Held-out AUC across each participant's six runs, ordered by mean participant-specific performance. (E) Participant-level held-out feature reliance for participant-specific models. (F) Participant-level held-out Yeo-7 network reliance for participant-specific models. Reliance is the AUC decrease after grouped shuffling of held-out predictors within run; dots denote synchronized sign-flip maximum-statistic FWER p < 0.05 within the feature or network family. The feature×network family is reported separately because no cell survived correction. Decoding included {state_n} participants.\n"""
 PANEL3_CAPTION = """Figure X. Network dynamics across attentional state and behavioral outcome. Neural features were summarized within the seven Yeo networks for four state-by-outcome cells (IN-correct, IN-lapse, OUT-correct, and OUT-lapse). Analyses included two FOOOF parameters (exponent and offset) and seven aperiodic-corrected PSD features; FOOOF R² was retained only as a fit-quality metric and was not analyzed. (A) Four-cell profile for the network–feature pair with the largest absolute interaction t statistic. (B) Complete network-by-feature state–outcome interaction map. (C) Prespecified simple effects, showing for each feature the signed t statistic from its strongest Yeo-network expression. (D) Standardized interaction effect sizes and bootstrap 95% confidence intervals for the seven largest absolute interaction t statistics. (E) Four-cell default-mode–dorsal-attention coupling profile for the feature with the largest absolute coupling-interaction t statistic. (F) Complete prespecified DMN–DAN coupling contrasts. Dots in heatmaps mark synchronized maximum-|t| family-wise p < 0.05. Selection in A, C, D, and E is descriptive; complete inferential families remain visible in B and F. Primary inference was corrected separately across the FOOOF modulation, corrected-PSD modulation, and DMN–DAN coupling families. Complete-case analyses included {modulation_n} participants for modulation and {coupling_n} participants for coupling; secondary mixed-effects models used all available observations.\n"""
 PANEL4_CAPTION = """Figure X. Yeo-network attribution of IN-versus-OUT attentional-state effects. FOOOF exponent and offset and seven aperiodic-corrected PSD bands were summarized within each Yeo-7 network. (A) Paired OUT-minus-IN t statistics. Dots mark synchronized maximum-|t| family-wise p < 0.05; FOOOF and corrected-PSD modulation were corrected as separate prespecified families. (B) Corresponding standardized paired effects (Cohen's dz). (C) Population-model held-out reliance and (D) participant-specific held-out reliance, defined as the AUC decrease after grouped shuffling of one feature-by-network block within run. Dots mark sign-flip maximum-statistic FWER p < 0.05 across the complete 63-cell reliance family. (E) Absolute modulation effect versus mean held-out reliance for all network-feature cells; annotations identify the four largest population-reliance cells and the association is descriptive. Modulation used equal-window pooling within participant and state and included {subject_n} participants. Reliance estimates reuse the independently held-out Panel 2 predictions.\n"""
 
 COMPOSITE_DPI = 600
-SLIDE_DPI = 160
-SLIDE_SIZE = (16.0, 9.0)
+SLIDE_DPI = slide_style.SLIDE_DPI
+SLIDE_SIZE = slide_style.SLIDE_FIGSIZE
+SLIDE_WATERMARK_SIZE = 34.0
 
 
 @dataclass(frozen=True)
@@ -311,11 +314,21 @@ def _render_panel(panel: str, arrays: dict[str, np.ndarray], context: RenderCont
     outputs = [composite_path]
     slide_dir = context.reports_root / "figures" / "slides" / PANEL_SPECS[panel]["slide_directory"]
     for index, (title, plotter) in enumerate(zip(components, plotters)):
-        standalone, axis = plt.subplots(figsize=SLIDE_SIZE, facecolor="white")
+        # Constrained layout absorbs the enlarged slide typography without a
+        # tight bounding box, so every slide stays exactly 2560x1440.
+        standalone, axis = plt.subplots(
+            figsize=SLIDE_SIZE, facecolor="white", layout="constrained"
+        )
         axis.set_facecolor("white")
         plotter(axis, arrays, index)
-        axis.set_title(_component_title(panel, title), fontsize=24, fontweight="bold")
-        _watermark(axis, context.data_mode)
+        scale_typography(standalone)
+        axis.set_title(
+            _component_title(panel, title),
+            fontsize=slide_style.TITLE_SIZE,
+            fontweight="bold",
+            pad=14,
+        )
+        _watermark(axis, context.data_mode, fontsize=SLIDE_WATERMARK_SIZE)
         stem = f"{index + 1:02d}_{title}"
         png_path = slide_dir / f"{stem}.png"
         svg_path = slide_dir / f"{stem}.svg"
@@ -1133,7 +1146,7 @@ _PANEL4_PLOTTERS: tuple[Callable[[plt.Axes, dict[str, np.ndarray], int], None], 
 )
 
 
-def _watermark(axis: plt.Axes, data_mode: str) -> None:
+def _watermark(axis: plt.Axes, data_mode: str, fontsize: float = 10.0) -> None:
     if data_mode == "synthetic":
         axis.text(
             0.5,
@@ -1142,7 +1155,7 @@ def _watermark(axis: plt.Axes, data_mode: str) -> None:
             transform=axis.transAxes,
             ha="center",
             va="center",
-            fontsize=10,
+            fontsize=fontsize,
             color="#B22222",
             alpha=0.38,
             rotation=25,

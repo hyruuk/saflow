@@ -57,7 +57,11 @@ corrected t-statistic matrices with 18 cortical maps covering every outcome and
 feature. Significance dots and map-title counts reuse the original synchronized
 max-|t| FWER inference; no tests are recomputed by the renderer. A CSV reports
 all 126 displayed tests. Outputs are written to
-`reports/figures/manuscript/supplement_outcome_state_modulation.*`.
+`reports/figures/manuscript/supplement_outcome_state_modulation.*`, alongside
+five native 16:9 slide exports in
+`reports/figures/slides/supplement_outcome_state_modulation/`: both network
+matrices on one slide, then one slide per outcome and inference family
+(aperiodic parameters and aperiodic-corrected PSD).
 
 ### `invoke analysis.outcome-modulation`
 
@@ -108,6 +112,22 @@ Because this contrast is Lapse versus Correct rather than OUT versus IN, the
 maps use a dedicated diverging colormap running green (Correct greater) through
 a neutral midpoint to red (Lapse greater), stepped in OKLab so both arms share a
 lightness profile.
+
+Each weighting also writes five native 16:9 slide exports to
+`reports/figures/slides/supplement_correct_vs_lapse_modulation_weighting-{weighting}/`:
+both network matrices on one slide, then one slide per state and inference
+family.
+
+### Slide exports
+
+Every panel and supplement writes exact 2560x1440 slide PNGs beside its
+manuscript composite. Slides are self-contained: each carries its own title,
+subtitle naming the contrast, weighting and sample size, a colorbar with
+direction labels, and a footer stating what the correction means. Slide
+typography is centralized in `code/visualization/slide_style.py`; panels drawn
+by composite-scale plotters are enlarged through `scale_typography`, which
+rescales every title, axis label, tick, legend, annotation, line width, and
+marker so nothing is exported at page-scale 6--8 pt.
 
 `analysis.execution-plan` writes `manifests/execution_plan.json` and
 does not execute or submit jobs.

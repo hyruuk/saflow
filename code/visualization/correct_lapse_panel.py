@@ -25,6 +25,7 @@ from code.analysis.outcome_modulation import (
 from code.analysis.provenance import resolve_analysis_directory
 from code.analysis.result_io import read_result_bundle
 from code.utils.yeo_networks import network_display_name
+from code.visualization import slide_style
 from code.visualization.plot_surface import _get_fsaverage_surfaces
 from code.visualization.stats_classif_panel import _plot_brain
 
@@ -59,6 +60,10 @@ CAPTION = (
     "for IN and {out_n} for OUT. Hierarchical-bootstrap sensitivity repeatedly "
     "matched Correct and Lapse counts within participant, state, and run and then "
     "resampled participants ({balanced_repetitions} repeats).\n"
+)
+FEATURE_FAMILIES = (
+    ("aperiodic", "aperiodic parameters", slice(0, 2)),
+    ("corrected_psd", "aperiodic-corrected PSD", slice(2, len(CORRECTED_FEATURES))),
 )
 WEIGHTING_SENTENCES = {
     "equal_subject": (
@@ -148,8 +153,8 @@ def render_correct_lapse_panel(
     reports_root: Path,
     output_name: str | None = None,
     weighting: str = PRIMARY_WEIGHTING,
-) -> Path:
-    """Render network heatmaps and all parcel-level cortical maps."""
+) -> list[Path]:
+    """Render the manuscript supplement and its native 16:9 slide exports."""
     result, provenance = load_correct_lapse_bundle(bundle_directory, weighting)
     output = (
         reports_root
@@ -159,14 +164,17 @@ def render_correct_lapse_panel(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     limit = _shared_t_limit(result)
-    figure = _draw_panel(result, reports_root, limit)
+    figure, brains = _draw_panel(result, reports_root, limit)
     figure.savefig(output, dpi=300, facecolor="white", bbox_inches="tight")
     plt.close(figure)
-    _write_artifacts(output, bundle_directory, result, provenance)
-    return output
+    sidecar = _write_artifacts(output, bundle_directory, result, provenance)
+    slides = _write_slides(output, reports_root, result, brains, limit, sidecar)
+    return [output, *slides]
 
 
-def _draw_panel(result: dict[str, Any], reports_root: Path, limit: float) -> plt.Figure:
+def _draw_panel(
+    result: dict[str, Any], reports_root: Path, limit: float
+) -> tuple[plt.Figure, dict[str, list[np.ndarray]]]:
     """Compose two network matrices and two nine-map cortical rows."""
     figure = plt.figure(figsize=(20, 10.5), facecolor="white")
     grid = GridSpec(
@@ -184,11 +192,12 @@ def _draw_panel(result: dict[str, Any], reports_root: Path, limit: float) -> plt
     )
     fsaverage = _get_fsaverage_surfaces()
     parcel_order = np.asarray(result["parcel_order"]).astype(str).tolist()
+    brains: dict[str, list[np.ndarray]] = {}
     for column, state in enumerate(STATE_ORDER):
         state_result = result[state]
         axis = figure.add_axes((0.065 + 0.515 * column, 0.69, 0.39, 0.22))
         _plot_network_heatmap(axis, state_result, f"{'AB'[column]}  {state}: Lapse−Correct", limit)
-        _plot_parcel_row(
+        brains[state] = _plot_parcel_row(
             figure,
             grid,
             column + 1,
@@ -204,7 +213,7 @@ def _draw_panel(result: dict[str, Any], reports_root: Path, limit: float) -> plt
         f"({result.get('weighting', PRIMARY_WEIGHTING).replace('_', '-')} weighting)",
         fontsize=16,
     )
-    return figure
+    return figure, brains
 
 
 def _plot_network_heatmap(
@@ -236,11 +245,12 @@ def _plot_parcel_row(
     fsaverage: dict[str, Any],
     limit: float,
     cache_directory: Path,
-) -> None:
+) -> list[np.ndarray]:
     """Render all nine genuine Schaefer-400 maps for one state."""
     t_values = np.asarray(state_result["parcel_t_values"])
     p_values = np.asarray(state_result["parcel_p_cluster_fwer"])
     stability = np.asarray(state_result["balanced"]["direction_stability"])
+    images: list[np.ndarray] = []
     for feature_index, feature in enumerate(CORRECTED_FEATURES):
         axis = figure.add_subplot(grid[row, feature_index * 2 : feature_index * 2 + 2])
         _plot_brain(
@@ -255,6 +265,7 @@ def _plot_parcel_row(
             correct_lapse_colormap(),
             cache_directory=cache_directory,
         )
+        images.append(slide_style.brain_image(axis))
         significant_n = int(np.sum(p_values[feature_index] < 0.05))
         stable_n = int(np.sum(stability[feature_index] >= 0.95))
         axis.set_title(
@@ -274,6 +285,7 @@ def _plot_parcel_row(
         fontsize=10,
         fontweight="bold",
     )
+    return images
 
 
 def _shared_t_limit(result: dict[str, Any]) -> float:
@@ -337,7 +349,7 @@ def _write_artifacts(
     bundle_directory: Path,
     result: dict[str, Any],
     provenance: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     """Write caption, exhaustive statistics tables, and provenance."""
     weighting = result.get("weighting", PRIMARY_WEIGHTING)
     caption = CAPTION.format(
@@ -367,6 +379,148 @@ def _write_artifacts(
         },
     }
     output.with_suffix(".json").write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n")
+    slide_caption = slide_style.slide_directory(
+        output.parents[2], output.stem
+    ) / f"{output.stem}.txt"
+    slide_caption.write_text(caption)
+    return sidecar
+
+
+def _write_slides(
+    output: Path,
+    reports_root: Path,
+    result: dict[str, Any],
+    brains: dict[str, list[np.ndarray]],
+    limit: float,
+    sidecar: dict[str, Any],
+) -> list[Path]:
+    """Render one 16:9 slide per matrix overview and per inference family."""
+    directory = slide_style.slide_directory(reports_root, output.stem)
+    provenance = {
+        **sidecar,
+        "renderer": "Correct-versus-Lapse supplement 16:9 slide renderer",
+    }
+    outputs = [_write_matrix_slide(directory, result, limit, provenance)]
+    index = 1
+    for position, state in enumerate(STATE_ORDER):
+        for family, family_label, selection in FEATURE_FAMILIES:
+            index += 1
+            outputs.append(
+                _write_map_slide(
+                    directory,
+                    index,
+                    f"{'CD'[position]}_{state}_{family}",
+                    state,
+                    family_label,
+                    selection,
+                    result,
+                    brains[state],
+                    limit,
+                    provenance,
+                )
+            )
+    return outputs
+
+
+def _slide_subtitle(result: dict[str, Any], state: str | None = None) -> str:
+    """Describe weighting and sample size directly on the slide."""
+    weighting = str(result.get("weighting", PRIMARY_WEIGHTING)).replace("_", "-")
+    counts = (
+        f"{result[state]['subject_n']} participants"
+        if state
+        else " · ".join(f"{name} n = {result[name]['subject_n']}" for name in STATE_ORDER)
+    )
+    return f"{weighting} weighting · {counts}"
+
+
+def _write_matrix_slide(
+    directory: Path, result: dict[str, Any], limit: float, provenance: dict[str, Any]
+) -> Path:
+    """Show both complete network-by-feature matrices on one slide."""
+    figure = slide_style.new_slide(
+        "Correct-versus-lapse modulation within attentional state",
+        f"Paired Lapse − Correct t statistics · {_slide_subtitle(result)}",
+    )
+    slide_style.add_heatmap_row(
+        figure,
+        [
+            (
+                f"{state}: Lapse − Correct",
+                np.asarray(result[state]["network_t_values"]),
+                np.asarray(result[state]["network_p_fwer"]),
+            )
+            for state in STATE_ORDER
+        ],
+        _network_labels(),
+        _feature_labels(),
+        color_map=correct_lapse_colormap(),
+        limit=limit,
+    )
+    slide_style.add_colorbar(
+        figure,
+        -limit,
+        limit,
+        correct_lapse_colormap(),
+        "Paired t statistic",
+        bounds=(0.93, 0.28, 0.016, 0.47),
+        above="Lapse > Correct",
+        below="Correct > Lapse",
+        above_color=COLOR_LAPSE,
+        below_color=COLOR_CORRECT,
+    )
+    slide_style.add_footer(
+        figure,
+        "Dots mark synchronized maximum-|t| FWER p < 0.05 across all 63 "
+        "network-feature cells within state",
+    )
+    return slide_style.save_slide(figure, directory, 1, "A-B_network_matrices", provenance)
+
+
+def _write_map_slide(
+    directory: Path,
+    index: int,
+    name: str,
+    state: str,
+    family_label: str,
+    selection: slice,
+    result: dict[str, Any],
+    images: list[np.ndarray],
+    limit: float,
+    provenance: dict[str, Any],
+) -> Path:
+    """Show one state and one inference family across Schaefer-400 maps."""
+    state_result = result[state]
+    p_values = np.asarray(state_result["parcel_p_cluster_fwer"])
+    stability = np.asarray(state_result["balanced"]["direction_stability"])
+    figure = slide_style.new_slide(
+        f"{state}: Lapse − Correct {family_label}",
+        f"Schaefer-400 parcel t statistics · {_slide_subtitle(result, state)}",
+    )
+    titles = [
+        f"{FEATURE_DISPLAY_NAMES[feature]}\n"
+        f"{int(np.sum(p_values[selection.start + position] < 0.05))} parcels"
+        " FWER-significant · "
+        f"{int(np.sum(stability[selection.start + position] >= 0.95))} ≥95% stable"
+        for position, feature in enumerate(CORRECTED_FEATURES[selection])
+    ]
+    slide_style.add_map_grid(figure, images[selection], titles)
+    slide_style.add_colorbar(
+        figure,
+        -limit,
+        limit,
+        correct_lapse_colormap(),
+        "Paired t statistic",
+        above="Lapse > Correct",
+        below="Correct > Lapse",
+        above_color=COLOR_LAPSE,
+        below_color=COLOR_CORRECT,
+    )
+    slide_style.add_footer(
+        figure,
+        "Surfaces are unthresholded; titles report cluster-mass FWER significance "
+        "and balanced-resampling direction stability",
+    )
+    return slide_style.save_slide(figure, directory, index, name, provenance)
 
 
 def _write_statistics_table(path: Path, result: dict[str, Any]) -> None:
@@ -445,7 +599,7 @@ def main() -> None:
     written = 0
     for weighting in selected:
         try:
-            output = render_correct_lapse_panel(
+            written_paths = render_correct_lapse_panel(
                 analysis / "outcome_modulation",
                 args.reports_root,
                 args.output_name,
@@ -459,7 +613,9 @@ def main() -> None:
             LOGGER.warning("Skipping %s: %s", weighting, error)
             continue
         written += 1
-        LOGGER.info("Wrote %s Correct-versus-Lapse panel to %s", weighting, output)
+        LOGGER.info("Wrote %s Correct-versus-Lapse panel to %s", weighting, written_paths[0])
+        for slide in written_paths[1:]:
+            LOGGER.info("Wrote %s Correct-versus-Lapse slide to %s", weighting, slide)
     if not written:
         raise SystemExit("no Correct-versus-Lapse weighting could be rendered")
 
