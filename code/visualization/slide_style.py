@@ -39,8 +39,8 @@ NEGATIVE_COLOR = "#00408a"
 
 # Composite plotters annotate at 6--8 pt; 2.3x lifts that to 14--18 pt while the
 # floor rescues anything already sized for a slide from staying small.
-TEXT_SCALE = 2.3
-TEXT_FLOOR = 14.0
+TEXT_SCALE = 2.5
+TEXT_FLOOR = 16.0
 LINE_SCALE = 1.6
 LINE_FLOOR = 1.8
 MARKER_AREA_SCALE = 4.0

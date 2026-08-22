@@ -548,12 +548,25 @@ def render_panel(bundle: Dict, title: Optional[str] = None,
         _panel_h(fig.add_subplot(gs[2, 1]), state)
 
     if title is None:
-        title = (
-            "Cross-subject decoding of attentional state — winning cell: "
-            f"{winner['reduction']} · {winner['feature_set']} · "
-            f"{winner['estimator']} · {winner['normalization']} · "
-            f"IN/OUT {winner['inout']}"
-        )
+        cell = (f"{winner['reduction']} · {winner['feature_set']} · "
+                f"{winner['estimator']} · {winner['normalization']}")
+        # Headline the selection-free number: the sweep winner was picked while
+        # looking at every subject, so its AUC is optimistic.
+        summ = (bundle.get("nested_meta") or {}).get("summary") or {}
+        if summ:
+            title = (
+                "Cross-subject decoding of attentional state — selection-free "
+                f"AUC = {summ['mean_auc']:.3f} "
+                f"[{summ['ci95_low']:.3f}, {summ['ci95_high']:.3f}], "
+                f"{summ['n_above_chance']}/{summ['n_subjects']} participants "
+                f"above chance   ·   best sweep cell {float(winner['mean_auc']):.3f} "
+                f"({cell}, IN/OUT {winner['inout']})"
+            )
+        else:
+            title = (
+                "Cross-subject decoding of attentional state — winning cell: "
+                f"{cell} · IN/OUT {winner['inout']}"
+            )
     fig.suptitle(title, fontsize=11, fontweight="bold", y=0.965)
     if (bundle.get("confirm_meta") or {}).get("synthetic"):
         fig.text(0.5, 0.935, "SYNTHETIC DATA — prototyping only", ha="center",

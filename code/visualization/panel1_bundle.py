@@ -442,34 +442,43 @@ def _write_spectral_progression_slide(
     )
     figure.suptitle(
         "Spectral decomposition of attentional-state effects",
-        fontsize=slide_style.TITLE_SIZE, fontweight="bold", y=0.97,
+        fontsize=slide_style.TITLE_SIZE, fontweight="bold", y=0.975,
     )
     figure.text(
-        0.5, 0.915,
+        0.5, 0.905,
         f"IN vs OUT · {_weighting_label(common)} · {_uncertainty_label(common)}",
         ha="center", fontsize=slide_style.SUBTITLE_SIZE, color=slide_style.SUBTITLE_COLOR,
     )
+    # The two middle cells are roughly half the height of the outer ones, so they
+    # carry compact typography; slide-scale ticks would collide with their own
+    # difference axis.
     cells = (
-        ("Original spectrum", "raw", (0.045, 0.23, 0.23, 0.56)),
-        ("Aperiodic component", "aperiodic", (0.38, 0.55, 0.24, 0.28)),
-        ("Aperiodic-corrected spectrum", "corrected", (0.725, 0.23, 0.24, 0.56)),
-        ("Modeled periodic peaks", "periodic", (0.38, 0.13, 0.24, 0.25)),
+        ("Original spectrum", "raw", (0.085, 0.235, 0.205, 0.545), False),
+        ("Aperiodic component", "aperiodic", (0.395, 0.555, 0.215, 0.265), True),
+        ("Aperiodic-corrected spectrum", "corrected", (0.735, 0.235, 0.205, 0.545), False),
+        ("Modeled periodic peaks", "periodic", (0.395, 0.135, 0.215, 0.245), True),
     )
-    for title, key, bounds in cells:
+    for title, key, bounds, compact in cells:
         axis, difference_axis = _add_slide_spectrum_cell(
             figure, bounds, frequency,
             _subject_or_mean(arrays, key, "in")[:, frequency_mask],
             _subject_or_mean(arrays, key, "out")[:, frequency_mask],
             zero_line=key in {"corrected", "periodic"},
             show_legend=key == "raw",
+            compact=compact,
         )
         figure.text(
-            bounds[0], bounds[1] + bounds[3] + 0.015,
-            title, fontsize=slide_style.CELL_TITLE_SIZE, fontweight="bold", ha="left",
+            bounds[0] + bounds[2] / 2, bounds[1] + bounds[3] + 0.018,
+            title, fontsize=slide_style.CELL_TITLE_SIZE, fontweight="bold", ha="center",
         )
-        if key in {"raw", "corrected"}:
+        if not compact:
             axis.set_ylabel("PSD (log$_{10}$)", fontsize=slide_style.AXIS_LABEL_SIZE)
-        difference_axis.set_xlabel("Frequency (Hz)", fontsize=slide_style.AXIS_LABEL_SIZE)
+        difference_axis.set_xlabel(
+            "Frequency (Hz)",
+            fontsize=(
+                slide_style.TICK_LABEL_SIZE - 2 if compact else slide_style.AXIS_LABEL_SIZE
+            ),
+        )
     overlay = figure.add_axes([0, 0, 1, 1], frameon=False)
     overlay.set_axis_off()
     _flow_arrow(
@@ -497,7 +506,7 @@ def _write_spectral_progression_slide(
 def _add_slide_spectrum_cell(
     figure: plt.Figure, bounds: tuple[float, float, float, float],
     frequency: np.ndarray, inside: np.ndarray, outside: np.ndarray, *,
-    zero_line: bool, show_legend: bool,
+    zero_line: bool, show_legend: bool, compact: bool = False,
 ) -> tuple[plt.Axes, plt.Axes]:
     """Draw one spectrum-plus-difference cell inside explicit slide bounds."""
     left, bottom, width, height = bounds
@@ -511,9 +520,16 @@ def _add_slide_spectrum_cell(
         axis, frequency, inside, outside, axhline_zero=zero_line,
         ax_delta=difference_axis, show_legend=show_legend, in_linestyle="--",
     )
-    axis.tick_params(labelsize=slide_style.TICK_LABEL_SIZE)
-    difference_axis.tick_params(labelsize=slide_style.TICK_LABEL_SIZE - 2)
-    difference_axis.set_ylabel("OUT−IN", fontsize=slide_style.TICK_LABEL_SIZE - 1)
+    ticks = slide_style.TICK_LABEL_SIZE - (3 if compact else 0)
+    axis.tick_params(labelsize=ticks)
+    difference_axis.tick_params(labelsize=ticks - 1)
+    axis.yaxis.set_major_locator(plt.MaxNLocator(4 if compact else 6))
+    difference_axis.yaxis.set_major_locator(plt.MaxNLocator(3))
+    # The footer already explains the lower axes, so the cramped middle cells
+    # drop the label _plot_spectrum adds rather than overprint their own ticks.
+    difference_axis.set_ylabel(
+        "" if compact else "OUT−IN", fontsize=slide_style.TICK_LABEL_SIZE - 1
+    )
     plt.setp(axis.get_xticklabels(), visible=False)
     for line in (*axis.lines, *difference_axis.lines):
         line.set_linewidth(max(line.get_linewidth(), 1.7))
